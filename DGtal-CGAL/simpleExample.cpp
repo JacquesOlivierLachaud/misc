@@ -29,6 +29,7 @@ int main ()
   
   Delaunay t;
   
+  trace.beginBlock("Construction the shape");
   typedef Flower2D<Z2i::Space> Flower; 
   Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 200, 50, 5, 0);
   double h = 1; 
@@ -47,23 +48,14 @@ int main ()
   c.initFromVector( boundaryPoints );  
   typedef Z2i::Curve::PointsRange Range; 
   Range r = c.getPointsRange(); 
-  
+  trace.endBlock();
+
+
+  trace.beginBlock("Delaunay");
   for(Range::ConstIterator it=r.begin(), itend=r.end(); it != itend;
       ++it)
     t.insert( Point( (*it)[0], (*it)[1]));
-  
-
-  Vertex_circulator vc = t.incident_vertices(t.infinite_vertex()),
-    done(vc);
-  if (vc != 0) 
-    {
-      do 
-	{ 
-	  std::cout << vc->point() << std::endl;
-	}
-      while(++vc != done);
-    }
-
+  trace.endBlock();
 
   std::cout << "number of vertices :  " ;
   std::cout << t.number_of_vertices() << std::endl;
