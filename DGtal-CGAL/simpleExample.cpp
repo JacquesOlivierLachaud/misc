@@ -18,6 +18,12 @@ typedef Delaunay::Edge_iterator  Edge_iterator;
 typedef Delaunay::Finite_faces_iterator  Faces_iterator;
 typedef Delaunay::Point             Point;
 
+
+DGtal::Z2i::Point toDGtal(const Point &p)
+{
+  return DGtal::Z2i::Point (p.x(),p.y());
+}
+
 int main ()
 {
   
@@ -82,13 +88,9 @@ int main ()
   for(Faces_iterator it = t.finite_faces_begin(), itend=t.finite_faces_end();
       it != itend; ++it)
     {
-      Z2i::Point a( it->vertex(0)->point().x(),
-		    it->vertex(0)->point().y()),
-	b(it->vertex(1)->point().x(),
-	  it->vertex(1)->point().y()),
-	c(it->vertex(2)->point().x(),
-	  it->vertex(2)->point().y());
-      
+      Z2i::Point a( toDGtal(it->vertex(0)->point())),
+	b(toDGtal(it->vertex(1)->point())),
+	c(toDGtal(it->vertex(2)->point()));
       
       board.drawTriangle(a[0],a[1],b[0],b[1],c[0],c[1]);
     }
