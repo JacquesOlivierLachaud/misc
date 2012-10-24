@@ -13,8 +13,12 @@ endif()
 find_package(CGAL COMPONENTS Core )
 include( ${CGAL_USE_FILE} )
 
-find_package(DGtal REQUIRED)
+# find_package(DGtal REQUIRED)
 include_directories(${CGAL_INCLUDE_DIR})
+
+FIND_PACKAGE(DGtal REQUIRED)
+INCLUDE_DIRECTORIES(${DGTAL_INCLUDE_DIRS})
+LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
 
 
 SET(SRCs
