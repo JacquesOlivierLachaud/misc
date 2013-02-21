@@ -27,6 +27,8 @@ DGtal::Z2i::Point toDGtal(const Point &p)
   return DGtal::Z2i::Point (p.x(),p.y());
 }
 
+using namespace DGtal;
+
 int main ()
 {
   
