@@ -10,6 +10,8 @@ if ( COMMAND cmake_policy )
 endif()
 
 
+SET( CMAKE_MODULE_PATH /opt/local/lib/cmake )
+
 find_package(CGAL COMPONENTS Core )
 include( ${CGAL_USE_FILE} )
 
