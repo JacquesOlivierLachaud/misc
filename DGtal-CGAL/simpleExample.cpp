@@ -1,3 +1,7 @@
+#include <iostream>
+#include <vector>
+#include <string>
+
 #include <DGtal/base/Common.h>
 #include <DGtal/helpers/StdDefs.h>
 #include <DGtal/shapes/Shapes.h>
@@ -53,7 +57,7 @@ int main ()
   ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
   SurfelAdjacency<2> sAdj( true );
   Z2i::SCell bel = Surfaces<Z2i::KSpace>::findABel( ks, dig, 1000 );
-  vector<Z2i::Point> boundaryPoints;
+  std::vector<Z2i::Point> boundaryPoints;
   Surfaces<Z2i::KSpace>
     ::track2DBoundaryPoints( boundaryPoints, ks, sAdj, dig, bel );
   Z2i::Curve c;
@@ -87,7 +91,7 @@ int main ()
          
 
   DGtal::Board2D board;
-  
+
   Z2i::Point dP;
   board << CustomStyle( dP.className(), 
                         new CustomPen( Color(0,0,0), Color(230,230,230), 1, 
@@ -111,7 +115,7 @@ int main ()
         {
           board.setPenColor(DGtal::Color::Blue);
           board.setFillColor( DGtal::Color::None );
-          board.setLineWidth( 2.0 );
+          board.setLineWidth( 3.0 );
           board.drawTriangle(a[0],a[1],b[0],b[1],c[0],c[1]);
         }
       else
@@ -119,7 +123,7 @@ int main ()
           board.setPenColor(DGtal::Color::Red);
           board.setFillColor( DGtal::Color::None );
           //          board.setFillColorRGBi(200,200,200,128);
-          board.setLineWidth( 1.0 );
+          board.setLineWidth( 2.0 );
           board.drawTriangle(a[0],a[1],b[0],b[1],c[0],c[1]);
         }
     }
@@ -129,7 +133,7 @@ int main ()
   board.setPenColor(DGtal::Color::Green);
   board.setFillColor( DGtal::Color::None );
   board << SetMode( "ArithmeticalDSS", "BoundingBox" );
-  string aStyleName = "ArithmeticalDSS/BoundingBox";
+  std::string aStyleName = "ArithmeticalDSS/BoundingBox";
   for ( ; i != end; ++i) {
     DSS4 current(*i);
     board << CustomStyle( aStyleName, 
@@ -147,6 +151,8 @@ int main ()
       Z2i::Point b( toDGtal(itf->vertex( t.ccw( i ) )->point()));
       std::cout << "Edge: " << a << " -> " << b << std::endl;
     }
+  board << dig.getDomain();
+
   
   board.saveSVG("delaunay.svg");
   board.saveEPS("delaunay.eps");
