@@ -8,10 +8,12 @@
 #include <DGtal/helpers/StdDefs.h>
 #include <DGtal/shapes/Shapes.h>
 #include <DGtal/shapes/ShapeFactory.h>
+#include "DGtal/shapes/implicit/ImplicitPolynomial3Shape.h"
 #include <DGtal/shapes/GaussDigitizer.h>
 #include <DGtal/topology/helpers/Surfaces.h>
 #include "DGtal/io/viewers/Viewer3D.h"
 #include "DGtal/io/DrawWithDisplay3DModifier.h"
+#include "DGtal/io/readers/MPolynomialReader.h"
 
 #include <CGAL/Delaunay_triangulation_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -108,24 +110,47 @@ int main (int argc, char** argv )
   typedef K3::SCell SCell;
   typedef K3::SCellSet SCellSet;
   typedef SCellSet::const_iterator SCellSetConstIterator;
-  typedef ImplicitRoundedHyperCube<Z3> Shape;
+  // typedef ImplicitRoundedHyperCube<Z3> Shape;
+  typedef RealPoint::Coordinate Ring;
+  typedef MPolynomial<3, Ring> Polynomial3;
+  typedef MPolynomialReader<3, Ring> Polynomial3Reader;
+  
+  typedef ImplicitPolynomial3Shape<Z3> Shape;
   typedef GaussDigitizer<Z3,Shape> Digitizer;
+
 
   QApplication application(argc,argv); // remove Qt arguments.
 
   Delaunay t;
   
   trace.beginBlock("Construction of the shape");
-  Shape shape( RealPoint( 0.0, 0.0, 0.0 ), 14, 3.0 );
+  //Shape shape( RealPoint( 0.0, 0.0, 0.0 ), 14, 3.0 );
+  Polynomial3 P;
+  Polynomial3Reader reader;
+  std::string poly_str = argc > 1 ? argv[ 1 ] : "x^4+y^4+z^4-50000";
+  std::string::const_iterator iter 
+    = reader.read( P, poly_str.begin(), poly_str.end() );
+  if ( iter != poly_str.end() )
+    {
+      std::cerr << "ERROR: I read only <" 
+                << poly_str.substr( 0, iter - poly_str.begin() )
+                << ">, and I built P=" << P << std::endl;
+      return 1;
+    }
+  trace.info() << "P( X_0, X_1, X_2 ) = " << P << std::endl;
+
+  Shape shape( P );
   double h = 1.0; 
   Digitizer dig;
   dig.attach( shape );
-  dig.init( shape.getLowerBound()+Vector::diagonal(-1),
-            shape.getUpperBound()+Vector::diagonal(1), h ); 
+  // dig.init( shape.getLowerBound()+Vector::diagonal(-1),
+  //           shape.getUpperBound()+Vector::diagonal(1), h ); 
+  dig.init( Vector::diagonal(-50),
+            Vector::diagonal(50), h ); 
   K3 ks;
   ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
   SurfelAdjacency<3> sAdj( true );
-  SCell bel = Surfaces<K3>::findABel( ks, dig, 1000 );
+  SCell bel = Surfaces<K3>::findABel( ks, dig, 10000 );
   SCellSet boundary;
   Surfaces<K3>::trackBoundary( boundary, ks, sAdj, dig, bel );
   trace.endBlock();
