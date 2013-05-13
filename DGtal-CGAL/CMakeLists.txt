@@ -25,7 +25,8 @@ LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
 
 SET(SRCs
   simpleExample
-  3d-patterns)
+  3d-patterns
+  3d-patterns-v2)
 
 if ( CGAL_FOUND )
   

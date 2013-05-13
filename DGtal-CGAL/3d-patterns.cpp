@@ -70,8 +70,8 @@ public:
   }
   inline VEdge( Vertex_handle v1, Vertex_handle v2 )
   {
-    if ( v1 <= v2 ) { first = v1; second = v2; }
-    else            { first = v2; second = v1; }
+    if ( v1 < v2 ) { first = v1; second = v2; }
+    else           { first = v2; second = v1; }
   }
   bool operator<( const VEdge & other ) const
   {
@@ -105,9 +105,9 @@ public:
   }
   inline void sort()
   {
-    if ( first > second ) std::swap( first, second );
-    if ( first > third )  std::swap( first, third );
-    if ( second > third ) std::swap( second, third );
+    if ( second < first  ) std::swap( first, second );
+    if ( third < first )  std::swap( first, third );
+    if ( third < second ) std::swap( second, third );
   }
   bool operator<( const VFacet & other ) const
   {
@@ -335,8 +335,8 @@ int main (int argc, char** argv )
   viewer.show();
   // for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
   //    viewer << *it;
-  for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
-    viewer << ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
+  // for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
+  //   viewer << ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
   
   MapCell2Int nbLatticePoints;
   for(Cell_iterator it = t.cells_begin(), itend=t.cells_end();

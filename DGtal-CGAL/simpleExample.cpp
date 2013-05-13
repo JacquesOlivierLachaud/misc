@@ -83,6 +83,11 @@ int main ()
   std::cout << "number of faces :  " ;
   std::cout << t.number_of_faces() << std::endl;
   
+  trace.beginBlock("Area minimizing triangulation");
+  
+  trace.endBlock();
+
+
   // GridCurve
   Z2i::Curve gc;
   gc.initFromPointsRange( r.begin(), r.end() );
