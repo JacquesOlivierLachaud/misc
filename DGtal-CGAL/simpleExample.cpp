@@ -22,13 +22,18 @@ typedef CGAL::Delaunay_triangulation_2<K> Delaunay;
 typedef Delaunay::Vertex_circulator Vertex_circulator;
 typedef Delaunay::Edge_iterator  Edge_iterator;
 typedef Delaunay::Finite_faces_iterator  Faces_iterator;
-typedef Delaunay::Point             Point;
+typedef Delaunay::Point            Point;
+typedef K::Vector_2             Vector;
 typedef Delaunay::Face_handle  Face_handle;
 
 
 DGtal::Z2i::Point toDGtal(const Point &p)
 {
   return DGtal::Z2i::Point (p.x(),p.y());
+}
+DGtal::Z2i::Vector toDGtal(const Vector &p)
+{
+  return DGtal::Z2i::Vector (p.x(),p.y());
 }
 
 using namespace DGtal;
@@ -150,6 +155,30 @@ int main ()
       Z2i::Point a( toDGtal(itf->vertex( t.cw( i ) )->point()));
       Z2i::Point b( toDGtal(itf->vertex( t.ccw( i ) )->point()));
       std::cout << "Edge: " << a << " -> " << b << std::endl;
+
+      CGAL::Object o = t.dual( it );
+      if (CGAL::object_cast<K::Segment_2>(&o)) 
+        {
+          const K::Segment_2* ptrSegment = CGAL::object_cast<K::Segment_2>(&o);
+          board.setPenColor(DGtal::Color::Black);
+          board.setFillColor( DGtal::Color::None );
+          board.setLineWidth( 2.0 );
+          board.drawLine( ptrSegment->source().x(),
+                          ptrSegment->source().y(),
+                          ptrSegment->target().x(),
+                          ptrSegment->target().y() );
+        }
+      else if (CGAL::object_cast<K::Ray_2>(&o)) 
+        {
+          const K::Ray_2* ptrRay = CGAL::object_cast<K::Ray_2>(&o);
+          board.setPenColor(DGtal::Color::Black);
+          board.setFillColor( DGtal::Color::None );
+          board.setLineWidth( 2.0 );
+          board.drawArrow( ptrRay->source().x(),
+                           ptrRay->source().y(),
+                           ptrRay->source().x() + 1*ptrRay->to_vector().x(),
+                           ptrRay->source().y() + 1*ptrRay->to_vector().y() );
+        }
     }
   board << dig.getDomain();
 

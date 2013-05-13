@@ -26,14 +26,105 @@ typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
 typedef CGAL::Delaunay_triangulation_3<K> Delaunay;
 //typedef Delaunay::Vertex_circulator Vertex_circulator;
 //typedef Delaunay::Edge_iterator  Edge_iterator;
-typedef Delaunay::Cell_iterator  Cell_iterator;
+typedef Delaunay::Cell_iterator     Cell_iterator;
+typedef Delaunay::Facet             Facet;
+typedef Delaunay::Facet_iterator    Facet_iterator;
+typedef Delaunay::Edge              Edge;
+typedef Delaunay::Edge_iterator     Edge_iterator;
+typedef Delaunay::Vertex_iterator   Vertex_iterator;
+typedef Delaunay::Vertex_handle     Vertex_handle;
 typedef Delaunay::Point             CGALPoint;
-typedef Delaunay::Cell_handle  Cell_handle;
-
+typedef Delaunay::Cell_handle       Cell_handle;
 typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
 typedef Z3::Point Point;
 typedef DGtal::HyperRectDomain<Z3> Domain;
 typedef Domain::ConstIterator DomainConstIterator;
+
+struct EdgeIteratorComparator
+{
+  inline
+  bool operator()( const Edge_iterator & e1, const Edge_iterator & e2 ) const
+  {
+    return ( e1->first < e2->first )
+      || ( ( e1->first == e2->first ) 
+           && ( ( e1->second < e2->second )
+                || ( ( e1->second == e2->second )
+                     && ( e1->third < e2->third ) ) ) );
+  }
+};
+
+/**
+   Handy structure to hold a CGAL edge of a Triangulaion_3. It is
+   unambiguous (meaning an edge has only one representant) and permits
+   comparison (for use as index in std::map).
+*/
+struct VEdge {
+public:
+  Vertex_handle first;
+  Vertex_handle second;
+  inline VEdge( const Edge & e )
+  {
+    first = (e.first)->vertex( e.second );
+    second = (e.first)->vertex( e.third );
+    if ( second < first ) std::swap( first, second );
+  }
+  inline VEdge( Vertex_handle v1, Vertex_handle v2 )
+  {
+    if ( v1 <= v2 ) { first = v1; second = v2; }
+    else            { first = v2; second = v1; }
+  }
+  bool operator<( const VEdge & other ) const
+  {
+    return ( first < other.first )
+      || ( ( first == other.first )
+           && ( second < other.second ) );
+  }
+};
+/**
+   Handy structure to hold a CGAL facet of a Triangulaion_3. It is
+   unambiguous (meaning a facet has only one representant) and permits
+   comparison (for use as index in std::map).
+*/
+struct VFacet {
+public:
+  Vertex_handle first;
+  Vertex_handle second;
+  Vertex_handle third;
+  inline VFacet( const Facet & f )
+  {
+    int i = f.second;
+    first = (f.first)->vertex( (i+1)%4 );
+    second = (f.first)->vertex( (i+2)%4 );
+    third = (f.first)->vertex( (i+3)%4 );
+    sort();
+  }
+  inline VFacet( Vertex_handle v1, Vertex_handle v2, Vertex_handle v3 )
+    : first( v1 ), second( v2 ), third( v3 )
+  {
+    sort();
+  }
+  inline void sort()
+  {
+    if ( first > second ) std::swap( first, second );
+    if ( first > third )  std::swap( first, third );
+    if ( second > third ) std::swap( second, third );
+  }
+  bool operator<( const VFacet & other ) const
+  {
+    return ( first < other.first )
+      || ( ( first == other.first )
+           && ( ( second < other.second ) 
+                || ( ( second == other.second )  
+                     && ( third < other.third ) ) ) );
+  }
+};
+
+typedef std::map< Cell_iterator, DGtal::int64_t > MapCell2Int;
+typedef std::map< VFacet, DGtal::int64_t > MapFacet2Int;
+typedef std::map< VEdge, DGtal::int64_t > MapEdge2Int;
+typedef std::map< Vertex_iterator, DGtal::int64_t > MapVertex2Int;
+
+
 
 Point toDGtal(const CGALPoint &p)
 {
@@ -61,6 +152,68 @@ Point operator^( const Point & a, const Point & b )
 		a[ 0 ] * b[ 1 ] - a[ 1 ] * b[ 0 ] );
 }
 
+DGtal::uint64_t 
+markBasicEdges( MapEdge2Int & basicMap, const Delaunay & t )
+{
+  DGtal::uint64_t nb = 0;
+  for( Edge_iterator it = t.edges_begin(), itend = t.edges_end();
+       it != itend; ++it)
+    {
+      VEdge edge( *it );
+      if ( ! t.is_infinite( *it ) )
+        {
+          Point a( toDGtal( edge.first->point() ) );
+          Point b( toDGtal( edge.second->point() ) );
+          if ( (b-a).norm( Point::L_infty ) == 1 )
+            {
+              basicMap[ edge ] = 1;
+              ++nb;
+            }
+          else
+            {
+              basicMap[ edge ] = 0;
+            }
+        }
+      else
+        {
+          basicMap[ edge ] = -1;
+        }
+    }
+  return nb;
+}
+
+DGtal::uint64_t 
+markBasicFacets( MapFacet2Int & basicFacetMap, const Delaunay & t, MapEdge2Int & basicEdgeMap )
+{
+  DGtal::uint64_t nb = 0;
+  for( Facet_iterator it = t.facets_begin(), itend = t.facets_end();
+       it != itend; ++it)
+    {
+      VFacet f( *it ); 
+      if ( ! t.is_infinite( *it ) )
+        {
+          Cell_iterator itCell = it->first; int i = it->second;
+          VEdge e1( f.first, f.second );
+          VEdge e2( f.second, f.third );
+          VEdge e3( f.third, f.first );
+          unsigned int n = 0;
+          n += basicEdgeMap[ e1 ] == 1 ? 1 : 0;
+          n += basicEdgeMap[ e2 ] == 1 ? 1 : 0;
+          n += basicEdgeMap[ e3 ] == 1 ? 1 : 0;
+          //ASSERT( n < 3 );
+          if ( n == 3 )
+            {
+              basicFacetMap[ f ] = 1;
+              ++nb;
+            }
+          else
+            basicFacetMap[ f ] = 0;
+        }
+      else
+        basicFacetMap[ f ] = -1;
+    }
+  return nb;
+}
 
 DGtal::int64_t
 countLatticePointsInTetrahedra( const Point & a, const Point & b, const Point & c, const Point & d )
@@ -98,11 +251,23 @@ countLatticePointsInTetrahedra( const Point & a, const Point & b, const Point & 
   return nb;
 }
 
+void 
+getFacets( std::vector<Facet> & facets, const Cell_iterator & it )
+{
+  for ( int i = 0; i < 4; ++i )
+    facets.push_back( Facet( it, i ) );
+}
 
-using namespace DGtal;
-
+/*
+  "29*z+47*y+23*x-5"
+  "10*z-x^2+y^2-100"
+  "z*x*y+x^4-5*x^2+2*y^2*z-z^2-1000"
+  "(15*z-x^2+y^2-100)*(x^2+y^2+z^2-1000)" nice
+ */
 int main (int argc, char** argv )
 {
+  using namespace DGtal;
+
   
   typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
   typedef Z3::Vector Vector;
@@ -169,49 +334,143 @@ int main (int argc, char** argv )
   Viewer3D viewer;
   viewer.show();
   // for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
-  //   viewer << *it;
-
+  //    viewer << *it;
+  for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
+    viewer << ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
   
+  MapCell2Int nbLatticePoints;
   for(Cell_iterator it = t.cells_begin(), itend=t.cells_end();
       it != itend; ++it)
     {
-      if ( t.is_infinite( it ) ) continue;
-      // bool inf_v = false;
-      // for ( unsigned int j = 0; j < 4; ++j )
-      // 	if ( it->vertex( j ) == t.infinite_vertex() )
-      // 	  inf_v = true;
-      // if ( inf_v ) continue;
+      if ( t.is_infinite( it ) ) 
+        {
+          nbLatticePoints[ it ] = -1;
+        }
+      else
+        {
+          Point a( toDGtal(it->vertex(0)->point())),
+            b(toDGtal(it->vertex(1)->point())),
+            c(toDGtal(it->vertex(2)->point())),
+            d(toDGtal(it->vertex(3)->point()));
+          nbLatticePoints[ it ] = countLatticePointsInTetrahedra( a, b, c, d );
+        }
+    }
 
-      Point a( toDGtal(it->vertex(0)->point())),
-	b(toDGtal(it->vertex(1)->point())),
-	c(toDGtal(it->vertex(2)->point())),
-	d(toDGtal(it->vertex(3)->point()));
+  MapEdge2Int bEdge;
+  uint64_t nbBE = markBasicEdges( bEdge, t );
+  trace.info() << "Nb basic edges :" << nbBE << std::endl;
+  MapFacet2Int bFacet;
+  uint64_t nbBF = markBasicFacets( bFacet, t, bEdge );
+  trace.info() << "Nb basic facets:" << nbBF << std::endl;
 
-      // Vector ab( b - a ), ac( c - a );
-      // int d = ab[ 0 ] * ac[ 1 ] - ab[ 1 ] * ac[ 0 ];
-      DGtal::int64_t n = countLatticePointsInTetrahedra( a, b, c, d );
-      if ( n > 4 ) trace.info() << " " << n;
-      // if ( n <= 3 ) trace.error() << " Not enough lattice points" << std::endl;
-      if ( n == 4 )
-	{
-	  Color col( 255, 0, 0, 255 );
+  Color colBasicEdge( 0, 0, 255, 255 );
+  for( Edge_iterator it = t.edges_begin(), itend = t.edges_end();
+       it != itend; ++it)
+    {
+      VEdge e( *it );
+      if ( bEdge[ e ] == 1 )
+        {
+          Cell_handle itC = it->first; 
+          int i = it->second;
+          int j = it->third;
+          Point a( toDGtal(itC->vertex( i )->point()));
+          Point b( toDGtal(itC->vertex( j )->point()));
+	  viewer.addLine( a[ 0 ], a[ 1 ], a[ 2 ],
+                          b[ 0 ], b[ 1 ], b[ 2 ],
+                          colBasicEdge, 1.0 );
+        }
+    }
+
+  // Propagate basic facets.
+  std::queue<Cell_iterator> Q;
+  for ( Cell_iterator it = t.cells_begin(), itend = t.cells_end();
+        it != itend; ++it )
+    if ( nbLatticePoints[ it ] == 4 ) Q.push( it );
+  while ( ! Q.empty() )
+    {
+      Cell_iterator it = Q.front(); Q.pop();
+      std::vector<Facet> facets;
+      getFacets( facets, it );
+      int j = -2;
+      unsigned int n = 0;
+      for ( int i = 0; i < facets.size(); ++i )
+        {
+          VFacet f( facets[ i ] );
+          if ( bFacet[ f ] > 0 ) ++n;
+        }
+      std::cout << " " << n;
+      if ( ( n >= 2 ) && ( n <= 3 ) ) // 2 or 3 facets were "basic"
+        {
+          for ( int i = 0; i < facets.size(); ++i )
+            {
+              std::cout << "+"; 
+              VFacet f( facets[ i ] );
+              if ( bFacet[ f ] <= 0 ) // contaminate exterior facets
+                {
+                  bFacet[ f ] = 1;
+                  Facet f2 = t.mirror_facet( facets[ i ] );
+                  if ( nbLatticePoints[ f2.first ] == 4 )
+                    Q.push( f2.first );
+                }
+              else 
+                {
+                  bFacet[ f ] = 2; // hide inner facets
+                }
+            }
+        }
+    }
+
+  Color colBasicFacet2( 0, 255, 255, 255 );
+  Color colBasicFacet1( 0, 255, 0, 255 );
+  for( Facet_iterator it = t.facets_begin(), itend = t.facets_end();
+       it != itend; ++it)
+    {
+      VFacet f( *it );
+      //std::cout << " " << bFacet[ f ];
+      if ( bFacet[ f ] > 0 )
+        {
+          Point a( toDGtal( f.first->point() ) );
+          Point b( toDGtal( f.second->point() ) );
+          Point c( toDGtal( f.third->point() ) );
 	  viewer.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
 			      b[ 0 ], b[ 1 ], b[ 2 ],
 			      c[ 0 ], c[ 1 ], c[ 2 ],
-			      col );
-	  viewer.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-			      b[ 0 ], b[ 1 ], b[ 2 ],
-			      d[ 0 ], d[ 1 ], d[ 2 ], 
-			      col );
-	  viewer.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-			      d[ 0 ], d[ 1 ], d[ 2 ], 
-			      a[ 0 ], a[ 1 ], a[ 2 ],
-			      col );
-	  viewer.addTriangle( d[ 0 ], d[ 1 ], d[ 2 ], 
-			      b[ 0 ], b[ 1 ], b[ 2 ],
-			      a[ 0 ], a[ 1 ], a[ 2 ],
-			      col );
-	}
+			      (bFacet[ f ] == 1) ? colBasicFacet1 : colBasicFacet2 );
+        }
+    }
+  std::cout << std::endl;
+
+  //////////////////////////////////////////////////////////////////////
+  for ( Cell_iterator it = t.cells_begin(), itend = t.cells_end();
+        it != itend; ++it )
+    {
+      if ( ( ! t.is_infinite( it ) )
+           && ( nbLatticePoints[ it ] == 4 ) )
+        //if ( n > 4 ) trace.info() << " " << n;
+      // if ( n <= 3 ) trace.error() << " Not enough lattice points" << std::endl;
+        {
+          Point a( toDGtal(it->vertex(0)->point())),
+            b(toDGtal(it->vertex(1)->point())),
+            c(toDGtal(it->vertex(2)->point())),
+            d(toDGtal(it->vertex(3)->point()));
+          Color col( 255, 0, 0, 100 );
+          viewer.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
+        		      b[ 0 ], b[ 1 ], b[ 2 ],
+        		      c[ 0 ], c[ 1 ], c[ 2 ],
+        		      col );
+          viewer.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
+        		      b[ 0 ], b[ 1 ], b[ 2 ],
+        		      d[ 0 ], d[ 1 ], d[ 2 ], 
+        		      col );
+          viewer.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
+        		      d[ 0 ], d[ 1 ], d[ 2 ], 
+        		      a[ 0 ], a[ 1 ], a[ 2 ],
+        		      col );
+          viewer.addTriangle( d[ 0 ], d[ 1 ], d[ 2 ], 
+        		      b[ 0 ], b[ 1 ], b[ 2 ],
+        		      a[ 0 ], a[ 1 ], a[ 2 ],
+        		      col );
+        }
     }
 
 
