@@ -19,12 +19,14 @@
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
 typedef CGAL::Delaunay_triangulation_2<K> Delaunay;
-typedef Delaunay::Vertex_circulator Vertex_circulator;
-typedef Delaunay::Edge_iterator  Edge_iterator;
-typedef Delaunay::Finite_faces_iterator  Faces_iterator;
-typedef Delaunay::Point            Point;
-typedef K::Vector_2             Vector;
-typedef Delaunay::Face_handle  Face_handle;
+typedef Delaunay::Vertex_circulator       Vertex_circulator;
+typedef Delaunay::Vertex_handle           Vertex_handle;
+typedef Delaunay::Edge_iterator           Edge_iterator;
+typedef Delaunay::Edge                    Edge;
+typedef Delaunay::Finite_faces_iterator   Faces_iterator;
+typedef Delaunay::Point                   Point;
+typedef K::Vector_2                       Vector;
+typedef Delaunay::Face_handle             Face_handle;
 
 
 DGtal::Z2i::Point toDGtal(const Point &p)
@@ -38,26 +40,56 @@ DGtal::Z2i::Vector toDGtal(const Vector &p)
 
 using namespace DGtal;
 
+bool
+emptyLatticeTriangle( const Delaunay & t,
+                      const Vertex_handle & v1,
+                      const Vertex_handle & v2,
+                      const Vertex_handle & v3 )
+{
+  if ( t.is_infinite( v1 ) 
+       || t.is_infinite( v2 ) 
+       || t.is_infinite( v3 ) ) return false;
+  Z2i::Point a( toDGtal( v1->point())),
+    b(toDGtal( v2->point())),
+    c(toDGtal( v3->point()));
+  
+  Z2i::Vector ab( b - a ), ac( c - a );
+  int d = ab[ 0 ] * ac[ 1 ] - ab[ 1 ] * ac[ 0 ];
+  return ( d == 1 ) || (d == -1 );
+}
+bool
+emptyLatticeTriangle( const Delaunay & t, const Face_handle & f )
+{
+  if ( t.is_infinite( f ) ) return false;
+  Z2i::Point a( toDGtal(f->vertex(0)->point())),
+    b(toDGtal(f->vertex(1)->point())),
+    c(toDGtal(f->vertex(2)->point()));
+  
+  Z2i::Vector ab( b - a ), ac( c - a );
+  int d = ab[ 0 ] * ac[ 1 ] - ab[ 1 ] * ac[ 0 ];
+  return ( d == 1 ) || (d == -1 );
+}
+
 int main ()
 {
   
   Delaunay t;
   
   trace.beginBlock("Construction the shape");
-  // typedef Ellipse2D<Z2i::Space> Ellipse; 
-  // Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), 5, 3, 0.3 );
-  // double h = 1; 
-  // GaussDigitizer<Z2i::Space,Ellipse> dig;  
-  // dig.attach( ellipse );
-  // dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
-  //           ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
-  typedef Flower2D<Z2i::Space> Flower; 
-  Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
-  double h = 1; 
-  GaussDigitizer<Z2i::Space,Flower> dig;  
-  dig.attach( flower );
-  dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
-            flower.getUpperBound()+Z2i::Vector(1,1), h ); 
+  typedef Ellipse2D<Z2i::Space> Ellipse; 
+  Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), 5, 3, 0.3 );
+  double h = 0.02; 
+  GaussDigitizer<Z2i::Space,Ellipse> dig;  
+  dig.attach( ellipse );
+  dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
+            ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
+  // typedef Flower2D<Z2i::Space> Flower; 
+  // Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
+  // double h = 0.75; 
+  // GaussDigitizer<Z2i::Space,Flower> dig;  
+  // dig.attach( flower );
+  // dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
+  //           flower.getUpperBound()+Z2i::Vector(1,1), h ); 
   Z2i::KSpace ks;
   ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
   SurfelAdjacency<2> sAdj( true );
@@ -84,7 +116,38 @@ int main ()
   std::cout << t.number_of_faces() << std::endl;
   
   trace.beginBlock("Area minimizing triangulation");
-  
+  Edge_iterator itnext;
+  for( Edge_iterator it = t.edges_begin(), itend=t.edges_end();
+       it != itend; it = itnext )
+    {
+      // vertex(cw(i)) and vertex(ccw(i)) of f.
+      itnext = it; ++itnext;
+      Edge e1 = *it;
+      Edge e2 = t.mirror_edge( e1 );
+      bool empty_f1 = emptyLatticeTriangle( t, e1.first );
+      bool empty_f2 = emptyLatticeTriangle( t, e2.first );
+      if ( ( empty_f1 == false )
+           && ( empty_f2 == false ) )
+        { // try if flip is better.
+          bool empty_flip_f1 
+            = emptyLatticeTriangle( t,
+                                    e1.first->vertex( e1.second ), 
+                                    e1.first->vertex( t.ccw( e1.second ) ),
+                                    e2.first->vertex( e2.second ) );
+          bool empty_flip_f2 
+            = emptyLatticeTriangle( t,
+                                    e2.first->vertex( e2.second ), 
+                                    e2.first->vertex( t.ccw( e2.second ) ),
+                                    e1.first->vertex( e1.second ) );
+          if ( empty_flip_f1 || empty_flip_f2 )
+            {
+              std::cout << "flipped " << e1.first->vertex( e1.second )->point()
+                        << "->" << e1.first->vertex( e1.second )->point()
+                        << std::endl;
+              //t.flip( e1.first, e1.second );
+            }
+        }
+    }  
   trace.endBlock();
 
 
@@ -119,9 +182,9 @@ int main ()
 	b(toDGtal(it->vertex(1)->point())),
 	c(toDGtal(it->vertex(2)->point()));
 
-      Z2i::Vector ab( b - a ), ac( c - a );
-      int d = ab[ 0 ] * ac[ 1 ] - ab[ 1 ] * ac[ 0 ];
-      if ( ( d == 1 ) || (d == -1 ) )
+      // Z2i::Vector ab( b - a ), ac( c - a );
+      // int d = ab[ 0 ] * ac[ 1 ] - ab[ 1 ] * ac[ 0 ];
+      if ( emptyLatticeTriangle( t, it ) ) //( ( d == 1 ) || (d == -1 ) )
         {
           board.setPenColor(DGtal::Color::Blue);
           board.setFillColor( DGtal::Color::None );
@@ -179,13 +242,18 @@ int main ()
           board.setPenColor(DGtal::Color::Black);
           board.setFillColor( DGtal::Color::None );
           board.setLineWidth( 2.0 );
+          double dx = ptrRay->to_vector().x();
+          double dy = ptrRay->to_vector().y();
+          double norm = sqrt( dx*dx+dy*dy );
+          dx = 5.0 * dx / norm;
+          dy = 5.0 * dy / norm;
           board.drawArrow( ptrRay->source().x(),
                            ptrRay->source().y(),
-                           ptrRay->source().x() + 1*ptrRay->to_vector().x(),
-                           ptrRay->source().y() + 1*ptrRay->to_vector().y() );
+                           ptrRay->source().x() + dx, //1*ptrRay->to_vector().x(),
+                           ptrRay->source().y() + dy ); //1*ptrRay->to_vector().y() );
         }
     }
-  board << dig.getDomain();
+  //board << dig.getDomain();
 
   
   board.saveSVG("delaunay.svg");

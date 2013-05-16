@@ -2,11 +2,16 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <boost/program_options/options_description.hpp>
+#include <boost/program_options/parsers.hpp>
+#include <boost/program_options/variables_map.hpp>
 
 #include <QtGui/qapplication.h>
 
 #include <DGtal/base/Common.h>
 #include <DGtal/helpers/StdDefs.h>
+#include "DGtal/images/ImageSelector.h"
+#include "DGtal/images/imagesSetsUtils/SetFromImage.h"
 #include <DGtal/shapes/Shapes.h>
 #include <DGtal/shapes/ShapeFactory.h>
 #include "DGtal/shapes/implicit/ImplicitPolynomial3Shape.h"
@@ -15,6 +20,7 @@
 #include "DGtal/io/viewers/Viewer3D.h"
 #include "DGtal/io/DrawWithDisplay3DModifier.h"
 #include "DGtal/io/readers/MPolynomialReader.h"
+#include "DGtal/io/readers/VolReader.h"
 
 #include <CGAL/Delaunay_triangulation_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -302,20 +308,43 @@ getFacets( std::vector<Facet> & facets, const Cell_iterator & it )
     facets.push_back( Facet( it, i ) );
 }
 
-/*
-  "29*z+47*y+23*x-5"
+double
+computeDihedralAngle( const Delaunay & t, const Facet & f1, const Facet & f2 )
+{
+  typedef CGAL::Vector_3<K> Vector;
+  ASSERT( f1.first == f2.first );
+  Vector n1 = t.triangle(f1).supporting_plane().orthogonal_vector();
+  n1 = n1 / sqrt( n1.squared_length() );
+  Vector n2 = t.triangle(f2).supporting_plane().orthogonal_vector();
+  n2 = n2 / sqrt( n2.squared_length() );
+  return acos( (double) (n1*n2) );
+}
+
+///////////////////////////////////////////////////////////////////////////////
+namespace po = boost::program_options;
+
+/**
+   Main function.
+
+   @param argc the number of parameters given on the line command.
+
+   @param argv an array of C-string, such that argv[0] is the name of
+   the program, argv[1] the first parameter, etc.
+
+     "29*z+47*y+23*x-5"
   "10*z-x^2+y^2-100"
   "z*x*y+x^4-5*x^2+2*y^2*z-z^2-1000"
   "(15*z-x^2+y^2-100)*(x^2+y^2+z^2-1000)" nice
   "(x^2+y^2+(z+5)^2-100)^2+10*(x^2+y^2+(z-3)^2)-2000" bowl
   "x^2+y^2+2*z^2-x*y*z+z^3-100" dragonfly
   "(x^2+y^2+(z+5)^2)^2-x^2*(z^2-x^2-y^2)-100" joli coeur
- */
+  "0.5*(z^2-4*4)^2+(x^2-7*7)^2+(y^2-7*7)^2-7.2*7.2*7.2*7.2" convexites et concavites
+
+*/
 int main (int argc, char** argv )
 {
   using namespace DGtal;
 
-  
   typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
   typedef Z3::Vector Vector;
   typedef Z3::RealPoint RealPoint;
@@ -324,48 +353,124 @@ int main (int argc, char** argv )
   typedef SCellSet::const_iterator SCellSetConstIterator;
   // typedef ImplicitRoundedHyperCube<Z3> Shape;
   typedef RealPoint::Coordinate Ring;
-  typedef MPolynomial<3, Ring> Polynomial3;
-  typedef MPolynomialReader<3, Ring> Polynomial3Reader;
-  
-  typedef ImplicitPolynomial3Shape<Z3> Shape;
-  typedef GaussDigitizer<Z3,Shape> Digitizer;
-
 
   QApplication application(argc,argv); // remove Qt arguments.
 
-  Delaunay t;
+  po::options_description general_opt("Specific allowed options (for Qt options, see Qt official site) are: ");
+  general_opt.add_options()
+    ("help,h", "display this message")
+    ("vol,v", po::value<std::string>(), "specifies the shape as some subset of a .vol file [arg]" )
+    ("min,m", po::value<int>()->default_value( 1 ), "the minimum threshold in the .vol file: voxel x in shape iff m < I(x) <= M" )
+    ("max,M", po::value<int>()->default_value( 255 ), "the maximum threshold in the .vol file: voxel x in shape iff m < I(x) <= M" )
+    ("poly,p", po::value<std::string>(), "specifies the shape as the zero-level of the multivariate polynomial [arg]" )
+    ("gridstep,g", po::value<double>()->default_value( 1.0 ), "specifies the digitization grid step ([arg] is a double) when the shape is given as a polynomial." )
+    ("bounds,b", po::value<int>()->default_value( 20 ), "specifies the diagonal integral bounds [-arg,-arg,-arg]x[arg,arg,arg] for the digitization of the polynomial surface." )
+    ("prune,P", po::value<double>(), "prunes the resulting the complex of the tetrahedra were the length of the dubious edge is [arg] times the length of the opposite edge." );
+    ; 
   
-  trace.beginBlock("Construction of the shape");
-  //Shape shape( RealPoint( 0.0, 0.0, 0.0 ), 14, 3.0 );
-  Polynomial3 P;
-  Polynomial3Reader reader;
-  std::string poly_str = argc > 1 ? argv[ 1 ] : "x^4+y^4+z^4-50000";
-  std::string::const_iterator iter 
-    = reader.read( P, poly_str.begin(), poly_str.end() );
-  if ( iter != poly_str.end() )
+  // parse command line ----------------------------------------------
+  bool parseOK=true;
+  po::variables_map vm;
+  try {
+    po::command_line_parser clp( argc, argv );
+    clp.options( general_opt );
+    po::store( clp.run(), vm );
+  } catch( const std::exception& ex ) {
+    parseOK = false;
+    trace.info() << "Error checking program options: "<< ex.what() << endl;
+  }
+  po::notify( vm );    
+  if( !parseOK || vm.count("help")||argc<=1
+      || !( vm.count("poly") || vm.count("vol") ) )
     {
-      std::cerr << "ERROR: I read only <" 
-                << poly_str.substr( 0, iter - poly_str.begin() )
-                << ">, and I built P=" << P << std::endl;
-      return 1;
+      std::cout << "Usage: " << argv[0] << " [options] {--vol <vol-file> || --poly <polynomial-string>}\n"
+		<< "Computes the linear reconstruction of the given digital surface, specified either as a thrsholded .vol file or a zero-level of a multivariate polynomial.\n"
+		<< general_opt << "\n\n";
+      std::cout << "Example:\n"
+		<< argv[0] << " -p \"x^2+y^2+2*z^2-x*y*z+z^3-100\" -g " << (double) 0.5 << std::endl;
+      return 0;
     }
-  trace.info() << "P( X_0, X_1, X_2 ) = " << P << std::endl;
-
-  Shape shape( P );
-  double h = argc > 2 ? atof( argv[ 2 ] ) : 1.0; 
-  Digitizer dig;
-  dig.attach( shape );
-  // dig.init( shape.getLowerBound()+Vector::diagonal(-1),
-  //           shape.getUpperBound()+Vector::diagonal(1), h ); 
-  dig.init( Vector::diagonal(-50),
-            Vector::diagonal(50), h ); 
+  
+  
+  // process command line ----------------------------------------------
+  trace.beginBlock("Construction of the shape");
   K3 ks;
-  ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
-  SurfelAdjacency<3> sAdj( true );
-  SCell bel = Surfaces<K3>::findABel( ks, dig, 10000 );
   SCellSet boundary;
-  Surfaces<K3>::trackBoundary( boundary, ks, sAdj, dig, bel );
-  trace.endBlock();
+  SurfelAdjacency<3> sAdj( true );
+  
+  if ( vm.count( "vol" ) )
+    { // .vol file
+      typedef ImageSelector < Domain, int>::Type Image;
+      typedef DigitalSetSelector< Domain, BIG_DS+HIGH_BEL_DS >::Type DigitalSet;
+      std::string input = vm["vol"].as<std::string>();
+      int minThreshold = vm["min"].as<int>();
+      int maxThreshold = vm["max"].as<int>();
+      trace.beginBlock( "Reading vol file into an image." );
+      Image image = VolReader<Image>::importVol( input );
+      DigitalSet set3d ( image.domain() );
+      SetFromImage<DigitalSet>::append<Image>( set3d, image,
+                                               minThreshold, maxThreshold );
+      trace.endBlock();
+      trace.beginBlock( "Creating space." );
+      bool space_ok = ks.init( image.domain().lowerBound(),
+                               image.domain().upperBound(), true );
+      if (!space_ok)
+        {
+          trace.error() << "Error in the Khamisky space construction." << std::endl;
+          return 2;
+        }
+
+      trace.endBlock();
+      trace.beginBlock( "Extracting boundary by scanning the space. " );
+      Surfaces<K3>::sMakeBoundary( boundary,
+                                   ks, set3d,
+                                   image.domain().lowerBound(),
+                                   image.domain().upperBound() );
+      trace.info() << "Digital surface has " << boundary.size() << " surfels."
+                   << std::endl;
+      trace.endBlock();
+     }
+  else if ( vm.count( "poly" ) )
+    {
+      typedef MPolynomial<3, Ring> Polynomial3;
+      typedef MPolynomialReader<3, Ring> Polynomial3Reader;
+      typedef ImplicitPolynomial3Shape<Z3> Shape;
+      typedef GaussDigitizer<Z3,Shape> Digitizer;
+
+      std::string poly_str = vm[ "poly" ].as<std::string>();
+      double h = vm[ "gridstep" ].as<double>();
+      int b = vm[ "bounds" ].as<int>();
+
+      trace.beginBlock( "Reading polynomial." );
+      Polynomial3 P;
+      Polynomial3Reader reader;
+      std::string::const_iterator iter 
+        = reader.read( P, poly_str.begin(), poly_str.end() );
+      if ( iter != poly_str.end() )
+        {
+          std::cerr << "ERROR: I read only <" 
+                    << poly_str.substr( 0, iter - poly_str.begin() )
+                    << ">, and I built P=" << P << std::endl;
+          return 3;
+        }
+      trace.info() << "P( X_0, X_1, X_2 ) = " << P << std::endl;
+      trace.endBlock();
+
+      trace.beginBlock( "Extract polynomial by tracking." );
+      Shape shape( P );
+      Digitizer dig;
+      dig.attach( shape );
+      dig.init( Vector::diagonal( -b ),
+                Vector::diagonal(  b ), h ); 
+      ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
+      SCell bel = Surfaces<K3>::findABel( ks, dig, 100000 );
+      trace.info() << "initial bel (Khalimsky coordinates): " << ks.sKCoords( bel ) << std::endl;
+      Surfaces<K3>::trackBoundary( boundary, ks, sAdj, dig, bel );
+      trace.info() << "Digital surface has " << boundary.size() << " surfels."
+                   << std::endl;
+      trace.endBlock();
+    }
+  else return 4; // should not happen
 
   trace.beginBlock("Delaunay tetrahedrization");
   trace.beginBlock("Getting coordinates.");
@@ -381,7 +486,10 @@ int main (int argc, char** argv )
     shuffle_points.push_back( *it );
   random_shuffle( shuffle_points.begin(), shuffle_points.end() );
   trace.endBlock();
+
+
   trace.beginBlock("Creating the Delaunay complex.");
+  Delaunay t;
   double setsize = (double) inner_points.size()-1;
   trace.info() << "Vertices to process: " << setsize << std::endl;
   double step = 0.0;
@@ -401,13 +509,12 @@ int main (int argc, char** argv )
   trace.endBlock();
 
   // start viewer
-  Viewer3D viewer1, viewer2;
+  Viewer3D viewer1, viewer2, viewer3;
   viewer1.show();
   viewer2.show();
+  viewer3.show();
   // for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
   //    viewer1 << *it;
-  // for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
-  //   viewer1 << ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
   
   trace.beginBlock("Counting lattice points.");
   MapCell2Int nbLatticePoints;
@@ -455,13 +562,15 @@ int main (int argc, char** argv )
 
   trace.beginBlock("Extracting Min-Polyhedron");
   std::set<Cell_handle> markedCells;
+  FacetSet basicFacet;
   FacetSet markedFacet;
   OFacetSet priorityQ;
   FacetSet elementQ;
   std::set<Cell_handle> weirdCells;
-  uint64_t nbBF = markBasicFacets( markedFacet, priorityQ, t, bEdge );
+  uint64_t nbBF = markBasicFacets( basicFacet, priorityQ, t, bEdge );
   trace.info() << "Nb basic facets:" << nbBF << std::endl;
   // At the beginning, the queue is equal to marked facets.
+  markedFacet = basicFacet;
   elementQ = markedFacet;
   bool isMarked[ 4 ];
   while ( ! priorityQ.empty() )
@@ -536,57 +645,86 @@ int main (int argc, char** argv )
   std::cout << std::endl;
   trace.endBlock();
 
-  trace.beginBlock("Remove weird cells");
+  trace.beginBlock("Prune weird cells");
   trace.info() << "weird cells: " << weirdCells.size() << std::endl;
   std::set<Cell_handle> removedWeirdCells;
-  for ( std::set<Cell_handle>::const_iterator it = weirdCells.begin(), itend = weirdCells.end();
-	it != itend; ++it )
+  bool prune = vm.count( "prune" );
+  if ( prune )
     {
-      if ( removedWeirdCells.find( *it ) == removedWeirdCells.end() ) 
-	{ 
-	  std::vector<Facet> facets;
-	  getFacets( facets, *it );
-	  std::vector<unsigned int> f_exterior;
-	  std::vector<unsigned int> f_interior;
-	  for ( unsigned int i = 0; i < facets.size(); ++i )
-	    { // count exterior facets
-	      Facet m = t.mirror_facet( facets[ i ] );
-	      if ( ( markedFacet.find( m ) != markedFacet.end() )
-		   && ( markedCells.find( m.first ) == markedCells.end() ) )
-		f_exterior.push_back( i );
-	      else if ( markedFacet.find( facets[ i ] ) != markedFacet.end() )
-		f_interior.push_back( i );
-	    }
-	  // if ( ( f_exterior.size() + f_interior.size() ) != 4 )
-	  //   std::cout << "ERROR " << f_exterior.size() << ", " << f_interior.size() << std::endl;
-	  // else if ( ( f_exterior.size() == 2 ) && ( f_interior.size() == 2 ) )
-	  if ( ( f_exterior.size() == 2 ) && ( f_interior.size() == 2 ) )
-	    {
-	      // (i,j) is the edge common to the two other faces.
-	      int i = facets[ f_exterior[ 0 ] ].second; 
-	      int j = facets[ f_exterior[ 1 ] ].second;
-	      // (k,l) is the edge common to the two exterior faces.
-	      int k = ( (i+1)%4 == j ) ? (i+2)%4 : (i+1)%4;
-	      int l = (k+1)%4;
-	      for ( ; (l == i ) || ( l == j ); l = (l+1)%4 ) ;
-	      Point A( toDGtal( (*it )->vertex( i )->point() ) );
-	      Point B( toDGtal( (*it )->vertex( j )->point() ) );
-	      Point C( toDGtal( (*it )->vertex( k )->point() ) );
-	      Point D( toDGtal( (*it )->vertex( l )->point() ) );
-	      if ( (C-D).norm( Point::L_1 ) > (A-B).norm( Point::L_1 ) )
-		{ // preference to shorter edge.
-		  // std::cout << "(" << f_exterior.size() << "," << f_interior.size() << std::endl;
-		  markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 0 ] ] ) );
-		  markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 1 ] ] ) );
-		  markedCells.erase( *it );
-		  removedWeirdCells.insert( *it );
-		}
-	    }
-	}
+      double factor = vm[ "prune" ].as<double>();
+      double changed = true;
+      while ( changed ) {
+          changed = false;
+          for ( std::set<Cell_handle>::const_iterator it = weirdCells.begin(), itend = weirdCells.end();
+                it != itend; ++it )
+            {
+              if ( removedWeirdCells.find( *it ) == removedWeirdCells.end() ) 
+                { 
+                  std::vector<Facet> facets;
+                  getFacets( facets, *it );
+                  std::vector<unsigned int> f_exterior;
+                  std::vector<unsigned int> f_interior;
+                  std::vector<unsigned int> f_basic;
+                  for ( unsigned int i = 0; i < facets.size(); ++i )
+                    { // count exterior facets
+                      Facet m = t.mirror_facet( facets[ i ] );
+                      if ( ( markedFacet.find( m ) != markedFacet.end() )
+                           && ( markedCells.find( m.first ) == markedCells.end() ) )
+                        f_exterior.push_back( i );
+                      else if ( markedFacet.find( facets[ i ] ) != markedFacet.end() )
+                        f_interior.push_back( i );
+                      if ( basicFacet.find( m ) != basicFacet.end() )
+                        f_basic.push_back( i );
+                    }
+                  if ( ( f_exterior.size() >= 3 ) ) //&& ( f_interior.size() == 2 ) )
+                    {
+                      //if ( f_basic.size() == 0 )
+                        std::cerr << "Weird !"
+                                  << " ext=" << f_exterior.size()
+                                  << " int=" << f_interior.size()
+                                  << " bas=" << f_basic.size()
+                                  << std::endl;
+                      // while ( f_basic.empty() )
+                      //   {
+                      //     f_exterior.erase
+                      //   }
+                    }
+                  if ( ( f_exterior.size() == 2 ) && ( f_interior.size() == 2 ) )
+                    {
+                      // (i,j) is the edge common to the two other faces.
+                      int i = facets[ f_exterior[ 0 ] ].second; 
+                      int j = facets[ f_exterior[ 1 ] ].second;
+                      // (k,l) is the edge common to the two exterior faces.
+                      int k = ( (i+1)%4 == j ) ? (i+2)%4 : (i+1)%4;
+                      int l = (k+1)%4;
+                      for ( ; (l == i ) || ( l == j ); l = (l+1)%4 ) ;
+                      Point A( toDGtal( (*it )->vertex( i )->point() ) );
+                      Point B( toDGtal( (*it )->vertex( j )->point() ) );
+                      Point C( toDGtal( (*it )->vertex( k )->point() ) );
+                      Point D( toDGtal( (*it )->vertex( l )->point() ) );
+
+                      double angle = fabs( M_PI - computeDihedralAngle( t, facets[ f_exterior[ 0 ] ], 
+                                                                        facets[ f_exterior[ 1 ] ] ) );
+                      if ( angle < factor )
+                        // if ( (C-D).norm( Point::L_1 ) > factor*(A-B).norm( Point::L_1 ) )
+                        { // preference to shorter edge.
+                          // std::cout << "(" << f_exterior.size() << "," << f_interior.size() << std::endl;
+                          markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 0 ] ] ) );
+                          markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 1 ] ] ) );
+                          markedCells.erase( *it );
+                          removedWeirdCells.insert( *it );
+                          markedFacet.insert( facets[ f_interior[ 0 ] ] );
+                          markedFacet.insert( facets[ f_interior[ 1 ] ] );
+                          changed = true;
+                        }
+                    }
+                }
+            }
+      } //  while ( changed ) {
+
     }
   trace.info() << "weird cells removed : " << removedWeirdCells.size() << std::endl;
   trace.endBlock();
-
 
   Color colBasicFacet2( 0, 255, 255, 255 );
   Color colBasicFacet1( 0, 255, 0, 255 );
@@ -633,12 +771,18 @@ int main (int argc, char** argv )
     {
       bool draw = false;
       Color col;
-      if ( removedWeirdCells.find( it ) != removedWeirdCells.end() )
-	{
-	  col = Color( 255, 255, 0, 100 );
-	  draw = true;
-	}
-      else if ( ( ! t.is_infinite( it ) )
+      if ( weirdCells.find( it ) != weirdCells.end() )
+        {
+          col = Color( 255, 100, 255, 100 );
+          draw = true;
+        }
+      if ( prune && ( removedWeirdCells.find( it ) != removedWeirdCells.end() ) )
+        {
+          col = Color( 255, 255, 0, 100 );
+          draw = true;
+        }
+      else
+        if ( ( ! t.is_infinite( it ) )
 		&& ( nbLatticePoints[ it ] == 4 )
 		&& ( markedCells.find( it ) == markedCells.end() ) )
 	{
@@ -681,8 +825,12 @@ int main (int argc, char** argv )
   std::cout << "number of cells :  " ;
   std::cout << t.number_of_cells() << std::endl;
 
+  for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
+    viewer3 << ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
+
   viewer1 << Viewer3D::updateDisplay;
   viewer2 << Viewer3D::updateDisplay;
+  viewer3 << Viewer3D::updateDisplay;
   application.exec();
   
   return 0;
