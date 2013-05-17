@@ -10,23 +10,19 @@
 
 #include <DGtal/base/Common.h>
 #include <DGtal/helpers/StdDefs.h>
-#include "DGtal/images/ImageSelector.h"
-#include "DGtal/images/imagesSetsUtils/SetFromImage.h"
 #include <DGtal/shapes/Shapes.h>
 #include <DGtal/shapes/ShapeFactory.h>
-#include "DGtal/shapes/implicit/ImplicitPolynomial3Shape.h"
-#include <DGtal/shapes/GaussDigitizer.h>
 #include <DGtal/topology/helpers/Surfaces.h>
 #include "DGtal/io/viewers/Viewer3D.h"
 #include "DGtal/io/DrawWithDisplay3DModifier.h"
-#include "DGtal/io/readers/MPolynomialReader.h"
-#include "DGtal/io/readers/VolReader.h"
 
 #include <CGAL/Delaunay_triangulation_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Triangulation_3.h>
 #include <CGAL/Cartesian.h>
 #include <CGAL/CORE/Expr.h>
+
+#include "Auxiliary.h"
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
 //typedef CGAL::Cartesian<CORE::Expr> K;
@@ -145,21 +141,21 @@ public:
 
 struct OFacet {
   Facet facet;
-  DGtal::int64_t crossNormL1;
+  double criterion;
 
-  inline OFacet() : crossNormL1( 0 ) {}
+  inline OFacet() : criterion( 0 ) {}
 
   inline OFacet( const Facet & f )
     : facet( f ) 
   {
-    computeCrossNormL1();
+    computeCriterion();
   }
   inline OFacet( const Facet & f, DGtal::int64_t nl1 )
-    : facet( f ), crossNormL1( nl1 )
+    : facet( f ), criterion( nl1 )
   {}
 
   inline OFacet( const OFacet & other )
-    : facet( other.facet ), crossNormL1( other.crossNormL1 )
+    : facet( other.facet ), criterion( other.criterion )
   {}
 
   inline
@@ -168,19 +164,29 @@ struct OFacet {
     if ( this != &other )
       {
 	facet = other.facet;
-	crossNormL1 = other.crossNormL1;
+	criterion = other.criterion;
       }
     return *this;
   }
 
-  void computeCrossNormL1()
+  void computeCriterion()
   {
-    VFacet vf( facet );
+    criterion = 0.0;
+    for ( int i = 0; i < 4; ++i )
+      {
+	Facet g = facet;
+	g.second = i;
+	VFacet vf( g );
+	criterion = std::max( criterion, crossNormL1( vf ) );
+      }
+  }
+  double crossNormL1( const VFacet & vf)
+  {
     Point a( toDGtal( vf.first->point() ) );
     Point b( toDGtal( vf.second->point() ) );
     Point c( toDGtal( vf.third->point() ) );
     Point n( (b-a)^(c-a) );
-    crossNormL1 = n.norm( Point::L_1 );
+    return n.norm( Point::L_1 );
   }
 };
 
@@ -188,8 +194,8 @@ struct OFacetLessComparator{
   inline
   bool operator()( const OFacet & f1, const OFacet & f2 ) const 
   {
-    return ( f1.crossNormL1 < f2.crossNormL1 )
-      || ( ( f1.crossNormL1 == f2.crossNormL1 )
+    return ( f1.criterion < f2.criterion )
+      || ( ( f1.criterion == f2.criterion )
 	   && ( f1.facet < f2.facet ) );
   }
 };
@@ -231,6 +237,37 @@ markBasicEdges( MapEdge2Int & basicMap, const Delaunay & t )
   return nb;
 }
 
+/**
+   @return true if the facet is planar and elementary.
+*/
+bool 
+checkPlanarFacet( const Delaunay & t, const Facet & f )
+{
+  if ( ! t.is_infinite( f ) )
+    { 
+      VFacet vf( f );
+      Point a( toDGtal( vf.first->point() ) );
+      Point b( toDGtal( vf.second->point() ) );
+      Point c( toDGtal( vf.third->point() ) );
+      Point n( (b-a)^(c-a) );
+      return n.norm( Point::L_infty ) == 1;
+    }
+  return false;
+}
+/**
+   @return true if the facet is planar and elementary.
+*/
+bool 
+checkPlanarVFacet( const VFacet & vf )
+{
+  Point a( toDGtal( vf.first->point() ) );
+  Point b( toDGtal( vf.second->point() ) );
+  Point c( toDGtal( vf.third->point() ) );
+  Point n( (b-a)^(c-a) );
+  return n.norm( Point::L_infty ) == 1;
+}
+
+
 DGtal::uint64_t 
 markBasicFacets( FacetSet & bFacets, OFacetSet & qFacets,
 		 const Delaunay & t, MapEdge2Int & basicEdgeMap )
@@ -239,9 +276,9 @@ markBasicFacets( FacetSet & bFacets, OFacetSet & qFacets,
   for( Facet_iterator it = t.facets_begin(), itend = t.facets_end();
        it != itend; ++it)
     {
-      VFacet f( *it ); 
       if ( ! t.is_infinite( *it ) )
         {
+	  VFacet f( *it ); 
           Cell_iterator itCell = it->first; int i = it->second;
           VEdge e1( f.first, f.second );
           VEdge e2( f.second, f.third );
@@ -250,10 +287,10 @@ markBasicFacets( FacetSet & bFacets, OFacetSet & qFacets,
           n += basicEdgeMap[ e1 ] == 1 ? 1 : 0;
           n += basicEdgeMap[ e2 ] == 1 ? 1 : 0;
           n += basicEdgeMap[ e3 ] == 1 ? 1 : 0;
-          if ( n == 3 )
+          if ( ( n == 3 ) ) // || checkPlanarVFacet( f ) )
             {
 	      OFacet f1( *it );
-	      OFacet f2( t.mirror_facet( f1.facet ), f1.crossNormL1 );
+	      OFacet f2( t.mirror_facet( f1.facet ), f1.criterion );
 	      bFacets.insert( f1.facet );
 	      bFacets.insert( f2.facet );
 	      qFacets.insert( f1 );
@@ -320,6 +357,7 @@ computeDihedralAngle( const Delaunay & t, const Facet & f1, const Facet & f2 )
   return acos( (double) (n1*n2) );
 }
 
+
 ///////////////////////////////////////////////////////////////////////////////
 namespace po = boost::program_options;
 
@@ -365,7 +403,9 @@ int main (int argc, char** argv )
     ("poly,p", po::value<std::string>(), "specifies the shape as the zero-level of the multivariate polynomial [arg]" )
     ("gridstep,g", po::value<double>()->default_value( 1.0 ), "specifies the digitization grid step ([arg] is a double) when the shape is given as a polynomial." )
     ("bounds,b", po::value<int>()->default_value( 20 ), "specifies the diagonal integral bounds [-arg,-arg,-arg]x[arg,arg,arg] for the digitization of the polynomial surface." )
-    ("prune,P", po::value<double>(), "prunes the resulting the complex of the tetrahedra were the length of the dubious edge is [arg] times the length of the opposite edge." );
+    ("prune,P", po::value<double>(), "prunes the resulting the complex of the tetrahedra were the length of the dubious edge is [arg] times the length of the opposite edge." )
+    ("geometry,G", po::value<int>()->default_value( 0 ), "specifies how digital points are defined from the digital surface: arg=0: inner voxels, arg=1: inner and outer voxels, arg=2: pointels" )
+    ("areafactor,a", po::value<double>()->default_value( sqrt(2.0) ), "specifies the convexity/concavity area ratio." )
     ; 
   
   // parse command line ----------------------------------------------
@@ -392,120 +432,55 @@ int main (int argc, char** argv )
     }
   
   
-  // process command line ----------------------------------------------
-  trace.beginBlock("Construction of the shape");
+  // Construction of the digital surface ----------------------------------------------
+  trace.beginBlock("Construction of the digital surface");
   K3 ks;
   SCellSet boundary;
-  SurfelAdjacency<3> sAdj( true );
-  
+  //  SurfelAdjacency<3> sAdj( true );
+  int ok = 4;
   if ( vm.count( "vol" ) )
     { // .vol file
-      typedef ImageSelector < Domain, int>::Type Image;
-      typedef DigitalSetSelector< Domain, BIG_DS+HIGH_BEL_DS >::Type DigitalSet;
-      std::string input = vm["vol"].as<std::string>();
-      int minThreshold = vm["min"].as<int>();
-      int maxThreshold = vm["max"].as<int>();
-      trace.beginBlock( "Reading vol file into an image." );
-      Image image = VolReader<Image>::importVol( input );
-      DigitalSet set3d ( image.domain() );
-      SetFromImage<DigitalSet>::append<Image>( set3d, image,
-                                               minThreshold, maxThreshold );
-      trace.endBlock();
-      trace.beginBlock( "Creating space." );
-      bool space_ok = ks.init( image.domain().lowerBound(),
-                               image.domain().upperBound(), true );
-      if (!space_ok)
-        {
-          trace.error() << "Error in the Khamisky space construction." << std::endl;
-          return 2;
-        }
-
-      trace.endBlock();
-      trace.beginBlock( "Extracting boundary by scanning the space. " );
-      Surfaces<K3>::sMakeBoundary( boundary,
-                                   ks, set3d,
-                                   image.domain().lowerBound(),
-                                   image.domain().upperBound() );
-      trace.info() << "Digital surface has " << boundary.size() << " surfels."
-                   << std::endl;
-      trace.endBlock();
+      ok = makeSpaceAndBoundaryFromVolFile( ks, boundary,
+					    vm["vol"].as<std::string>(),
+					    vm["min"].as<int>(),
+					    vm["max"].as<int>() );
      }
   else if ( vm.count( "poly" ) )
     {
-      typedef MPolynomial<3, Ring> Polynomial3;
-      typedef MPolynomialReader<3, Ring> Polynomial3Reader;
-      typedef ImplicitPolynomial3Shape<Z3> Shape;
-      typedef GaussDigitizer<Z3,Shape> Digitizer;
-
-      std::string poly_str = vm[ "poly" ].as<std::string>();
-      double h = vm[ "gridstep" ].as<double>();
-      int b = vm[ "bounds" ].as<int>();
-
-      trace.beginBlock( "Reading polynomial." );
-      Polynomial3 P;
-      Polynomial3Reader reader;
-      std::string::const_iterator iter 
-        = reader.read( P, poly_str.begin(), poly_str.end() );
-      if ( iter != poly_str.end() )
-        {
-          std::cerr << "ERROR: I read only <" 
-                    << poly_str.substr( 0, iter - poly_str.begin() )
-                    << ">, and I built P=" << P << std::endl;
-          return 3;
-        }
-      trace.info() << "P( X_0, X_1, X_2 ) = " << P << std::endl;
-      trace.endBlock();
-
-      trace.beginBlock( "Extract polynomial by tracking." );
-      Shape shape( P );
-      Digitizer dig;
-      dig.attach( shape );
-      dig.init( Vector::diagonal( -b ),
-                Vector::diagonal(  b ), h ); 
-      ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
-      SCell bel = Surfaces<K3>::findABel( ks, dig, 100000 );
-      trace.info() << "initial bel (Khalimsky coordinates): " << ks.sKCoords( bel ) << std::endl;
-      Surfaces<K3>::trackBoundary( boundary, ks, sAdj, dig, bel );
-      trace.info() << "Digital surface has " << boundary.size() << " surfels."
-                   << std::endl;
-      trace.endBlock();
+      ok = makeSpaceAndBoundaryFromPolynomialString( ks, boundary,
+						     vm[ "poly" ].as<std::string>(),
+						     vm[ "gridstep" ].as<double>(),
+						     vm[ "bounds" ].as<int>() );
     }
-  else return 4; // should not happen
-
-  trace.beginBlock("Delaunay tetrahedrization");
-  trace.beginBlock("Getting coordinates.");
-  std::set<SCell> inner_points;
-  for( SCellSetConstIterator it = boundary.begin(), itE = boundary.end(); it != itE; ++it )
-    // Get inner point.
-    inner_points.insert( ks.sDirectIncident( *it, ks.sOrthDir( *it ) ) );
   trace.endBlock();
+  if ( ok != 0 ) return ok; // error.
+
+  trace.beginBlock("Constructing the set of points");
+  std::vector<Point> digital_points;
+  int geometry = vm["geometry"].as<int>();
+  if ( geometry == 0 )
+    getInnerVoxelCoordinates( digital_points, ks, boundary.begin(), boundary.end() );
+  else if ( geometry == 1 )
+    getInnerAndOuterVoxelCoordinates( digital_points, ks, boundary.begin(), boundary.end() );
+  else if ( geometry == 2 )
+    getPointelCoordinates( digital_points, ks, boundary.begin(), boundary.end() );
+
   trace.beginBlock("Shuffle points.");
-  std::vector<SCell> shuffle_points;
-  for ( std::set<SCell>::const_iterator it = inner_points.begin(), itE = inner_points.end();
-	it != itE; ++it )
-    shuffle_points.push_back( *it );
-  random_shuffle( shuffle_points.begin(), shuffle_points.end() );
+  random_shuffle( digital_points.begin(), digital_points.end() );
   trace.endBlock();
-
+  trace.endBlock();
 
   trace.beginBlock("Creating the Delaunay complex.");
   Delaunay t;
-  double setsize = (double) inner_points.size()-1;
+  double setsize = (double) digital_points.size()-1;
   trace.info() << "Vertices to process: " << setsize << std::endl;
   double step = 0.0;
-  for ( std::vector<SCell>::const_iterator it = shuffle_points.begin(), itE = shuffle_points.end();
+  for ( std::vector<Point>::const_iterator it = digital_points.begin(), itE = digital_points.end();
 	it != itE; ++it, ++step )
     {
       trace.progressBar( step, setsize );
-      t.insert( toCGAL( ks.sCoords( *it ) ) );
+      t.insert( toCGAL( *it ) );
     }
-  // for ( std::set<SCell>::const_iterator it = inner_points.begin(), itE = inner_points.end();
-  // 	it != itE; ++it, ++step )
-  //   {
-  //     trace.progressBar( step, setsize );
-  //     t.insert( toCGAL( ks.sCoords( *it ) ) );
-  //   }
-  trace.endBlock();
   trace.endBlock();
 
   // start viewer
@@ -561,6 +536,8 @@ int main (int argc, char** argv )
   trace.endBlock();
 
   trace.beginBlock("Extracting Min-Polyhedron");
+  double areafactor = vm["areafactor"].as<double>();
+
   std::set<Cell_handle> markedCells;
   FacetSet basicFacet;
   FacetSet markedFacet;
@@ -604,11 +581,27 @@ int main (int argc, char** argv )
 	      if ( isMarked[ i ] )  f_marked.push_back( i );
 	      else                  f_unmarked.push_back( i );
 	    }
+	  // Add basic planar facets when encountered.
+	  for ( std::vector<unsigned int>::iterator it_fu = f_unmarked.begin();
+		it_fu != f_unmarked.end(); )
+	    {
+	      if ( checkPlanarFacet( t, facets[ *it_fu ] ) )
+		{
+		  Facet mf = t.mirror_facet( facets[ *it_fu ] );
+		  markedFacet.insert( facets[ *it_fu ] );
+		  markedFacet.insert( mf );
+		  isMarked[ *it_fu ] = true;
+		  f_marked.push_back( *it_fu );
+		  f_unmarked.erase( it_fu );
+		}
+	      else 
+		++it_fu;
+	    }
 	  unsigned int n = f_marked.size();
 	  // At least 2 are marked, by convexity, we can close the gap
 	  // to the further faces of the cell.
 	  // std::cout << " " << n;
-	  bool propagate = n >= 2;
+	  bool propagate = n >= 3;
 	  if ( n == 2 )
 	    {
 	      // We must check that further tetrahedra do not contain integer points.
@@ -616,7 +609,16 @@ int main (int argc, char** argv )
 	      // Facet h1 = t.mirror_facet( facets[ f_marked[ 1 ] ] );
 	      // std::cout << "(" << nbLatticePoints[ h0.first ] 
 	      // 		<< "," << nbLatticePoints[ h1.first ] << ")";
-	      weirdCells.insert( ofacet.facet.first );
+	      double area_interior = 
+		sqrt( t.triangle( facets[ f_marked[ 0 ] ] ).squared_area() )
+		+ sqrt( t.triangle( facets[ f_marked[ 1 ] ] ).squared_area() );
+	      double area_exterior = 
+		sqrt( t.triangle( facets[ f_unmarked[ 0 ] ] ).squared_area() )
+		+ sqrt( t.triangle( facets[ f_unmarked[ 1 ] ] ).squared_area() );
+	      if ( area_exterior > areafactor*area_interior )
+		weirdCells.insert( ofacet.facet.first );
+	      else
+		propagate = true;
 	      // if ( ( nbLatticePoints[ h0.first ] != 4 )
 	      // 	   && ( nbLatticePoints[ h1.first ] != 4 ) )
 	      // 	propagate = false;
@@ -631,7 +633,7 @@ int main (int argc, char** argv )
 		  if ( ! isMarked[ i ] )
 		    {
 		      OFacet nfacet1( facets[ i ] );
-		      OFacet nfacet2( t.mirror_facet( nfacet1.facet ), nfacet1.crossNormL1 );
+		      OFacet nfacet2( t.mirror_facet( nfacet1.facet ), nfacet1.criterion );
 		      // markedFacet.insert( nfacet1.facet );
 		      // put everything into queue.
 		      priorityQ.insert( nfacet2 );
