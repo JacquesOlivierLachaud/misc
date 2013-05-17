@@ -12,6 +12,18 @@ endif()
 
 SET( CMAKE_MODULE_PATH /opt/local/lib/cmake )
 
+FIND_PACKAGE(Boost 1.46.0 REQUIRED COMPONENTS program_options)
+if ( Boost_FOUND )
+  message(STATUS "Boost and boost_program_options found.")
+  message(STATUS "Boost_LIBRAIRIES=" ${Boost_LIBRAIRIES})
+  message(STATUS "Boost_PROGRAM_OPTIONS_LIBRARY=" ${Boost_PROGRAM_OPTIONS_LIBRARY})
+  include_directories( ${Boost_INCLUDE_DIRS} )
+  LINK_DIRECTORIES(${Boost_PROGRAM_OPTIONS_LIBRARY})
+#  LINK_DIRECTORIES(${Boost_LIBRAIRIES} ${Boost_PROGRAM_OPTIONS_LIBRARY})
+endif( Boost_FOUND )
+
+
+
 find_package(CGAL COMPONENTS Core )
 include( ${CGAL_USE_FILE} )
 
@@ -32,7 +44,7 @@ if ( CGAL_FOUND )
   
   FOREACH(FILE ${SRCs})
     add_executable(${FILE} ${FILE})
-    target_link_libraries( ${FILE}  ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${DGTAL_LIBRARIES} )
+    target_link_libraries( ${FILE}  ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${DGTAL_LIBRARIES} ${Boost_LIBRAIRIES} ${Boost_PROGRAM_OPTIONS_LIBRARY})
   ENDFOREACH(FILE)
   
 else()

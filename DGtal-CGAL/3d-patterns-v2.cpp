@@ -377,7 +377,7 @@ int main (int argc, char** argv )
     po::store( clp.run(), vm );
   } catch( const std::exception& ex ) {
     parseOK = false;
-    trace.info() << "Error checking program options: "<< ex.what() << endl;
+    trace.info() << "Error checking program options: "<< ex.what() << std::endl;
   }
   po::notify( vm );    
   if( !parseOK || vm.count("help")||argc<=1
