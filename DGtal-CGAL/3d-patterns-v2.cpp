@@ -200,6 +200,71 @@ struct OFacetLessComparator{
   }
 };
 
+
+///////////////////////////////////////////////////////////////////////////////
+// OrderedCell
+///////////////////////////////////////////////////////////////////////////////
+struct OrderedCell {
+  Cell_handle cell;
+  double criterion;
+
+  inline OrderedCell() : criterion( 0 ) {}
+
+  inline OrderedCell( const Cell_handle & f )
+    : cell( f ) 
+  {
+    computeCriterion();
+  }
+  inline OrderedCell( const Cell_handle & f, DGtal::int64_t nl1 )
+    : cell( f ), criterion( nl1 )
+  {}
+
+  inline OrderedCell( const OrderedCell & other )
+    : cell( other.cell ), criterion( other.criterion )
+  {}
+
+  inline
+  OrderedCell & operator=( const OrderedCell & other )
+  {
+    if ( this != &other )
+      {
+	cell = other.cell;
+	criterion = other.criterion;
+      }
+    return *this;
+  }
+
+  void computeCriterion()
+  {
+    criterion = 0.0;
+    for ( int i = 0; i < 4; ++i )
+      {
+	criterion = std::max( criterion, crossNormL1( Facet( cell, i ) ) );
+      }
+  }
+
+  double crossNormL1( const Facet & f )
+  {
+    int i = f.second;
+    Point a( toDGtal( f.first->vertex( (i+1)%4 )->point() ) );
+    Point b( toDGtal( f.first->vertex( (i+2)%4 )->point() ) );
+    Point c( toDGtal( f.first->vertex( (i+3)%4 )->point() ) );
+    Point n( (b-a)^(c-a) );
+    return n.norm( Point::L_1 );
+  }
+};
+
+struct OrderedCellLessComparator{
+  inline
+  bool operator()( const OrderedCell & f1, const OrderedCell & f2 ) const 
+  {
+    return ( f1.criterion < f2.criterion )
+      || ( ( f1.criterion == f2.criterion )
+	   && ( f1.cell < f2.cell ) );
+  }
+};
+
+
 typedef std::map< Cell_iterator, DGtal::int64_t > MapCell2Int;
 typedef std::map< VFacet, DGtal::int64_t > MapFacet2Int;
 typedef std::map< VEdge, DGtal::int64_t > MapEdge2Int;
@@ -357,6 +422,336 @@ computeDihedralAngle( const Delaunay & t, const Facet & f1, const Facet & f2 )
   return acos( (double) (n1*n2) );
 }
 
+namespace DGtal {
+  class DigitalCore {
+  public:
+    typedef Delaunay                      Triangulation;
+    typedef Triangulation::Cell_iterator  CellIterator;
+    typedef Triangulation::Cell_handle    CellHandle;
+    typedef Triangulation::Facet          Facet;
+    typedef Triangulation::Facet_iterator FacetIterator;
+    typedef DGtal::uint64_t               Size;
+    typedef std::map< CellHandle, Size >  MapCell2Size;
+    typedef std::set< Facet >             FacetSet;
+    typedef std::set< Cell_handle >       CellSet;
+    typedef std::set< OrderedCell, 
+                      OrderedCellLessComparator > OrderedCellSet;
+    
+  private:
+    /// The Delaunay triangulation that carries the digital core.
+    const Triangulation* myTriangulation;
+    /// Area factor when extending the boundary.
+    double myAreaFactorExtend;
+    /// Area factor when retracting the boundary.
+    double myAreaFactorRetract;
+    /// Stores the number of lattice of points within each triangulation Cell.
+    MapCell2Size myNbLatticePoints;
+    /// Current boundary as a set of facets.
+    FacetSet myBoundary;
+    /// Current interior cells.
+    CellSet myInterior;
+    //--------------------------------------------------------------------------
+  public:
+
+    inline 
+    DigitalCore() : myTriangulation( 0 ) 
+    {}
+    
+    inline 
+    DigitalCore( ConstAlias<Triangulation> t ) 
+      : myTriangulation( t )
+    {
+      countLatticePoints();
+      computeBasicFacets();
+    }
+
+    //--------------------------------------------------------------------------
+  public:
+
+    inline
+    const FacetSet & boundary() const
+    { return myBoundary; }
+
+    inline
+    FacetSet & boundary()
+    { return myBoundary; }
+
+
+    inline
+    bool isFacetBasic( const Facet & f ) const
+    {
+      if ( ! myTriangulation->is_infinite( f ) )
+        {
+          int i = f.second;
+          Point a( toDGtal( f.first->vertex( (i+1)%4 )->point() ) );
+          Point b( toDGtal( f.first->vertex( (i+2)%4 )->point() ) );
+          Point c( toDGtal( f.first->vertex( (i+3)%4 )->point() ) );
+          return ( ( (b-a).norm( Point::L_infty ) == 1 )
+                   && ( (c-b).norm( Point::L_infty ) == 1 )
+                   && ( (a-c).norm( Point::L_infty ) == 1 ) );
+        }
+      else
+        return false;
+    }
+
+    inline 
+    Size nbLatticePoints( const Cell_handle & cell ) const
+    {
+      MapCell2Size::const_iterator it = myNbLatticePoints.find( cell );
+      ASSERT( it != myNbLatticePoints.end() );
+      return it->second;
+    }
+
+    inline 
+    bool isFacetBoundary( const Facet & f ) const
+    {
+      return myBoundary.find( f ) != myBoundary.end();
+    }
+
+    inline 
+    bool isFacetInterior( const Facet & f ) const
+    {
+      return myInterior.find( f.first ) != myInterior.end();
+    }
+
+    inline 
+    bool isFacetExterior( const Facet & f ) const
+    {
+      return ( myInterior.find( f.first ) == myInterior.end() )
+        && ! isFacetBoundary( f );
+    }
+
+    inline
+    double area( const Facet & f ) const
+    {
+      return sqrt( myTriangulation->triangle( f ).squared_area() );
+    }
+
+    void extend( double area_factor_extend = 1.733 )
+    {
+      ASSERT( myTriangulation != 0 );
+      trace.beginBlock("[DigitalCore] Extend boundary.");
+      myAreaFactorExtend = area_factor_extend;
+
+      // Queue for computing the digital core.
+      OrderedCellSet priorityQ;
+      
+      // Prepare queue.
+      for ( FacetSet::const_iterator it = myBoundary.begin(), itend = myBoundary.end();
+            it != itend; ++it )
+        priorityQ.insert( OrderedCell( it->first ) );
+
+      // Start extension
+      bool isMarked[ 4 ];
+      unsigned int nb = 0;
+      while ( ! priorityQ.empty() )
+        {
+          // trace.progressBar( 1.0, 1.0+log( (double) priorityQ.size() ) );
+          OrderedCellSet::iterator it = priorityQ.begin();
+          CellHandle cell_h = it->cell;
+          priorityQ.erase( it );
+          // infinite cells are not processed.
+          if ( myTriangulation->is_infinite( cell_h ) ) continue;
+          // cells containing integer points in the interior are not processed.
+          if ( nbLatticePoints( cell_h ) != 4 )         continue;
+          // checking cell faces for extension.
+          if ( checkCellExtension( isMarked, cell_h ) )
+            {
+              extendCell( priorityQ, isMarked, cell_h );
+              ++nb;
+            }
+        }
+      trace.info() << "- cells flipped = " << nb << std::endl;
+      trace.info() << "- boundary has " << myBoundary.size() << " facets." << std::endl;
+      trace.endBlock();
+    }
+
+    void retract( double area_factor_retract = 1.0 )
+    {
+      ASSERT( myTriangulation != 0 );
+      trace.beginBlock("[DigitalCore] Retract boundary.");
+      myAreaFactorRetract = area_factor_retract;
+
+      // Queue for computing the digital core.
+      OrderedCellSet priorityQ;
+      CellSet processedCells;
+      // Prepare queue.
+      for ( FacetSet::const_iterator it = myBoundary.begin(), itend = myBoundary.end();
+            it != itend; ++it )
+        {
+          Facet mf = myTriangulation->mirror_facet( *it );
+          priorityQ.insert( OrderedCell( mf.first ) );
+        }
+
+      // Start retraction
+      bool isMarked[ 4 ];
+      unsigned int nb = 0;
+      while ( ! priorityQ.empty() )
+        {
+          // trace.progressBar( 1.0, 1.0+log( (double) priorityQ.size() ) );
+          OrderedCellSet::iterator it = priorityQ.begin();
+          CellHandle cell_h = it->cell;
+          priorityQ.erase( it );
+          if ( processedCells.find( cell_h ) != processedCells.end() )
+            continue;
+          // // infinite cells are not processed.
+          // if ( myTriangulation->is_infinite( cell_h ) ) continue;
+          // // cells containing integer points in the interior are not processed.
+          // if ( nbLatticePoints( cell_h ) != 4 )         continue;
+          // checking cell faces for retraction.
+          if ( checkCellRetraction( isMarked, cell_h ) )
+            {
+              retractCell( priorityQ, isMarked, cell_h );
+              ++nb;
+            }
+          processedCells.insert( cell_h );
+        }
+      trace.info() << "- cells flipped = " << nb << std::endl;
+      trace.info() << "- boundary has " << myBoundary.size() << " facets." << std::endl;
+      trace.endBlock();
+    }
+        
+    //--------------------------------------------------------------------------
+  protected:
+
+    bool checkCellExtension( bool isBoundary[ 4 ], const CellHandle & cell ) const
+    {
+      unsigned int n = 0;
+      for ( int i = 0; i < 4; ++i )
+        {
+          isBoundary[ i ] = isFacetBoundary( Facet( cell, i ) );
+          if ( isBoundary[ i ] ) ++n;
+        }
+      // At least 2 are marked, by convexity, we can close the gap
+      // to the further faces of the cell.
+      bool propagate = n >= 3;
+      if ( n == 2 )
+        { // 2 are marked. We check their area.
+          double area_boundary = 0.0;
+          double area_exterior = 0.0;
+          for ( int i = 0; i < 4; ++i ) {
+            if ( isBoundary[ i ] ) 
+              area_boundary += area( Facet( cell, i ) );
+            else
+              area_exterior += area( Facet( cell, i ) );
+          }
+          if ( area_exterior < myAreaFactorExtend * area_boundary )
+            propagate = true;
+        }
+      return propagate;
+    }
+    
+    void extendCell( OrderedCellSet & priorityQ, bool isBoundary[ 4 ], const CellHandle & cell )
+    { // Switch cell to interior
+      myInterior.insert( cell );
+      for ( unsigned int i = 0; i < 4; ++i ) {
+        if ( ! isBoundary[ i ] )
+          {
+            Facet nfacet = myTriangulation->mirror_facet( Facet( cell, i ) );
+            priorityQ.insert( nfacet.first );
+            myBoundary.insert( nfacet );
+          }
+        else
+          {
+            myBoundary.erase( Facet( cell, i ) );
+          }
+      }
+    }
+
+    bool checkCellRetraction( bool isBoundary[ 4 ], const CellHandle & cell ) const
+    {
+      unsigned int n = 0;
+      std::vector<Facet> mirror_facets;
+      for ( int i = 0; i < 4; ++i )
+        {
+          mirror_facets.push_back( myTriangulation->mirror_facet( Facet( cell, i ) ) ); 
+          isBoundary[ i ] = isFacetBoundary( mirror_facets[ i ] );
+          if ( isBoundary[ i ] ) ++n;
+        }
+      bool retract = false;
+      if ( n == 2 )
+        {
+          // We check their area.
+          double area_boundary = 0.0;
+          double area_interior = 0.0;
+          for ( int i = 0; i < 4; ++i ) {
+            if ( isBoundary[ i ] ) 
+              area_boundary += area( mirror_facets[ i ] );
+            else
+              area_interior += area( mirror_facets[ i ] );
+          }
+          if ( area_interior < myAreaFactorRetract * area_boundary )
+            retract = true;
+        }
+      return retract;
+    }
+    
+    void retractCell( OrderedCellSet & priorityQ, bool isBoundary[ 4 ], const CellHandle & cell )
+    { // Switch cell to exterior
+      myInterior.erase( cell );
+      for ( unsigned int i = 0; i < 4; ++i ) {
+        if ( ! isBoundary[ i ] )
+          {
+            Facet nfacet = Facet( cell, i );
+            priorityQ.insert( myTriangulation->mirror_facet( nfacet ).first );
+            myBoundary.insert( nfacet );
+          }
+        else
+          {
+            myBoundary.erase( myTriangulation->mirror_facet( Facet( cell, i ) ) );
+          }
+      }
+    }
+
+
+
+    void computeBasicFacets()
+    {
+      ASSERT( myTriangulation != 0 );
+      trace.beginBlock("[DigitalCore] Compute basic facets.");
+      DGtal::uint64_t nb = 0;
+      for( FacetIterator it = myTriangulation->facets_begin(), itend = myTriangulation->facets_end();
+           it != itend; ++it )
+        {
+          if ( isFacetBasic( *it ) ) // || checkPlanarVFacet( f ) )
+            {
+	      myBoundary.insert( *it );
+	      myBoundary.insert( myTriangulation->mirror_facet( *it ) );
+              ++nb;
+            }
+        }
+      trace.info() << "- nb basic facets = " << nb << std::endl;
+      trace.endBlock();
+    }
+
+    void countLatticePoints()
+    {
+      ASSERT( myTriangulation != 0 );
+      trace.beginBlock("[DigitalCore] Counting lattice points.");
+      double maxbar = myTriangulation->number_of_cells();
+      double bar = 0.0;
+      for( CellIterator it = myTriangulation->cells_begin(), 
+             itend = myTriangulation->cells_end();
+           it != itend; ++it, ++bar )
+        {
+          //trace.progressBar( bar, maxbar );
+          if ( myTriangulation->is_infinite( it ) ) 
+            myNbLatticePoints[ it ] = -1;
+          else
+            {
+              Point a( toDGtal(it->vertex(0)->point())),
+                b(toDGtal(it->vertex(1)->point())),
+                c(toDGtal(it->vertex(2)->point())),
+                d(toDGtal(it->vertex(3)->point()));
+              myNbLatticePoints[ it ] = countLatticePointsInTetrahedra( a, b, c, d );
+            }
+        }
+      trace.endBlock();
+    }
+    
+  };
+
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 namespace po = boost::program_options;
@@ -475,13 +870,56 @@ int main (int argc, char** argv )
   double setsize = (double) digital_points.size()-1;
   trace.info() << "Vertices to process: " << setsize << std::endl;
   double step = 0.0;
+  int i = 0;
   for ( std::vector<Point>::const_iterator it = digital_points.begin(), itE = digital_points.end();
-	it != itE; ++it, ++step )
+	it != itE; ++it, ++step, ++i )
     {
-      trace.progressBar( step, setsize );
+      if ( i % 1000 == 0 ) trace.progressBar( step, setsize );
       t.insert( toCGAL( *it ) );
     }
   trace.endBlock();
+
+  // Testing Core
+  double areafactor = vm["areafactor"].as<double>();
+  DigitalCore core( t );
+  core.extend( 1.733 );
+  core.retract( areafactor );
+
+  // start viewer
+  Viewer3D viewerCore;
+  viewerCore.show();
+  Color colBasicFacet2( 0, 255, 255, 255 );
+  Color colBasicFacet1( 0, 255, 0, 255 );
+  for ( FacetSet::const_iterator it = core.boundary().begin(), itend = core.boundary().end();
+  	it != itend; ++it )
+    {
+      // we display it.
+      Triangle triangle = t.triangle( *it );
+      Point a( toDGtal( triangle.vertex( 0 ) ) );
+      Point b( toDGtal( triangle.vertex( 1 ) ) );
+      Point c( toDGtal( triangle.vertex( 2 ) ) );
+      Facet f2 = t.mirror_facet( *it );
+      if ( core.isFacetBoundary( f2 ) )
+        { // the mirror facet is also in the triangulation. 
+          // We need to move vertices a little bit when two triangles are at the same position.
+          Point n = (b-a)^(c-a);
+          double norm = n.norm(Point::L_2);
+          double dx[ 3 ];
+          for ( unsigned int j = 0; j < 3; ++j )
+            dx[ j ] = 0.001*((double) n[j])/norm;
+          viewerCore.addTriangle( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ],
+                                  (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ],
+                                  (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ],
+                                  colBasicFacet2 );
+        }
+      else
+        viewerCore.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
+                                c[ 0 ], c[ 1 ], c[ 2 ],
+                                b[ 0 ], b[ 1 ], b[ 2 ],
+                                colBasicFacet1 );
+    }
+  viewerCore << Viewer3D::updateDisplay;
+  application.exec();
 
   // start viewer
   Viewer3D viewer1, viewer2, viewer3;
@@ -536,7 +974,6 @@ int main (int argc, char** argv )
   trace.endBlock();
 
   trace.beginBlock("Extracting Min-Polyhedron");
-  double areafactor = vm["areafactor"].as<double>();
 
   std::set<Cell_handle> markedCells;
   FacetSet basicFacet;
@@ -546,6 +983,7 @@ int main (int argc, char** argv )
   std::set<Cell_handle> weirdCells;
   uint64_t nbBF = markBasicFacets( basicFacet, priorityQ, t, bEdge );
   trace.info() << "Nb basic facets:" << nbBF << std::endl;
+
   // At the beginning, the queue is equal to marked facets.
   markedFacet = basicFacet;
   elementQ = markedFacet;
@@ -581,22 +1019,22 @@ int main (int argc, char** argv )
 	      if ( isMarked[ i ] )  f_marked.push_back( i );
 	      else                  f_unmarked.push_back( i );
 	    }
-	  // Add basic planar facets when encountered.
-	  for ( std::vector<unsigned int>::iterator it_fu = f_unmarked.begin();
-		it_fu != f_unmarked.end(); )
-	    {
-	      if ( checkPlanarFacet( t, facets[ *it_fu ] ) )
-		{
-		  Facet mf = t.mirror_facet( facets[ *it_fu ] );
-		  markedFacet.insert( facets[ *it_fu ] );
-		  markedFacet.insert( mf );
-		  isMarked[ *it_fu ] = true;
-		  f_marked.push_back( *it_fu );
-		  f_unmarked.erase( it_fu );
-		}
-	      else 
-		++it_fu;
-	    }
+	  // // Add basic planar facets when encountered.
+	  // for ( std::vector<unsigned int>::iterator it_fu = f_unmarked.begin();
+	  //       it_fu != f_unmarked.end(); )
+	  //   {
+	  //     if ( checkPlanarFacet( t, facets[ *it_fu ] ) )
+	  //       {
+	  //         Facet mf = t.mirror_facet( facets[ *it_fu ] );
+	  //         markedFacet.insert( facets[ *it_fu ] );
+	  //         markedFacet.insert( mf );
+	  //         isMarked[ *it_fu ] = true;
+	  //         f_marked.push_back( *it_fu );
+	  //         f_unmarked.erase( it_fu );
+	  //       }
+	  //     else 
+	  //       ++it_fu;
+	  //   }
 	  unsigned int n = f_marked.size();
 	  // At least 2 are marked, by convexity, we can close the gap
 	  // to the further faces of the cell.
@@ -615,7 +1053,7 @@ int main (int argc, char** argv )
 	      double area_exterior = 
 		sqrt( t.triangle( facets[ f_unmarked[ 0 ] ] ).squared_area() )
 		+ sqrt( t.triangle( facets[ f_unmarked[ 1 ] ] ).squared_area() );
-	      if ( area_exterior > areafactor*area_interior )
+	      if ( area_exterior > 1.733*area_interior )
 		weirdCells.insert( ofacet.facet.first );
 	      else
 		propagate = true;
@@ -728,8 +1166,8 @@ int main (int argc, char** argv )
   trace.info() << "weird cells removed : " << removedWeirdCells.size() << std::endl;
   trace.endBlock();
 
-  Color colBasicFacet2( 0, 255, 255, 255 );
-  Color colBasicFacet1( 0, 255, 0, 255 );
+  // Color colBasicFacet2( 0, 255, 255, 255 );
+  // Color colBasicFacet1( 0, 255, 0, 255 );
   for ( FacetSet::const_iterator it = markedFacet.begin(), itend = markedFacet.end();
   	it != itend; ++it )
     {
