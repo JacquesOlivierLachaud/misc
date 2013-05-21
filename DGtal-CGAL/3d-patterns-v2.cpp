@@ -403,6 +403,48 @@ countLatticePointsInTetrahedra( const Point & a, const Point & b, const Point & 
   return nb;
 }
 
+/**
+   @return 4 iff there are 4 lattice points in tetrahedra, otherwise returns 5.
+*/
+DGtal::int64_t
+countLatticePointsInTetrahedraIf4( const Point & a, const Point & b, const Point & c, const Point & d )
+{
+  DGtal::int64_t nb = 0;
+  Point ab = b - a;
+  Point bc = c - b;
+  Point cd = d - c;  
+  Point da = a - d;
+  Point abc = ab^bc;
+  Point bcd = bc^cd;
+  Point cda = cd^da;
+  Point dab = da^ab;
+  Point::Component abc_shift = abc.dot( a );
+  Point::Component bcd_shift = bcd.dot( b );
+  Point::Component cda_shift = cda.dot( c );
+  Point::Component dab_shift = dab.dot( d );
+  if ( abc.dot( d ) < abc_shift )  { abc = -abc; abc_shift = -abc_shift; }
+  if ( bcd.dot( a ) < bcd_shift )  { bcd = -bcd; bcd_shift = -bcd_shift; }
+  if ( cda.dot( b ) < cda_shift )  { cda = -cda; cda_shift = -cda_shift; }
+  if ( dab.dot( c ) < dab_shift )  { dab = -dab; dab_shift = -dab_shift; }
+  Point inf = a.inf( b ).inf( c ).inf( d );
+  Point sup = a.sup( b ).sup( c ).sup( d );
+  Domain domain( inf, sup );
+  for ( DomainConstIterator it = domain.begin(), itE = domain.end();
+	it != itE; ++it )
+    {
+      Point p = *it;
+      if ( ( abc.dot( p ) >= abc_shift )
+	   && ( bcd.dot( p ) >= bcd_shift )
+	   && ( cda.dot( p ) >= cda_shift )
+	   && ( dab.dot( p ) >= dab_shift ) )
+	{ 
+          ++nb;
+          if ( nb > 4 ) return 5;
+        }
+    }
+  return nb;
+}
+
 void 
 getFacets( std::vector<Facet> & facets, const Cell_iterator & it )
 {
@@ -430,6 +472,7 @@ namespace DGtal {
     typedef Triangulation::Cell_handle    CellHandle;
     typedef Triangulation::Facet          Facet;
     typedef Triangulation::Facet_iterator FacetIterator;
+    typedef Triangulation::Vertex_handle  VertexHandle;
     typedef DGtal::uint64_t               Size;
     typedef std::map< CellHandle, Size >  MapCell2Size;
     typedef std::set< Facet >             FacetSet;
@@ -476,6 +519,9 @@ namespace DGtal {
     FacetSet & boundary()
     { return myBoundary; }
 
+    inline
+    const CellSet & interior() const
+    { return myInterior; }
 
     inline
     bool isFacetBasic( const Facet & f ) const
@@ -495,11 +541,17 @@ namespace DGtal {
     }
 
     inline 
-    Size nbLatticePoints( const Cell_handle & cell ) const
+    Size nbLatticePoints( const CellHandle & cell ) const
     {
       MapCell2Size::const_iterator it = myNbLatticePoints.find( cell );
       ASSERT( it != myNbLatticePoints.end() );
       return it->second;
+    }
+
+    inline 
+    bool isCellInterior( const CellHandle & c ) const
+    {
+      return myInterior.find( c ) != myInterior.end();
     }
 
     inline 
@@ -519,6 +571,19 @@ namespace DGtal {
     {
       return ( myInterior.find( f.first ) == myInterior.end() )
         && ! isFacetBoundary( f );
+    }
+
+    inline
+    bool isVertexInterior( const VertexHandle & vh ) const
+    {
+      std::vector<CellHandle> incident_cells;
+      myTriangulation->incident_cells( vh, std::back_inserter( incident_cells ) );
+      for ( std::vector<CellHandle>::const_iterator it = incident_cells.begin(),
+              itend = incident_cells.end(); it != itend; ++it )
+        {
+          if ( ! isCellInterior( *it ) ) return false;
+        }
+      return true;
     }
 
     inline
@@ -730,11 +795,12 @@ namespace DGtal {
       trace.beginBlock("[DigitalCore] Counting lattice points.");
       double maxbar = myTriangulation->number_of_cells();
       double bar = 0.0;
+      int i = 0;
       for( CellIterator it = myTriangulation->cells_begin(), 
              itend = myTriangulation->cells_end();
-           it != itend; ++it, ++bar )
+           it != itend; ++it, ++bar, ++i )
         {
-          //trace.progressBar( bar, maxbar );
+          if ( i % 1000 == 0 ) trace.progressBar( bar, maxbar );
           if ( myTriangulation->is_infinite( it ) ) 
             myNbLatticePoints[ it ] = -1;
           else
@@ -743,7 +809,7 @@ namespace DGtal {
                 b(toDGtal(it->vertex(1)->point())),
                 c(toDGtal(it->vertex(2)->point())),
                 d(toDGtal(it->vertex(3)->point()));
-              myNbLatticePoints[ it ] = countLatticePointsInTetrahedra( a, b, c, d );
+              myNbLatticePoints[ it ] = countLatticePointsInTetrahedraIf4( a, b, c, d );
             }
         }
       trace.endBlock();
@@ -764,7 +830,7 @@ namespace po = boost::program_options;
    @param argv an array of C-string, such that argv[0] is the name of
    the program, argv[1] the first parameter, etc.
 
-     "29*z+47*y+23*x-5"
+  "29*z+47*y+23*x-5"
   "10*z-x^2+y^2-100"
   "z*x*y+x^4-5*x^2+2*y^2*z-z^2-1000"
   "(15*z-x^2+y^2-100)*(x^2+y^2+z^2-1000)" nice
@@ -772,7 +838,7 @@ namespace po = boost::program_options;
   "x^2+y^2+2*z^2-x*y*z+z^3-100" dragonfly
   "(x^2+y^2+(z+5)^2)^2-x^2*(z^2-x^2-y^2)-100" joli coeur
   "0.5*(z^2-4*4)^2+(x^2-7*7)^2+(y^2-7*7)^2-7.2*7.2*7.2*7.2" convexites et concavites
-
+  "(1-(x^2+y^2))^2*(1+(x^2+y^2))^2-z" "cup"
 */
 int main (int argc, char** argv )
 {
@@ -798,9 +864,12 @@ int main (int argc, char** argv )
     ("poly,p", po::value<std::string>(), "specifies the shape as the zero-level of the multivariate polynomial [arg]" )
     ("gridstep,g", po::value<double>()->default_value( 1.0 ), "specifies the digitization grid step ([arg] is a double) when the shape is given as a polynomial." )
     ("bounds,b", po::value<int>()->default_value( 20 ), "specifies the diagonal integral bounds [-arg,-arg,-arg]x[arg,arg,arg] for the digitization of the polynomial surface." )
+    ("point-list,l", po::value<std::string>(), "specifies the shape as a list of digital points given in the filename [arg], x y z per line." )
     ("prune,P", po::value<double>(), "prunes the resulting the complex of the tetrahedra were the length of the dubious edge is [arg] times the length of the opposite edge." )
     ("geometry,G", po::value<int>()->default_value( 0 ), "specifies how digital points are defined from the digital surface: arg=0: inner voxels, arg=1: inner and outer voxels, arg=2: pointels" )
-    ("areafactor,a", po::value<double>()->default_value( sqrt(2.0) ), "specifies the convexity/concavity area ratio." )
+    ("area-factor-extend,A", po::value<double>()->default_value( sqrt(3.0) ), "specifies the convexity/concavity area ratio when extending the core." )
+    ("area-factor-retract,a", po::value<double>()->default_value( 1.0/sqrt(3.0) ), "specifies the convexity/concavity area ratio when retracting the core." )
+    ("view,V", po::value<int>()->default_value( 1 ), "specifies what is displayed. The bits of [arg] indicates what is displayed:  0: digital core, 1: empty unreachable tetrahedra, 2: retracted tetrahedra, 3: digital points" )
     ; 
   
   // parse command line ----------------------------------------------
@@ -816,10 +885,10 @@ int main (int argc, char** argv )
   }
   po::notify( vm );    
   if( !parseOK || vm.count("help")||argc<=1
-      || !( vm.count("poly") || vm.count("vol") ) )
+      || !( vm.count("poly") || vm.count("vol") || vm.count("point-list") ) )
     {
       std::cout << "Usage: " << argv[0] << " [options] {--vol <vol-file> || --poly <polynomial-string>}\n"
-		<< "Computes the linear reconstruction of the given digital surface, specified either as a thrsholded .vol file or a zero-level of a multivariate polynomial.\n"
+		<< "Computes the linear reconstruction of the given digital surface, specified either as a thresholded .vol file, or a zero-level of a multivariate polynomial, or a list of digital points.\n"
 		<< general_opt << "\n\n";
       std::cout << "Example:\n"
 		<< argv[0] << " -p \"x^2+y^2+2*z^2-x*y*z+z^3-100\" -g " << (double) 0.5 << std::endl;
@@ -846,6 +915,11 @@ int main (int argc, char** argv )
 						     vm[ "poly" ].as<std::string>(),
 						     vm[ "gridstep" ].as<double>(),
 						     vm[ "bounds" ].as<int>() );
+    }
+  else if ( vm.count( "point-list" ) )
+    {
+      ok = makeSpaceAndBoundaryFromPointList( ks, boundary,
+                                              vm[ "point-list" ].as<std::string>() );
     }
   trace.endBlock();
   if ( ok != 0 ) return ok; // error.
@@ -880,44 +954,105 @@ int main (int argc, char** argv )
   trace.endBlock();
 
   // Testing Core
-  double areafactor = vm["areafactor"].as<double>();
+  double area_factor_extend = vm["area-factor-extend"].as<double>();
+  double area_factor_retract = vm["area-factor-retract"].as<double>();
   DigitalCore core( t );
-  core.extend( 1.733 );
-  core.retract( areafactor );
+  core.extend( area_factor_extend );
+  core.retract( area_factor_retract );
+
+  trace.beginBlock( "Couting interior and boundary vertices." );
+  Delaunay t2;
+  unsigned int nb_int = 0;
+  unsigned int nb_bd = 0;
+  for ( Vertex_iterator it = t.vertices_begin(), itend = t.vertices_end();
+        it != itend; ++it )
+    if ( core.isVertexInterior( it ) ) ++nb_int;
+    else {
+      t2.insert( it->point() );
+      ++nb_bd;
+    }
+  trace.info() << "- nb interior vertices = " << nb_int << std::endl;
+  trace.info() << "- nb boundary vertices = " << nb_bd << std::endl;
+  trace.endBlock();
+
 
   // start viewer
+  int view = vm["view"].as<int>();
   Viewer3D viewerCore;
   viewerCore.show();
   Color colBasicFacet2( 0, 255, 255, 255 );
   Color colBasicFacet1( 0, 255, 0, 255 );
-  for ( FacetSet::const_iterator it = core.boundary().begin(), itend = core.boundary().end();
-  	it != itend; ++it )
-    {
-      // we display it.
-      Triangle triangle = t.triangle( *it );
-      Point a( toDGtal( triangle.vertex( 0 ) ) );
-      Point b( toDGtal( triangle.vertex( 1 ) ) );
-      Point c( toDGtal( triangle.vertex( 2 ) ) );
-      Facet f2 = t.mirror_facet( *it );
-      if ( core.isFacetBoundary( f2 ) )
-        { // the mirror facet is also in the triangulation. 
-          // We need to move vertices a little bit when two triangles are at the same position.
-          Point n = (b-a)^(c-a);
-          double norm = n.norm(Point::L_2);
-          double dx[ 3 ];
-          for ( unsigned int j = 0; j < 3; ++j )
-            dx[ j ] = 0.001*((double) n[j])/norm;
-          viewerCore.addTriangle( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ],
-                                  (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ],
-                                  (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ],
-                                  colBasicFacet2 );
-        }
-      else
-        viewerCore.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-                                c[ 0 ], c[ 1 ], c[ 2 ],
-                                b[ 0 ], b[ 1 ], b[ 2 ],
-                                colBasicFacet1 );
-    }
+  Color colSpuriousTetrahedra( 255, 0, 0, 100 );
+  if ( view & 0x1 ) { // View digital core.
+    for ( FacetSet::const_iterator it = core.boundary().begin(), itend = core.boundary().end();
+          it != itend; ++it )
+      {
+        // we display it.
+        Triangle triangle = t.triangle( *it );
+        Point a( toDGtal( triangle.vertex( 0 ) ) );
+        Point b( toDGtal( triangle.vertex( 1 ) ) );
+        Point c( toDGtal( triangle.vertex( 2 ) ) );
+        Facet f2 = t.mirror_facet( *it );
+        if ( core.isFacetBoundary( f2 ) )
+          { // the mirror facet is also in the triangulation. 
+            // We need to move vertices a little bit when two triangles are at the same position.
+            Point n = (b-a)^(c-a);
+            double norm = n.norm(Point::L_2);
+            double dx[ 3 ];
+            for ( unsigned int j = 0; j < 3; ++j )
+              dx[ j ] = 0.001*((double) n[j])/norm;
+            viewerCore.addTriangle( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ],
+                                    (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ],
+                                    (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ],
+                                    colBasicFacet2 );
+          }
+        else
+          viewerCore.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
+                                  c[ 0 ], c[ 1 ], c[ 2 ],
+                                  b[ 0 ], b[ 1 ], b[ 2 ],
+                                  colBasicFacet1 );
+      }
+  } //  if ( view & 0x1 ) {
+
+  if ( view & 0x2 ) { // View spurious tetrahedra
+    for ( Cell_iterator it = t.cells_begin(), itend = t.cells_end();
+          it != itend; ++it )
+      {
+        bool draw = false;
+        Color col;
+        if ( ( ! t.is_infinite( it ) )
+             && ( core.nbLatticePoints(  it ) == 4 )
+             && ( core.interior().find( it ) == core.interior().end() ) )
+	{
+	  draw = true;
+	  col = colSpuriousTetrahedra;
+	}
+        if ( draw )
+          {
+            Point a( toDGtal(it->vertex(0)->point())),
+              b(toDGtal(it->vertex(1)->point())),
+              c(toDGtal(it->vertex(2)->point())),
+              d(toDGtal(it->vertex(3)->point()));
+            viewerCore.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
+                                    b[ 0 ], b[ 1 ], b[ 2 ],
+                                    c[ 0 ], c[ 1 ], c[ 2 ],
+                                    col );
+            viewerCore.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
+                                    b[ 0 ], b[ 1 ], b[ 2 ],
+                                    d[ 0 ], d[ 1 ], d[ 2 ], 
+                                    col );
+            viewerCore.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
+                                    d[ 0 ], d[ 1 ], d[ 2 ], 
+                                    a[ 0 ], a[ 1 ], a[ 2 ],
+                                    col );
+            viewerCore.addTriangle( d[ 0 ], d[ 1 ], d[ 2 ], 
+                                    b[ 0 ], b[ 1 ], b[ 2 ],
+                                    a[ 0 ], a[ 1 ], a[ 2 ],
+                                    col );
+          }
+      }
+  }
+ 
   viewerCore << Viewer3D::updateDisplay;
   application.exec();
 
@@ -944,7 +1079,7 @@ int main (int argc, char** argv )
             b(toDGtal(it->vertex(1)->point())),
             c(toDGtal(it->vertex(2)->point())),
             d(toDGtal(it->vertex(3)->point()));
-          nbLatticePoints[ it ] = countLatticePointsInTetrahedra( a, b, c, d );
+          nbLatticePoints[ it ] = countLatticePointsInTetrahedraIf4( a, b, c, d );
         }
     }
   trace.endBlock();
@@ -1053,7 +1188,7 @@ int main (int argc, char** argv )
 	      double area_exterior = 
 		sqrt( t.triangle( facets[ f_unmarked[ 0 ] ] ).squared_area() )
 		+ sqrt( t.triangle( facets[ f_unmarked[ 1 ] ] ).squared_area() );
-	      if ( area_exterior > 1.733*area_interior )
+	      if ( area_exterior > area_factor_extend * area_interior )
 		weirdCells.insert( ofacet.facet.first );
 	      else
 		propagate = true;

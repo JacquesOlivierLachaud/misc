@@ -3,6 +3,8 @@
 #define _DGTAL_AUXILIARY_H_
 
 #include <string>
+#include <sstream>
+#include <fstream>
 
 #include "DGtal/base/Common.h"
 #include "DGtal/kernel/domains/HyperRectDomain.h"
@@ -118,6 +120,60 @@ namespace DGtal
     trace.info() << "Digital surface has " << boundary.size() << " surfels."
 		 << std::endl;
     trace.endBlock();
+    return 0;
+  }
+
+
+  /**
+     Creates a digital Khalimsky space and a set of surfels that
+     approximate the zero-level set of the given polynomial surface.
+  */
+  template <typename KSpace, typename SCellSet>
+  int
+  makeSpaceAndBoundaryFromPointList
+  ( KSpace & ks,
+    SCellSet & boundary,
+    std::string point_list_filename )
+  {
+    typedef typename KSpace::Point Point;
+    typedef typename KSpace::SCell SCell;
+    typedef typename Point::Coordinate Coordinate;
+    trace.beginBlock( "Reading point list from file." );
+    std::ifstream inputfile( point_list_filename.c_str() );
+    std::string str;
+    std::vector<Point> points;
+    Point lower, upper;
+    while ( ( ! inputfile.eof() ) && inputfile.good() )
+      {
+        std::getline( inputfile, str );
+        if ( ( ! str.empty() ) && ( str[ 0 ] != '#' ) )
+          {
+            Point p;
+            std::istringstream istr( str );
+            Coordinate x, y, z;
+            //istr >> x >> y >> z;
+            istr >> p[ 0 ] >> p[ 1 ] >> p[ 2 ];
+            lower = points.empty() ? p : lower.inf( p );
+            upper = points.empty() ? p : upper.sup( p );
+            points.push_back( p );
+          }
+      }
+    bool ok = inputfile.eof();
+    trace.endBlock();
+    lower -= Point::diagonal( 1 );
+    upper += Point::diagonal( 1 );
+    if ( ! ks.init( lower, upper, true ) )
+      return 2;
+    for ( typename std::vector<Point>::const_iterator it = points.begin(), itend = points.end();
+          it != itend; ++it )
+      {
+        SCell v = ks.sSpel( *it );
+        for ( Dimension i = 0; i < KSpace::dimension; ++i )
+          {
+            boundary.insert( ks.sIncident( v, i, true ) );
+            boundary.insert( ks.sIncident( v, i, false ) );
+          }
+      }
     return 0;
   }
 
