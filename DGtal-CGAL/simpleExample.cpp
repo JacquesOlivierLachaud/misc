@@ -78,19 +78,19 @@ int main ()
   trace.beginBlock("Construction the shape");
   typedef Ellipse2D<Z2i::Space> Ellipse; 
   //Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), 5, 3, 0.3 );
-  Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), 5.5, 5.5, 0 );
-  double h = 0.5; 
-  GaussDigitizer<Z2i::Space,Ellipse> dig;  
-  dig.attach( ellipse );
-  dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
-            ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
-  // typedef Flower2D<Z2i::Space> Flower; 
-  // Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
-  // double h = 0.25; 
-  // GaussDigitizer<Z2i::Space,Flower> dig;  
-  // dig.attach( flower );
-  // dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
-  //           flower.getUpperBound()+Z2i::Vector(1,1), h ); 
+  // Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), 5.5, 5.5, 0 );
+  // double h = 0.5; 
+  // GaussDigitizer<Z2i::Space,Ellipse> dig;  
+  // dig.attach( ellipse );
+  // dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
+  //           ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
+  typedef Flower2D<Z2i::Space> Flower; 
+  Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
+  double h = 0.25; 
+  GaussDigitizer<Z2i::Space,Flower> dig;  
+  dig.attach( flower );
+  dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
+            flower.getUpperBound()+Z2i::Vector(1,1), h ); 
   Z2i::KSpace ks;
   ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
   SurfelAdjacency<2> sAdj( true );
