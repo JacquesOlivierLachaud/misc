@@ -225,6 +225,7 @@ namespace DGtal
 			 const KSpace & ks,
 			 SCellSetConstIterator it, SCellSetConstIterator ite )
   {
+    typedef typename KSpace::SCell SCell;
     typedef typename KSpace::Cell Cell;
     trace.beginBlock("Getting pointels coordinates.");
     std::set<Cell> pointels;
@@ -234,10 +235,12 @@ namespace DGtal
 	DGtal::Dimension k = ks.sOrthDir( *it );
 	DGtal::Dimension i = (k+1)%3;
 	DGtal::Dimension j = (k+2)%3;
-	pointels.insert( ks.unsigns( ks.sIncident( *it, i, true ) ) );
-	pointels.insert( ks.unsigns( ks.sIncident( *it, i, false ) ) );
-	pointels.insert( ks.unsigns( ks.sIncident( *it, j, true ) ) );
-	pointels.insert( ks.unsigns( ks.sIncident( *it, j, false ) ) );
+	SCell linel_i0 = ks.sIncident( *it, i, false );
+	SCell linel_i1 = ks.sIncident( *it, i, true );
+	pointels.insert( ks.unsigns( ks.sIncident( linel_i0, j, false ) ) );
+	pointels.insert( ks.unsigns( ks.sIncident( linel_i0, j, true ) ) );
+	pointels.insert( ks.unsigns( ks.sIncident( linel_i1, j, false ) ) );
+	pointels.insert( ks.unsigns( ks.sIncident( linel_i1, j, true ) ) );
       }
     for ( typename std::set<Cell>::const_iterator itS = pointels.begin(), itSEnd = pointels.end();
 	  itS != itSEnd; ++itS )
