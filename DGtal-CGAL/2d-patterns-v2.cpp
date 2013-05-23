@@ -278,10 +278,10 @@ namespace DGtal {
 
   public:
     
-    inline
+    
     DigitalCore() {}
 
-    inline DigitalCore( const Triangulation & t )
+     DigitalCore( const Triangulation & t )
       : T( t )
     {
       computeBasicEdges();
@@ -295,42 +295,42 @@ namespace DGtal {
       computeBasicEdges();
     }
 
-    inline
+    
     const Triangulation & triangulation() const
     { return T; }
-    inline
+    
     Triangulation & triangulation()
     { return T; }
     
-    inline
+    
     const EdgeSet & boundary() const
     { return myBoundary; }
 
-    inline
+    
     const FaceSet & interior() const
     { return myInterior; }
 
     /// The incident face is considered ccw.
-    inline
+    
     VertexHandle source( const Edge & e ) const
     {
       return e.first->vertex( T.ccw( e.second ) );
     }
 
     /// The incident face is considered ccw.
-    inline
+    
     VertexHandle target( const Edge & e ) const
     {
       return e.first->vertex( T.cw( e.second ) );
     }
 
-    inline
+    
     Edge nextCCWAroundFace( const Edge & e ) const
     {
       return Edge( e.first, T.ccw( e.second ) );
     }
 
-    inline
+    
     Edge nextCWAroundFace( const Edge & e ) const
     {
       return Edge( e.first, T.cw( e.second ) );
@@ -338,24 +338,28 @@ namespace DGtal {
 
     /// @return the next edge around the source vertex, such that this
     /// edge has the same source and is CCW around it.
-    inline
+    
     Edge nextCCWAroundSourceVertex( const Edge & e ) const
     {
-      Edge n = T.mirror_edge( nextCWAroundFace( e ) );
+      Edge e1 = nextCWAroundFace( e );
+      Edge n = T.mirror_edge( e1 );
       if ( source( n ) != source( e ) )
         trace.error() << "[DigitalCore::nextCCWAroundSourceVertex] sources are not consistent." << std::endl;
+      if ( target( n ) == target( e ) )
+        trace.error() << "[DigitalCore::nextCCWAroundSourceVertex] targets are equal." << std::endl;
+      return n;
     }
 
     /// @return the next edge around the source vertex, such that this
     /// edge has the same source and is CW around it.
-    inline
+    
     Edge nextCWAroundSourceVertex( const Edge & e ) const
     {
       return nextCCWAroundFace( T.mirror_edge( e ) );
     }
 
   public:
-    inline
+    
     bool isEdgeBasic( const Edge & e ) const
     {
       VertexHandle v1 = e.first->vertex( T.ccw( e.second ) );
@@ -459,33 +463,40 @@ namespace DGtal {
     {
       if ( T.is_infinite( v ) ) return;
       EdgeCirculator ci = T.incident_edges( v );
-      if ( ci == 0 ) return;
-      Edge e = *ci;
-      if ( source( e ) != v ) e = T.mirror_edge( e );
-      if ( source( e ) != v )
-        trace.error() << "[DigitalCore::getBoundaryPairs] Invalid incident edge." << std::endl;
-      Edge start = e;
-      bool found = false;
-      do {
-        trace.info() << "[DigitalCore::getBoundaryPairs] v=" << v->point() 
-                     << " e=" << source( e )->point()  
-                     << " -> " << target( e )->point() << std::endl;
-        if ( isEdgeBoundary( e ) ) 
-          found = true;
-        else
-          e = nextCCWAroundSourceVertex( e );
-      } while ( e != start );
-      if ( found ) 
-        {
-          start = e;
-          do {
-            if ( isEdgeBoundary( e ) ) 
-              sEdges.push_back( e );
-            if ( isEdgeBoundary( nextCWAroundFace( e ) ) )
-              tEdges.push_back( nextCWAroundFace( e ) );
-            e = nextCCWAroundSourceVertex( e );
-          } while ( e != start );
-        }
+      if ( ci != 0 ) {
+	Edge e = *ci;
+	if ( source( e ) != v ) e = T.mirror_edge( e );
+	if ( source( e ) != v )
+	  trace.error() << "[DigitalCore::getBoundaryPairs] Invalid incident edge." << std::endl;
+	Edge start = e;
+	bool found = false;
+	do {
+	  trace.info() << "[DigitalCore::getBoundaryPairs] v=" << v->point() 
+		       << " e=" << source( e )->point()  
+		       << " -> " << target( e )->point() << std::endl;
+	  if ( isEdgeBoundary( e ) ) 
+	    {
+	      found = true;
+	      break;
+	    }
+	  else
+	    {
+	      // trace.info() << "[DigitalCore::getBoundaryPairs] next." << std::endl; 
+	      e = nextCCWAroundSourceVertex( e );
+	    }
+	} while ( e != start );
+	if ( found ) 
+	  {
+	    start = e;
+	    do {
+	      if ( isEdgeBoundary( e ) ) 
+		sEdges.push_back( e );
+	      if ( isEdgeBoundary( nextCWAroundFace( e ) ) )
+		tEdges.push_back( nextCWAroundFace( e ) );
+	      e = nextCCWAroundSourceVertex( e );
+	    } while ( e != start );
+	  }
+      }
       // EdgeCirculator ci = T.incident_edges( v );
       // EdgeCirculator ce = ci;
       // int n = 0;
@@ -889,19 +900,19 @@ int main ()
   trace.beginBlock( "Computing digital core." );
   DigitalCore core( t );
 
-  bool fill;
-  do {
-    trace.info() << "------------ fill concavities ---------------------------------" << std::endl;
-    fill = core.fillConcavities();
-  } while ( fill );
-
-  // int nb_flip;
+  // bool fill;
   // do {
-  //   trace.info() << "------------------------------------------------------------" << std::endl;
-  //   core.extend();
-  //   nb_flip = core.flipUpdate();
-  //   trace.info() << "- nb flip = " << nb_flip << std::endl;
-  // } while ( nb_flip != 0 );
+  //   trace.info() << "------------ fill concavities ---------------------------------" << std::endl;
+  //   fill = core.fillConcavities();
+  // } while ( fill );
+
+  int nb_flip;
+  do {
+    trace.info() << "------------------------------------------------------------" << std::endl;
+    core.extend();
+    nb_flip = core.flipUpdate();
+    trace.info() << "- nb flip = " << nb_flip << std::endl;
+  } while ( nb_flip != 0 );
 
   trace.endBlock();
 

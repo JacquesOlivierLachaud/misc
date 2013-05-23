@@ -277,7 +277,8 @@ int main ()
     std::cout << "----------- nb_flip " << nb_flip 
 	      << ", nb_random " << nb_random_flip << " -------------" << std::endl;
     ++pass;
-    if ( inverse && ( log(nb_random_flip) > pass ) ) flip = true;
+    if ( inverse && ( (nb_random_flip+4) > log(pass) ) ) 
+      flip = true;
   }  
   trace.endBlock();
 
