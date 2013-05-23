@@ -139,6 +139,7 @@ namespace DGtal {
     typedef Delaunay::Edge                Edge;
     typedef Delaunay::Edge_iterator       EdgeIterator;
     typedef Delaunay::Edge_circulator     EdgeCirculator;
+    typedef Delaunay::Finite_vertices_iterator FiniteVerticesIterator;
     typedef Delaunay::Vertex_circulator   VertexCirculator;
     typedef Delaunay::Vertex_handle       VertexHandle;
     typedef Delaunay::Point               CGALPoint;
@@ -146,7 +147,127 @@ namespace DGtal {
     typedef std::set<Edge>                EdgeSet;
     typedef std::set<FaceHandle>          FaceSet;
     enum BoundaryAngle { FLAT, CONVEX, CONCAVE, EXTREMITY, NONE, MULTIPLE, ERROR };
+    enum Flip { NO_NEED, FLIP_ERROR, FLIP_DONE };
+    struct Concavity {
+      VertexHandle v;
+      CGALVector dir;
+      int priority[ 2 ];
+      
+      inline Concavity( const DigitalCore & core, const VertexHandle & vertex, const CGALVector & direction )
+        : v( vertex ), dir( direction )
+      {
+        const Triangulation & T = core.triangulation();
+        Edge e1, e2;
+        getEdges( e1, e2, core );
+        Z2i::Vector v1 = toDGtal( T.segment( e1 ).to_vector() );
+        Z2i::Vector v2 = toDGtal( T.segment( e2 ).to_vector() );
+        priority[ 0 ] = v1.norm( Z2i::Vector::L_1 );
+        priority[ 1 ] = v2.norm( Z2i::Vector::L_1 );
+        if ( priority[ 1 ] < priority[ 0 ] )  std::swap( priority[ 0 ], priority[ 1 ] );
+      }
 
+      inline Concavity( const Concavity & other )
+        : v( other.v ), dir( other.dir)
+      {
+        priority[ 0 ] = other.priority[ 0 ];
+        priority[ 1 ] = other.priority[ 1 ];
+      }
+
+      inline Concavity & operator=( const Concavity & other )
+      {
+        if ( this != &other )
+          {
+            v = other.v;
+            dir = other.dir;
+            priority[ 0 ] = other.priority[ 0 ];
+            priority[ 1 ] = other.priority[ 1 ];
+          }
+        return *this;
+      }
+
+      bool operator<( const Concavity & other ) const
+      {
+        return ( priority[ 0 ] < other.priority[ 0 ] )
+          || ( ( priority[ 0 ] == other.priority[ 0 ] )
+               && ( ( priority[ 1 ] < other.priority[ 1 ] ) 
+                    || ( ( priority[ 1 ] == other.priority[ 1 ] ) 
+                         && ( ( v < other.v )
+                              || ( ( v == other.v )
+                                   && ( ( dir[ 0 ] < other.dir[ 0 ] )
+                                        || ( ( dir[ 0 ] == other.dir[ 0 ] ) 
+                                             && ( dir[ 1 ] < other.dir[ 1 ] ) ) ) ) ) ) ) );
+      }
+
+      bool isFillable( const DigitalCore & core ) const
+      {
+        Edge e1, e2;
+        if ( getEdges( e1, e2, core ) )
+          {
+            VertexHandle v1 = core.source( e1 );
+            VertexHandle v2 = core.target( e2 );
+            return core.twiceNbLatticePointsInTriangle( v1, v, v2 ) == 0;
+          }
+        return false;
+      }
+
+      bool getEdges( Edge & e1, Edge & e2, const DigitalCore & core ) const
+      {
+        const Triangulation & T = core.triangulation();
+        std::vector<Edge> tEdges;
+        std::vector<Edge> sEdges;
+        core.getBoundaryPairs( tEdges, sEdges, v );
+        int j = -1;
+        int best = 0;
+        for ( int i = 0; i < tEdges.size(); ++i )
+          {
+            CGALVector v0 = T.segment( tEdges[ i ] ).to_vector();
+            CGALVector v1 = T.segment( sEdges[ i ] ).to_vector();
+            if ( ( toDGtal( v0 ) ^ toDGtal( v1 ) ) > 0 ) // only concave vertices.
+              {
+                int val = ( v1 - v0 ) * dir;
+                if ( val > best ) { j = i; best = val; }
+              }
+          }
+        if ( j == -1 )
+          {
+            trace.error() << "[DigitalCore::Concavity::getEdges] No edge pair is correct for direction." << std::endl;
+            return false;
+          }
+        e1 = tEdges[ j ];
+        e2 = sEdges[ j ];
+        return true;
+      }
+
+      Flip flipExternalEdge( DigitalCore & core )
+      {
+        const Triangulation & T = core.triangulation();
+        Edge e1, e2;
+        bool ok = getEdges( e1, e2, core );
+        if ( ! ok ) return FLIP_ERROR;
+        if ( core.isEdgeInterior( e1 ) || core.isEdgeInterior( e2 ) )
+          {
+            trace.error() << "[DigitalCore::Concavity::flipExternalEdge] At least one boundary edge is interior." << std::endl;
+            return FLIP_ERROR;
+          }
+        if ( e1.first == e2.first ) // concavity is reduced to a triangle, no more flip needed.
+          {
+            trace.info() << "[DigitalCore::Concavity::flipExternalEdge] No more flip are needed." << std::endl;
+            return NO_NEED;
+          }
+        Edge fe = Edge( e1.first, T.ccw( e1.second ) );
+	if ( core.isEdgeQuadrilateral( fe ) ) 
+          {
+            trace.info() << "[DigitalCore::Concavity::flipExternalEdge] flip edge." << std::endl;
+            // core.triangulation().flip( fe.first, fe.second );
+            core.secureFlip( fe );
+            return FLIP_DONE;
+          }
+        trace.error() << "[DigitalCore::Concavity::flipExternalEdge] Edge is not quadrilateral." << std::endl;
+        return FLIP_ERROR;
+      }
+
+      
+    };
   private:
     /// The triangulation. It is copied since it is modified.
     Triangulation T;
@@ -177,6 +298,9 @@ namespace DGtal {
     inline
     const Triangulation & triangulation() const
     { return T; }
+    inline
+    Triangulation & triangulation()
+    { return T; }
     
     inline
     const EdgeSet & boundary() const
@@ -186,15 +310,48 @@ namespace DGtal {
     const FaceSet & interior() const
     { return myInterior; }
 
+    /// The incident face is considered ccw.
     inline
-    VertexHandle source( const Edge e ) const
+    VertexHandle source( const Edge & e ) const
     {
       return e.first->vertex( T.ccw( e.second ) );
     }
+
+    /// The incident face is considered ccw.
     inline
-    VertexHandle target( const Edge e ) const
+    VertexHandle target( const Edge & e ) const
     {
       return e.first->vertex( T.cw( e.second ) );
+    }
+
+    inline
+    Edge nextCCWAroundFace( const Edge & e ) const
+    {
+      return Edge( e.first, T.ccw( e.second ) );
+    }
+
+    inline
+    Edge nextCWAroundFace( const Edge & e ) const
+    {
+      return Edge( e.first, T.cw( e.second ) );
+    }
+
+    /// @return the next edge around the source vertex, such that this
+    /// edge has the same source and is CCW around it.
+    inline
+    Edge nextCCWAroundSourceVertex( const Edge & e ) const
+    {
+      Edge n = T.mirror_edge( nextCWAroundFace( e ) );
+      if ( source( n ) != source( e ) )
+        trace.error() << "[DigitalCore::nextCCWAroundSourceVertex] sources are not consistent." << std::endl;
+    }
+
+    /// @return the next edge around the source vertex, such that this
+    /// edge has the same source and is CW around it.
+    inline
+    Edge nextCWAroundSourceVertex( const Edge & e ) const
+    {
+      return nextCCWAroundFace( T.mirror_edge( e ) );
     }
 
   public:
@@ -251,7 +408,7 @@ namespace DGtal {
       return d;
     }
 
-    bool isEdgeQuadrilateral( const Edge & e1 )
+    bool isEdgeQuadrilateral( const Edge & e1 ) const
     {
       Edge e2 = T.mirror_edge( e1 );
       VertexHandle v1 = e1.first->vertex( e1.second );
@@ -266,6 +423,170 @@ namespace DGtal {
         && ( (( c-b )^( d-c )) > 0)
         && ( (( d-c )^( a-d )) > 0)
         && ( (( a-d )^( b-a )) > 0);
+    }
+
+    void secureFlip( const Edge & e1 )
+    {
+      std::vector<Edge> save_boundary;
+      Edge e2 = T.mirror_edge( e1 );
+      Edge e1_a( e1.first, T.cw( e1.second ) );
+      Edge e1_b( e1.first, T.ccw( e1.second ) );
+      Edge e2_a( e2.first, T.cw( e2.second ) );
+      Edge e2_b( e2.first, T.ccw( e2.second ) );
+      if ( isEdgeBoundary( e1_a ) ) save_boundary.push_back( e1_a );
+      if ( isEdgeBoundary( e1_b ) ) save_boundary.push_back( e1_b );
+      if ( isEdgeBoundary( e2_a ) ) save_boundary.push_back( e2_a );
+      if ( isEdgeBoundary( e2_b ) ) save_boundary.push_back( e2_b );
+      // get mirror edges (since edge flip will change incident faces).
+      for ( std::vector<Edge>::iterator it = save_boundary.begin(), itend = save_boundary.end();
+            it != itend; ++it )
+        {
+          Edge e = *it;
+          myBoundary.erase( e );
+          *it = T.mirror_edge( e );
+        }
+      // flip edge.
+      T.flip( e1.first, e1.second );
+      // push back in boundary mirror of mirror edges.
+      for ( std::vector<Edge>::iterator it = save_boundary.begin(), itend = save_boundary.end();
+            it != itend; ++it )
+        myBoundary.insert( T.mirror_edge( *it ) );
+    }
+
+    void getBoundaryPairs( std::vector<Edge> & tEdges,
+                           std::vector<Edge> & sEdges,
+                           const VertexHandle & v ) const
+    {
+      if ( T.is_infinite( v ) ) return;
+      EdgeCirculator ci = T.incident_edges( v );
+      if ( ci == 0 ) return;
+      Edge e = *ci;
+      if ( source( e ) != v ) e = T.mirror_edge( e );
+      if ( source( e ) != v )
+        trace.error() << "[DigitalCore::getBoundaryPairs] Invalid incident edge." << std::endl;
+      Edge start = e;
+      bool found = false;
+      do {
+        trace.info() << "[DigitalCore::getBoundaryPairs] v=" << v->point() 
+                     << " e=" << source( e )->point()  
+                     << " -> " << target( e )->point() << std::endl;
+        if ( isEdgeBoundary( e ) ) 
+          found = true;
+        else
+          e = nextCCWAroundSourceVertex( e );
+      } while ( e != start );
+      if ( found ) 
+        {
+          start = e;
+          do {
+            if ( isEdgeBoundary( e ) ) 
+              sEdges.push_back( e );
+            if ( isEdgeBoundary( nextCWAroundFace( e ) ) )
+              tEdges.push_back( nextCWAroundFace( e ) );
+            e = nextCCWAroundSourceVertex( e );
+          } while ( e != start );
+        }
+      // EdgeCirculator ci = T.incident_edges( v );
+      // EdgeCirculator ce = ci;
+      // int n = 0;
+      // if ( ci != 0 )
+      //   do {
+      //     if ( isEdgeBoundary( *ci ) ) {
+      //       if ( source( *ci ) == v )
+      //         sEdges.push_back( *ci );
+      //       else
+      //         tEdges.push_back( *ci );
+      //     }
+      //     --ci; // going clockwise to get concavities
+      //     if ( isEdgeBoundary( T.mirror_edge( *ci ) ) ) {
+      //       if ( source( T.mirror_edge( *ci ) ) == v )
+      //         sEdges.push_back( T.mirror_edge( *ci ) );
+      //       else
+      //         tEdges.push_back( T.mirror_edge( *ci ) );
+      //     }
+      //   } while ( ci != ce );
+      unsigned int s = sEdges.size() + tEdges.size();
+      if ( sEdges.size() != tEdges.size() )
+        {
+          trace.error() << "[DigitalCore::getBoundaryPairs] Odd number of boundary edges." << std::endl;
+          trace.error() << "#sEdges=" << sEdges.size() 
+                        << " #tEdges=" << tEdges.size() << std::endl;
+          return;
+        }
+    }
+
+    void makeConcavities( std::vector<Concavity> & concavities, 
+                          const VertexHandle & v )
+    {
+      std::vector<Edge> sEdges;
+      std::vector<Edge> tEdges;
+      getBoundaryPairs( tEdges, sEdges, v ); 
+      unsigned int s = tEdges.size() + sEdges.size();
+      if ( s == 0 ) return;
+      s >>= 1;
+      for ( unsigned int i = 0; i < s; ++i )
+        {
+          CGALVector v0 = T.segment( tEdges[ i ] ).to_vector();
+          CGALVector v1 = T.segment( sEdges[ i ] ).to_vector();
+          if ( ( toDGtal( v0 ) ^ toDGtal( v1 ) ) > 0 )
+            {
+              trace.info() << "[DigitalCore::makeConcavities] Checking concavity at " << v->point()
+                           << ", " << v0 << " x " << v1 << std::endl;
+              concavities.push_back( Concavity( *this, v, v1 - v0 ) );
+            }
+        }
+    }
+
+    bool fillConcavities()
+    {
+      // Prepare queue
+      std::priority_queue<Concavity> Q;
+      std::vector<Concavity> concavities;
+      for ( FiniteVerticesIterator it = T.finite_vertices_begin(), itend = T.finite_vertices_end();
+            it != itend; ++it )
+        {
+          makeConcavities( concavities, it );
+          for ( std::vector<Concavity>::const_iterator it2 = concavities.begin(), it2end = concavities.end();
+                it2 != it2end; ++it2 )
+            Q.push( *it2 );
+          concavities.clear();
+        }
+      bool fill = false;
+      while ( ! Q.empty() )
+        {
+          Concavity cc = Q.top();
+          Q.pop();
+          if ( cc.isFillable( *this ) )
+            {
+              trace.info() << "Concavity " << cc.v->point() << " is fillable." << std::endl;
+              Flip res;
+              while ( ( res = cc.flipExternalEdge( *this ) ) == FLIP_DONE )
+                ;
+              // Fill face
+              if ( res == NO_NEED )
+                {
+                  Edge e1, e2, ne;
+                  cc.getEdges( e1, e2, *this );
+                  ne = Edge( e2.first, T.ccw( e2.second ) );
+                  trace.info() << "Filling with " << source( ne )->point() << " -> " << target( ne )->point() << std::endl;
+                  FaceHandle f = e1.first;
+                  myInterior.insert( f );
+                  Edge nedge = T.mirror_edge( ne );
+                  myBoundary.erase( e1 );
+                  myBoundary.erase( e2 );
+                  myBoundary.insert( nedge );
+                  fill = true;
+                  makeConcavities( concavities, source( nedge ) );
+                  makeConcavities( concavities, target( nedge ) );
+                  trace.info() << "Adding " << concavities.size() << " concavities." << std::endl;
+                  for ( std::vector<Concavity>::const_iterator it2 = concavities.begin(), it2end = concavities.end();
+                        it2 != it2end; ++it2 )
+                    Q.push( *it2 );
+                  concavities.clear();
+                }
+            }
+        }
+      return fill;
     }
 
     int countExteriorEdges( VertexHandle v ) const
@@ -407,14 +728,22 @@ namespace DGtal {
         //              << "C(" << concave_C << ":" << nbOutEdge_C << ") "
         //              << "D(" << concave_D << ":" << nbOutEdge_D << ") "
         //              << std::endl;
-        int nbOutEdgeInConcavity = ( concave_A ? nbOutEdge_A : 0 )
-          + ( concave_B ? nbOutEdge_B : 0 )
-          + ( concave_C ? nbOutEdge_C : 0 )
-          + ( concave_D ? nbOutEdge_D : 0 );
-        int nbOutEdgeInConcavity_flip = ( concave_A ? nbOutEdge_A-1 : 0 )
-          + ( concave_B ? nbOutEdge_B-1 : 0 )
-          + ( concave_C ? nbOutEdge_C+1 : 0 )
-          + ( concave_D ? nbOutEdge_D+1 : 0 );
+        int nbOutEdgeInConcavity = ( concave_A ? nbOutEdge_A : INT_MAX );
+        nbOutEdgeInConcavity = std::min( nbOutEdgeInConcavity, concave_B ? nbOutEdge_B : INT_MAX );
+        nbOutEdgeInConcavity = std::min( nbOutEdgeInConcavity, concave_C ? nbOutEdge_C : INT_MAX );
+        nbOutEdgeInConcavity = std::min( nbOutEdgeInConcavity, concave_D ? nbOutEdge_D : INT_MAX );
+        int nbOutEdgeInConcavity_flip = ( concave_A ? nbOutEdge_A-1 : INT_MAX );
+        nbOutEdgeInConcavity_flip = std::min( nbOutEdgeInConcavity_flip, concave_B ? nbOutEdge_B-1 : INT_MAX );
+        nbOutEdgeInConcavity_flip = std::min( nbOutEdgeInConcavity_flip, concave_C ? nbOutEdge_C+1 : INT_MAX );
+        nbOutEdgeInConcavity_flip = std::min( nbOutEdgeInConcavity_flip, concave_D ? nbOutEdge_D+1 : INT_MAX );
+        // int nbOutEdgeInConcavity = ( concave_A ? nbOutEdge_A : 0 )
+        //   + ( concave_B ? nbOutEdge_B : 0 )
+        //   + ( concave_C ? nbOutEdge_C : 0 )
+        //   + ( concave_D ? nbOutEdge_D : 0 );
+        // int nbOutEdgeInConcavity_flip = ( concave_A ? nbOutEdge_A-1 : 0 )
+        //   + ( concave_B ? nbOutEdge_B-1 : 0 )
+        //   + ( concave_C ? nbOutEdge_C+1 : 0 )
+        //   + ( concave_D ? nbOutEdge_D+1 : 0 );
 
 	// if ( ( nb_flip_min < nb_min )
         //      || ( ( nb_flip_min == nb_min )
@@ -512,22 +841,22 @@ int main ()
   Delaunay t;
   
   trace.beginBlock("Construction the shape");
-  typedef Ellipse2D<Z2i::Space> Ellipse; 
-  int a = 5, b = 3;
-  Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), a, b, 0.3 );
-  double h = 0.125; 
-  GaussDigitizer<Z2i::Space,Ellipse> dig;  
-  dig.attach( ellipse );
-  dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
-            ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
-  // typedef Flower2D<Z2i::Space> Flower; 
-  // int a = 29, b = 9;
-  // Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
-  // double h = 0.5; 
-  // GaussDigitizer<Z2i::Space,Flower> dig;  
-  // dig.attach( flower );
-  // dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
-  //           flower.getUpperBound()+Z2i::Vector(1,1), h ); 
+  // typedef Ellipse2D<Z2i::Space> Ellipse; 
+  // int a = 5, b = 3;
+  // Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), a, b, 0.3 );
+  // double h = 0.125; 
+  // GaussDigitizer<Z2i::Space,Ellipse> dig;  
+  // dig.attach( ellipse );
+  // dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
+  //           ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
+  typedef Flower2D<Z2i::Space> Flower; 
+  int a = 19, b = 9;
+  Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
+  double h = 0.5; 
+  GaussDigitizer<Z2i::Space,Flower> dig;  
+  dig.attach( flower );
+  dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
+            flower.getUpperBound()+Z2i::Vector(1,1), h ); 
   Z2i::KSpace ks;
   ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
   SurfelAdjacency<2> sAdj( true );
@@ -547,8 +876,8 @@ int main ()
       ++it)
     { 
       t.insert( Point( (*it)[0], (*it)[1]));
-      t.insert( Point( (*it)[0] + 3 + (int) ceil( ((double)b+0.5)/h ),
-		       (*it)[1] - 3 - (int) ceil( ((double)a+0.5)/h ) ));
+      t.insert( Point( (*it)[0] + 3 + (int) ceil( ((double)b)/h ),
+		       (*it)[1] - 3 - (int) ceil( ((double)a)/h ) ));
     }
   trace.endBlock();
 
@@ -559,19 +888,33 @@ int main ()
 
   trace.beginBlock( "Computing digital core." );
   DigitalCore core( t );
-  int nb_flip;
+
+  bool fill;
   do {
-    trace.info() << "------------------------------------------------------------" << std::endl;
-    core.extend();
-    nb_flip = core.flipUpdate();
-    trace.info() << "- nb flip = " << nb_flip << std::endl;
-  } while ( nb_flip != 0 );
+    trace.info() << "------------ fill concavities ---------------------------------" << std::endl;
+    fill = core.fillConcavities();
+  } while ( fill );
+
+  // int nb_flip;
+  // do {
+  //   trace.info() << "------------------------------------------------------------" << std::endl;
+  //   core.extend();
+  //   nb_flip = core.flipUpdate();
+  //   trace.info() << "- nb flip = " << nb_flip << std::endl;
+  // } while ( nb_flip != 0 );
+
   trace.endBlock();
 
   {
     DGtal::Board2D board;
     
     Z2i::Point dP;
+    board << CustomStyle( dP.className(), 
+                          new CustomPen( Color(0,0,0), Color(255,0,255), 1, 
+                                         Board2D::Shape::SolidStyle,
+                                         Board2D::Shape::RoundCap,
+                                         Board2D::Shape::RoundJoin ))
+          << Z2i::Point( 10, -73 );
     board << CustomStyle( dP.className(), 
                           new CustomPen( Color(0,0,0), Color(230,230,230), 1, 
                                          Board2D::Shape::SolidStyle,
