@@ -960,20 +960,20 @@ int main (int argc, char** argv )
   core.extend( area_factor_extend );
   core.retract( area_factor_retract );
 
-  trace.beginBlock( "Couting interior and boundary vertices." );
-  Delaunay t2;
-  unsigned int nb_int = 0;
-  unsigned int nb_bd = 0;
-  for ( Vertex_iterator it = t.vertices_begin(), itend = t.vertices_end();
-        it != itend; ++it )
-    if ( core.isVertexInterior( it ) ) ++nb_int;
-    else {
-      t2.insert( it->point() );
-      ++nb_bd;
-    }
-  trace.info() << "- nb interior vertices = " << nb_int << std::endl;
-  trace.info() << "- nb boundary vertices = " << nb_bd << std::endl;
-  trace.endBlock();
+  // trace.beginBlock( "Couting interior and boundary vertices." );
+  // Delaunay t2;
+  // unsigned int nb_int = 0;
+  // unsigned int nb_bd = 0;
+  // for ( Vertex_iterator it = t.vertices_begin(), itend = t.vertices_end();
+  //       it != itend; ++it )
+  //   if ( core.isVertexInterior( it ) ) ++nb_int;
+  //   else {
+  //     t2.insert( it->point() );
+  //     ++nb_bd;
+  //   }
+  // trace.info() << "- nb interior vertices = " << nb_int << std::endl;
+  // trace.info() << "- nb boundary vertices = " << nb_bd << std::endl;
+  // trace.endBlock();
 
 
   // start viewer
