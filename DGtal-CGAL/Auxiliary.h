@@ -249,6 +249,35 @@ namespace DGtal
     return 0;
   }
 
+  /**
+     Given a set of points \a P, computes the set of \f$ Z^d \setminus P \f$ that touches P.
+  */
+  template <typename Space>
+  void computeBorder( std::set< typename Space::Point > & Q, 
+                      const std::set< typename Space::Point > & P )
+  {
+    typedef typename Space::Point Point;
+    typedef typename std::set< Point > PointSet;
+    typedef typename std::set< Point >::const_iterator PointSetConstIterator;
+    typedef typename Point::UnsignedComponent Size;
+    typedef HyperRectDomain< Space > Domain;
+    typedef typename Domain::ConstIterator DomainConstIterator;
+    Point d1 = Point::diagonal( 1 );
+    Q.clear();
+    // Scan surroundings of all points of P.
+    for ( PointSetConstIterator it = P.begin(), itend = P.end(); 
+          it != itend; ++it )
+      {
+        Domain localDomain( *it - d1, *it + d1 );
+        for ( DomainConstIterator itd = localDomain.begin(), itdend = localDomain.end();
+              itd != itdend; ++itd )
+          {
+            Point p = *itd;
+            if ( P.find( p ) == P.end() ) Q.insert( p );
+          }
+      }
+  }
+
 }
 
 
