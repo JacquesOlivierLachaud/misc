@@ -293,6 +293,12 @@ public:
   { 
     return umbrella.size();
   }
+  /// A priority value for the strip, the smaller, the highest.
+  inline double priority() const
+  {
+    return angle(); // ( vn()->point() - v0()->point() ).squared_length();
+  }
+
   /// Angle of umbrella.
   inline Component angle() const
   {
@@ -308,7 +314,7 @@ public:
   /// Concavity test.
   bool isConcave() const
   {
-    if ( angle() >= M_PI - 0.001 ) return false;
+    if ( angle() >= M_PI - 0.000001 ) return false;
     bool quadrilaterals = true;
     for ( unsigned int i = 1; i < size() - 1; ++i )
       {
@@ -402,12 +408,56 @@ public:
   struct Concavity {
     VertexHandle _v0;
     VertexHandle _v1;
+    const TriangulationHelper<Triangulation,Kernel>* _TH;
+    const CheckVertexLabelingInequality* _pred;
     double _n01;
-    
-    Concavity( VertexHandle v0, VertexHandle v1 )
-      : _v0( v0 ), _v1( v1 )
+
+    Concavity( VertexHandle v0, VertexHandle v1, 
+               DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
+               DGtal::ConstAlias< CheckVertexLabelingInequality > pred )
+      : _v0( v0 ), _v1( v1 ), _TH( TH ), _pred( pred )
     {
-      _n01 = ( _v1->point() - _v0->point() ).squared_length();
+      //_n01 = ( _v1->point() - _v0->point() ).squared_length();
+      Edge e;
+      Strip strip( _TH->T() );
+      _n01 = computePriority( e, strip );
+    }
+
+    Concavity( VertexHandle v0, VertexHandle v1, 
+               DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
+               DGtal::ConstAlias< CheckVertexLabelingInequality > pred,
+               double prior )
+      : _v0( v0 ), _v1( v1 ), _TH( TH ), _pred( pred ), _n01( prior )
+    {}
+
+    Concavity( const Concavity & other )
+      : _v0( other._v0 ), _v1( other._v1 ), _n01( other._n01 ),
+        _TH( other._TH ), _pred( other._pred )
+    {}
+
+    Concavity & operator=( const Concavity & other )
+    {
+      if ( this != &other )
+        {
+          _v0 = other._v0;
+          _v1 = other._v1;
+          _TH = other._TH;
+          _pred = other._pred;
+          _n01 = other._n01;
+        }
+      return *this;
+    }
+
+    double priority() const
+    { 
+      return _n01;
+    }
+
+    double computePriority( Edge & e, Strip & strip ) const
+    {
+      bool exist = _TH->findEdge( e, _v0, _v1 );
+      strip.initStrip( *_pred, _TH->source( e ), e );
+      return strip.priority();
     }
 
     bool operator<( const Concavity & other ) const
@@ -514,9 +564,9 @@ public:
         Label l0 = label( v0 );
         Label l1 = label( v1 );
         if ( ( l0 == l ) && ( l1 != l ) && ( l1 != INVALID ) )
-          Q.push( Concavity( v0, v1 ) );
+          Q.push( Concavity( v0, v1, TH, predNotL ) );
         else if ( ( l1 == l ) && ( l0 != l ) && ( l0 != INVALID ) )
-          Q.push( Concavity( v1, v0 ) );
+          Q.push( Concavity( v1, v0, TH, predNotL ) );
       }
     DGtal::trace.info() << "- Found " << Q.size() << " concavities." << std::endl;
     DGtal::trace.endBlock();
@@ -527,32 +577,36 @@ public:
         if ( Q1.empty() ) Q.pop(); 
         else Q1.pop();
         Edge e;
-        bool exist = TH.findEdge( e, concavity._v0, concavity._v1 );
-        if ( exist )
+        Strip strip( _T );
+        double p = concavity.computePriority( e, strip );
+        if ( p <= 0.0 ) continue;           // Invalid concavity.
+        if ( ( p != concavity.priority() )  // priority has changed
+             && ( ! Q.empty() )             // but the queue is not empty
+             && ( p > Q.top().priority() ) )// and the priority is not the best
+          { 
+            Q.push( Concavity( concavity._v0, concavity._v1, TH, predNotL, p ) );
+            continue;
+          }
+        DGtal::trace.info() << "- Edge found " << TH.source( e )->point()
+                            << "(" << label( TH.source( e ) ) << ")"
+                            << " -> " << TH.target( e )->point() 
+                            << "(" << label( TH.target( e ) ) << ")"
+                            << std::endl;
+        DGtal::trace.info() << "Strip size = " << strip.size() 
+                            << " angle(deg) = " << ( strip.angle() * 180.0 / M_PI ) << std::endl;
+        if ( strip.isConcave() )
           {
-            DGtal::trace.info() << "- Edge found " << TH.source( e )->point()
-                                << "(" << label( TH.source( e ) ) << ")"
-                                << " -> " << TH.target( e )->point() 
-                                << "(" << label( TH.target( e ) ) << ")"
-                                << std::endl;
-            Strip strip( _T );
-            strip.initStrip( predNotL, TH.source( e ), e );
-            DGtal::trace.info() << "Strip size = " << strip.size() 
-                                << " angle(deg) = " << ( strip.angle() * 180.0 / M_PI ) << std::endl;
-            if ( strip.isConcave() )
-              {
-                unsigned int idx = strip.getFlippableEdgeIndex();
-                Edge fedge = strip.e( idx );
-                DGtal::trace.info() << " => strip is concave. Flipping "
-                                    << TH.source( fedge )->point()
-                                    << "(" << label( TH.source( fedge ) ) << ")"
-                                    << " -> " << TH.target( fedge )->point() 
-                                    << "(" << label( TH.target( fedge ) ) << ")"<< std::endl;
-                for ( unsigned int i = 1; i < strip.size() - 1; ++i )
-                  if ( i != idx ) Q1.push( Concavity( strip.pivot, strip.v( i ) ) );
+            unsigned int idx = strip.getFlippableEdgeIndex();
+            Edge fedge = strip.e( idx );
+            DGtal::trace.info() << " => strip is concave. Flipping "
+                                << TH.source( fedge )->point()
+                                << "(" << label( TH.source( fedge ) ) << ")"
+                                << " -> " << TH.target( fedge )->point() 
+                                << "(" << label( TH.target( fedge ) ) << ")"<< std::endl;
+            for ( unsigned int i = 1; i < strip.size() - 1; ++i )
+              if ( i != idx ) Q.push( Concavity( strip.pivot, strip.v( i ), TH, predNotL, strip.priority() ) );
                 _T.flip( fedge.first, fedge.second );
                 changes = true;
-              }
           }
       }
     DGtal::trace.endBlock();
@@ -644,9 +698,10 @@ int main( int argc, char** argv )
 
   trace.beginBlock("Construction the shape");
   typedef Ellipse2D<Z2i::Space> Ellipse; 
-  int a = 5, b = 3;
+  int a = 5, b = 1;
   Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), a, b, 0.3 );
-  double h = 0.06125; 
+  double h = 0.25; // 06125; 
+  int N = 4;
   GaussDigitizer<Z2i::Space,Ellipse> dig;  
   dig.attach( ellipse );
   dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
@@ -671,8 +726,18 @@ int main( int argc, char** argv )
   typedef Z2i::Curve::PointsRange Range; 
   Range r = c.getPointsRange(); 
   for ( Range::ConstIterator it = r.begin(), itE = r.end(); it != itE; ++it )
-    p.insert( *it );
+    {
+      Z2i::Point P( *it );
+      p.insert( P );
+      p.insert( P + Z2i::Point( 2*N+2, -2*N ) );
+      p.insert( Z2i::Point( P[ 1 ], P[ 0 ] ) );
+    }
+  for ( int x = 0; x < 10*N; ++x )
+    {
+      p.insert( Z2i::Point( x, (12*x)/13 - 4*N - 2 ) );
+    }
   trace.endBlock();
+
 
 
   trace.beginBlock( "Computing border." );
@@ -696,6 +761,9 @@ int main( int argc, char** argv )
   do {
     rc = dac.removeConcavities( 0 );
   } while ( rc );
+  do {
+    rc = dac.removeConcavities( 1 );
+  } while ( rc );
   //   rc = dac.removeConcavities( 0 );
   // rc = dac.removeConcavities( 1 );
   // rc = dac.removeConcavities( 1 );
@@ -705,7 +773,10 @@ int main( int argc, char** argv )
   trace.beginBlock( "Visualizing Digital Affine Complex." );
   Board2D board;
   ViewerDAC<DigitalAffineComplex> viewer( board, dac );
-  board << Domain( DPoint( -2, -2 ), DPoint( 13, 13 ) );
+  for ( std::set<DPoint>::const_iterator it = p.begin(), ite = p.end();
+        it != ite; ++it )
+    board << *it;
+  // board << Domain( DPoint( -2, -2 ), DPoint( 13, 13 ) );
   viewer.viewAll();
   board.saveSVG("dac.svg");
   board.saveEPS("dac.eps");
