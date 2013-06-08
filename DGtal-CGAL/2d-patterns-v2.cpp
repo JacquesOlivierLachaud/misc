@@ -2,6 +2,9 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <boost/program_options/options_description.hpp>
+#include <boost/program_options/parsers.hpp>
+#include <boost/program_options/variables_map.hpp>
 
 #include <DGtal/base/Common.h>
 #include <DGtal/helpers/StdDefs.h>
@@ -855,8 +858,38 @@ namespace DGtal {
   };
 }
 
-int main ()
+
+///////////////////////////////////////////////////////////////////////////////
+namespace po = boost::program_options;
+
+int main ( int argc, char** argv )
 {
+  // parse command line ----------------------------------------------
+  po::options_description general_opt("Allowed options are: ");
+  general_opt.add_options()
+    ("help,h", "display this message")
+    ("point-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points, 'x y' per line.")
+    ;
+  bool parseOK = true;
+  po::variables_map vm;
+  try {
+    po::store( po::parse_command_line(argc, argv, general_opt), vm );  
+  } catch ( const std::exception& ex ) {
+    parseOK = false;
+    trace.info() << "Error checking program options: " << ex.what() << std::endl;
+  }
+    
+  po::notify(vm);    
+  if( ! parseOK || vm.count("help") || argc <=1 )
+    {
+      trace.info()<< "Generate a 2D triangulation from an arbitrary set of points. The triangulation provides a kind of piecewise linear approximation of the digitized set. The digitized set has label 0, the exterior points have label 1." <<std::endl << "Basic usage: " << std::endl
+		  << "\2d-triangulation [options] -l <point-list>"<<std::endl
+		  << general_opt << "\n";
+      return 0;
+    }
+
+
+
   std::vector<Z2i::Point> error_list;
   // error_list.push_back( Z2i::Point( 30, -15 ) );
   // error_list.push_back( Z2i::Point( 32, -16 ) );
@@ -869,7 +902,7 @@ int main ()
   typedef Ellipse2D<Z2i::Space> Ellipse; 
   int a = 5, b = 3;
   Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), a, b, 0.3 );
-  double h = 0.06125; 
+  double h = 0.25; //06125; 
   GaussDigitizer<Z2i::Space,Ellipse> dig;  
   dig.attach( ellipse );
   dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
@@ -1158,5 +1191,9 @@ int main ()
   board.saveSVG("delaunay.svg");
   board.saveEPS("delaunay.eps");
   
+  for ( DigitalCore::FiniteVerticesIterator it = core.triangulation().finite_vertices_begin(),
+          ite = core.triangulation().finite_vertices_end(); it != ite; ++it )
+    std::cout << it->point() << std::endl;
+
   return 0;
 }

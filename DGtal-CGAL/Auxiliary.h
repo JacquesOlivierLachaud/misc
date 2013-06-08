@@ -126,7 +126,7 @@ namespace DGtal
 
   /**
      Creates a digital Khalimsky space and a set of surfels that
-     approximate the zero-level set of the given polynomial surface.
+     surround a list of points given in a file (x y ... per line). 
   */
   template <typename KSpace, typename SCellSet>
   int
@@ -150,9 +150,8 @@ namespace DGtal
           {
             Point p;
             std::istringstream istr( str );
-            Coordinate x, y, z;
-            //istr >> x >> y >> z;
-            istr >> p[ 0 ] >> p[ 1 ] >> p[ 2 ];
+            for ( unsigned int i = 0; i < KSpace::dimension; ++i )
+              istr >> p[ i ];
             lower = points.empty() ? p : lower.inf( p );
             upper = points.empty() ? p : upper.sup( p );
             points.push_back( p );
@@ -176,6 +175,45 @@ namespace DGtal
       }
     return 0;
   }
+
+  /**
+     Read a list of points given in a file \a point_list_filename (x y ... per line) and returns
+     it in the vector \a points.
+
+     @param[out] points the list of points read in the file.
+     @param[out] lo the lowest point of the bounding box of the read points.
+     @param[out] up the uppermost point of the bounding box of the read points.
+     @param[in] point_list_filename the name of the file containing the list of points.
+
+     @return 0 if everything went well, 1 otherwise (problem when reading file).
+  */
+  template <typename Point>
+  int
+  readPointList
+  ( std::vector<Point> & points,
+    Point & lo,
+    Point & up,
+    std::string point_list_filename )
+  {
+    std::ifstream inputfile( point_list_filename.c_str() );
+    std::string str;
+    while ( ( ! inputfile.eof() ) && inputfile.good() )
+      {
+        std::getline( inputfile, str );
+        if ( ( ! str.empty() ) && ( str[ 0 ] != '#' ) )
+          {
+            Point p;
+            std::istringstream istr( str );
+            for ( unsigned int i = 0; i < Point::dimension; ++i )
+              istr >> p[ i ];
+            lo = points.empty() ? p : lo.inf( p );
+            up = points.empty() ? p : up.sup( p );
+            points.push_back( p );
+          }
+      }
+    return inputfile.eof() ? 0 : 1;
+  }
+
 
   template <typename KSpace, typename SCellSetConstIterator>
   int
@@ -275,6 +313,105 @@ namespace DGtal
             Point p = *itd;
             if ( P.find( p ) == P.end() ) Q.insert( p );
           }
+      }
+  }
+
+  /**
+     Given a set of points \a P, computes the set of \f$ Z^d \setminus P \f$ that touches P.
+  */
+  template <typename Space, typename Domain>
+  void computeBorderInDomain( std::set< typename Space::Point > & Q, 
+                              const std::set< typename Space::Point > & P, 
+                              const Domain & domain )
+  {
+    typedef typename Space::Point Point;
+    typedef typename std::set< Point > PointSet;
+    typedef typename std::set< Point >::const_iterator PointSetConstIterator;
+    typedef typename Point::UnsignedComponent Size;
+    typedef HyperRectDomain< Space > LocalDomain;
+    typedef typename LocalDomain::ConstIterator LocalDomainConstIterator;
+    Point d1 = Point::diagonal( 1 );
+    Q.clear();
+    // Scan surroundings of all points of P.
+    for ( PointSetConstIterator it = P.begin(), itend = P.end(); 
+          it != itend; ++it )
+      {
+        LocalDomain localDomain( *it - d1, *it + d1 );
+        for ( LocalDomainConstIterator itd = localDomain.begin(), itdend = localDomain.end();
+              itd != itdend; ++itd )
+          {
+            Point p = *itd;
+            if ( ( P.find( p ) == P.end() ) 
+                 && domain.isInside( p ) ) 
+              Q.insert( p );
+          }
+      }
+  }
+
+  /**
+     Given a set of points \a P, computes the set of \f$ Z^d \setminus P \f$ that touches P.
+  */
+  template <typename Space>
+  void removeInside( std::set< typename Space::Point > & Q, 
+                     const std::set< typename Space::Point > & P )
+  {
+    typedef typename Space::Point Point;
+    typedef typename std::set< Point > PointSet;
+    typedef typename std::set< Point >::const_iterator PointSetConstIterator;
+    typedef typename Point::UnsignedComponent Size;
+    typedef HyperRectDomain< Space > Domain;
+    typedef typename Domain::ConstIterator DomainConstIterator;
+    Point d1 = Point::diagonal( 1 );
+    Q.clear();
+    // Scan surroundings of all points of P.
+    for ( PointSetConstIterator it = P.begin(), itend = P.end(); 
+          it != itend; ++it )
+      {
+        Domain localDomain( *it - d1, *it + d1 );
+        unsigned int n = 0;
+        for ( DomainConstIterator itd = localDomain.begin(), itdend = localDomain.end();
+              itd != itdend; ++itd )
+          {
+            Point p = *itd;
+            if ( P.find( p ) != P.end() ) ++n;
+          }
+        if ( n != localDomain.size() ) Q.insert( *it );
+      }
+  }
+
+  /**
+     Given a set of points \a P, computes the set of \f$ Z^d \setminus P \f$ that touches P.
+  */
+  template <typename Space, typename Domain>
+  void removeInsideInDomain( std::set< typename Space::Point > & Q, 
+                             const std::set< typename Space::Point > & P,
+                             const Domain & domain )
+  {
+    typedef typename Space::Point Point;
+    typedef typename std::set< Point > PointSet;
+    typedef typename std::set< Point >::const_iterator PointSetConstIterator;
+    typedef typename Point::UnsignedComponent Size;
+    typedef HyperRectDomain< Space > LocalDomain;
+    typedef typename LocalDomain::ConstIterator LocalDomainConstIterator;
+    Point d1 = Point::diagonal( 1 );
+    Q.clear();
+    // Scan surroundings of all points of P.
+    for ( PointSetConstIterator it = P.begin(), itend = P.end(); 
+          it != itend; ++it )
+      {
+        LocalDomain localDomain( *it - d1, *it + d1 );
+        unsigned int n = 0, nd = 0;
+        for ( LocalDomainConstIterator itd = localDomain.begin(), itdend = localDomain.end();
+              itd != itdend; ++itd )
+          {
+            Point p = *itd;
+            if ( domain.isInside( p ) )
+              {
+                ++nd;
+                if ( P.find( p ) != P.end() ) ++n;
+              }
+          }
+        if ( n != nd ) Q.insert( *it );
       }
   }
 
