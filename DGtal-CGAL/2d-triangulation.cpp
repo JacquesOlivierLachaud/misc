@@ -1,8 +1,13 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <boost/program_options/options_description.hpp>
+#include <boost/program_options/parsers.hpp>
+#include <boost/program_options/variables_map.hpp>
 
 #include <DGtal/base/Common.h>
+#include <DGtal/base/ConstAlias.h>
+#include <DGtal/base/Alias.h>
 #include <DGtal/helpers/StdDefs.h>
 #include <DGtal/shapes/Shapes.h>
 #include <DGtal/shapes/ShapeFactory.h>
@@ -10,7 +15,8 @@
 #include <DGtal/topology/helpers/Surfaces.h>
 #include <DGtal/geometry/curves/GridCurve.h>
 #include <DGtal/io/boards/Board2D.h>
-#include "DGtal/io/colormaps/HueShadeColorMap.h"
+#include <DGtal/io/colormaps/GradientColorMap.h>
+#include "DGtal/io/readers/GenericReader.h"
 #include <DGtal/geometry/curves/ArithmeticalDSS.h>
 #include <DGtal/geometry/curves/SaturatedSegmentation.h>
 
@@ -196,6 +202,25 @@ public:
   }
 };
 
+/**
+   This class represents a sequence of edge-adjacent faces around a
+   given edge (\a s, \a t). The user must also provide a predicate \a
+   P. Each face of the strip must be incident to vertex \a
+   s. Furthermore, inside edges (\a s, \a t_i) of the strip satisfy
+   \f$ P(t_i) \f$.
+
+   @code
+   Triangulation T;
+   ...
+   Edge e;
+   SimplicialStrip<Triangulation,K> strip( T );
+   strip.init( P, e ); // P is a predicate VertexHandle -> bool.
+   std::cout << strip.angle() << std::endl; // angle is the sum of the inner angle of each face.
+   @endcode
+
+   @tparam Triangulation any kind of CGAL 2D triangulation.
+   @tparam Kernel any kind of CGAL 2D Kernel.
+*/
 template <typename Triangulation, typename Kernel>
 struct SimplicialStrip
 {
@@ -213,8 +238,6 @@ public:
   typedef typename Kernel::FT                             Component;
 
 public:
-  /// The pivot v
-  VertexHandle pivot; 
   /// The sequence of edges (v,v_i)
   std::deque<Edge> umbrella;
   /// True iff the umbrella contains all incident edges to the pivot.
@@ -225,21 +248,18 @@ public:
   /// Constructor from triangulation.
   SimplicialStrip( const Triangulation & T ) : TH( T ) {};
 
-  /// The only way to define a strip arount \a pivot, starting at frontier.
+  /// Define a strip around the source edge of \a frontier, starting around \a frontier.
   /// The \a predicate should return true for all vertices inside the strip.
   template <typename VertexHandlePredicate>
-  void initStrip( const VertexHandlePredicate & predicate, 
-                  VertexHandle v, const Edge & frontier )
+  void init( const VertexHandlePredicate & predicate, 
+             const Edge & frontier )
   {
-    ASSERT( TH.source( frontier ) == v );
     umbrella.clear();
-    pivot = v;
+    VertexHandle pivot = TH.source( frontier );
     _loop = false;
     Edge e = frontier;
     while ( (! _loop) && predicate( TH.target( e ) ) )
       {
-        // DGtal::trace.info() << "[initStrip] " << TH.source( e )->point()
-        //                     << " -> " << TH.target( e )->point() << std::endl;
         umbrella.push_back( e );
         e = TH.nextCCWAroundSourceVertex( e );
         if ( e == frontier )
@@ -259,35 +279,60 @@ public:
         umbrella.push_front( e );
       }
   }
-  
+
+  /// @return 'true' iff the strip was initialized. It must have an
+  /// umbrella of size at least 2.
+  inline bool isValid() const
+  { return umbrella.size() >= 2; }
+
   /// @return 'true' iff the strip contains all incident edges to the
   /// pivot (ie the whole umbrella).
   inline bool isLoop() const 
   { return _loop; }
 
+  /// @return 'true' iff the umbrella is reduced to the initial edge.
   inline bool isTrivial() const
   {
-    ASSERT( umbrella.size() >= 2 );
+    ASSERT( isValid() );
     return umbrella.size() == 2;
   }
-  /// \a i-th vertex of umbrella.
+
+  /// @return 'true' iff the strip was initialized. It must have an
+  /// umbrella of size at least 2.
+  inline VertexHandle pivot() const
+  { 
+    ASSERT( isValid() );
+    return TH.source( umbrella.front() );
+  }
+
+  /**
+     @param[in] an index between 0 and umbrella.size()-1.
+     @return the \a i-th vertex of umbrella.
+  */
   inline VertexHandle v( unsigned int i ) const
   {
+    ASSERT( isValid() && ( i < umbrella.size() ) );
     return TH.target( umbrella.at( i ) );
   }
-  /// \a i-th edge of umbrella.
+  /**
+     @param[in] an index between 0 and umbrella.size()-1.
+     @return the i-th edge of umbrella.
+  */
   inline Edge e( unsigned int i ) const
   {
+    ASSERT( isValid() && ( i < umbrella.size() ) );
     return umbrella.at( i );
   }
   /// first vertex of umbrella, equivalent to v( 0 )
   inline VertexHandle v0() const
   {
+    ASSERT( isValid() );
     return TH.target( umbrella.front() );
   }
   /// last vertex of umbrella, equivalent to v( size()-1 )
   inline VertexHandle vn() const
   {
+    ASSERT( isValid() );
     return TH.target( umbrella.back() );
   }
   /// Number of edges/vertices in umbrella (at least 2, which are then equal).
@@ -304,6 +349,7 @@ public:
   /// Angle of umbrella.
   inline Component angle() const
   {
+    ASSERT( isValid() );
     if ( isTrivial() || isLoop() ) return 2.0*M_PI;
     Component totalAngle = 0.0;
     for ( typename std::deque<Edge>::const_iterator it = umbrella.begin(), ite = umbrella.end() - 1;
@@ -316,6 +362,7 @@ public:
   /// Concavity test.
   bool isConcave() const
   {
+    ASSERT( isValid() );
     if ( angle() >= M_PI - EPSILON ) return false;
     bool quadrilaterals = true;
     for ( unsigned int i = 1; i < size() - 1; ++i )
@@ -349,6 +396,20 @@ enum GeometryTag
   { Unknown = -2, Convex = 1, Flat = 0, Concave = -1, Multiple = 2 
   };
 
+/**
+   A DAC, short word for Digital Affine Complex is a triangulation of
+   digital points with specific properties.  Digital points are
+   labelled. Each set of points with the same label is given digital
+   topology (0: 4-adjacency, 1: 8-adjacency). The triangulation
+   contains the points, edges, faces, induced by each
+   adjacency. Furthermore, the triangulation satisfies the relative
+   convex hull property, i.e. forall P,Q points with same label l,
+   [PQ] does not intersect a point, edge, face of another region
+   implies that [PQ] belongs to simplices whose vertices have label l.
+
+   @tparam Kernel it is the chosen Kernel for the CGAL triangulation,
+   for instance CGAL::Exact_predicates_inexact_constructions_kernel
+*/
 template <typename Kernel>
 class DAC
 {
@@ -359,6 +420,7 @@ public:
   typedef CGAL::Exact_predicates_tag                               Itag;
   typedef CGAL::Constrained_Delaunay_triangulation_2<Kernel, TDS, Itag> Triangulation;
   // typedef typename CGAL::Delaunay_triangulation_2<Kernel> Delaunay;
+  typedef typename Triangulation::Finite_vertices_iterator FiniteVerticesIterator;
   typedef typename Triangulation::Vertex_circulator       VertexCirculator;
   typedef typename Triangulation::Vertex_handle           VertexHandle;
   typedef typename Triangulation::Edge_iterator           EdgeIterator;
@@ -388,6 +450,9 @@ public:
   TriangulationHelper<Triangulation,Kernel> TH;
   static const Label INVALID = -1;
 
+  /**
+     A simplex of dimension n is the convex hull of n+1 points.
+  */ 
   struct Simplex : public std::vector<VertexHandle>
   {
     Simplex()
@@ -407,9 +472,9 @@ public:
       this->push_back( v1 );
       this->push_back( v2 );
     }
-    unsigned int dim() const
+    int dim() const
     {
-      return this->size();
+      return ((int)this->size())-1;
     }
   };
 
@@ -490,7 +555,7 @@ public:
     double computePriority( Edge & e, Strip & strip ) const
     {
       bool exist = _TH->findEdge( e, _v0, _v1 );
-      strip.initStrip( *_pred, _TH->source( e ), e );
+      strip.init( *_pred, e );
       return strip.priority();
     }
 
@@ -581,13 +646,21 @@ public:
       }
   }
 
+  /**
+     This procedure removes concavities around vertices with label \a
+     l. Complexity is O(e), where e is the number of edges.
+
+     @param[in] any label, as given with method \ref add.
+     @return 'true' if some concavity was flipped, 'false' when no concavity was found.
+  */
   bool removeConcavities( Label l ) 
   {
     bool changes = false;
     std::priority_queue<Concavity> Q;
-    std::priority_queue<Concavity> Q1;
+    std::set< std::pair< VertexHandle, VertexHandle > > inQueue;
+
     CheckVertexLabelingInequality predNotL( labeling(), l );
-    DGtal::trace.beginBlock( "Searching concavities" );
+    // DGtal::trace.beginBlock( "Searching concavities" );
     for ( FiniteEdgesIterator it = T().finite_edges_begin(), itend = T().finite_edges_end();
           it != itend; ++it )
       {
@@ -598,18 +671,34 @@ public:
         Label l0 = label( v0 );
         Label l1 = label( v1 );
         if ( ( l0 == l ) && ( l1 != l ) && ( l1 != INVALID ) )
-          Q.push( Concavity( v0, v1, TH, predNotL ) );
+          {
+            Concavity c( v0, v1, TH, predNotL );
+            if ( c.priority() <= M_PI ) 
+              { 
+                Q.push( c ); // only concave vertices are flippable.
+                inQueue.insert( std::make_pair( v0, v1 ) );
+              }
+          }
         else if ( ( l1 == l ) && ( l0 != l ) && ( l0 != INVALID ) )
-          Q.push( Concavity( v1, v0, TH, predNotL ) );
+          {
+            Concavity c( v1, v0, TH, predNotL );
+            if ( c.priority() <= M_PI ) 
+              {
+                Q.push( c ); // only concave vertices are flippable.
+                inQueue.insert( std::make_pair( v1, v0 ) );
+              }
+          }
       }
-    DGtal::trace.info() << "- Found " << Q.size() << " concavities." << std::endl;
-    DGtal::trace.endBlock();
-    DGtal::trace.beginBlock( "Flipping concavities" );
-    while ( ( ! Q.empty() ) || ( ! Q1.empty() ) )
+    DGtal::trace.info() << "- Found " << Q.size() << " potential concavities." << std::endl;
+    // DGtal::trace.endBlock();
+    // DGtal::trace.beginBlock( "Flipping concavities" );
+    unsigned int nb_checked = 0;
+    unsigned int nb_flipped = 0;
+    while ( ! Q.empty() )
       {
-        Concavity concavity = Q1.empty() ? Q.top() : Q1.top();
-        if ( Q1.empty() ) Q.pop(); 
-        else Q1.pop();
+        Concavity concavity = Q.top();
+        Q.pop(); ++nb_checked;
+        inQueue.erase( std::make_pair( concavity._v0, concavity._v1 ) );
         Edge e;
         Strip strip( _T );
         double p = concavity.computePriority( e, strip );
@@ -619,31 +708,42 @@ public:
              && ( p > Q.top().priority() ) )// and the priority is not the best
           { 
             Q.push( Concavity( concavity._v0, concavity._v1, TH, predNotL, p ) );
+            inQueue.insert( std::make_pair( concavity._v0, concavity._v1 ) );
             continue;
           }
-        // DGtal::trace.info() << "- Edge found " << TH.source( e )->point()
-        //                     << "(" << label( TH.source( e ) ) << ")"
-        //                     << " -> " << TH.target( e )->point() 
-        //                     << "(" << label( TH.target( e ) ) << ")"
-        //                     << std::endl;
-        // DGtal::trace.info() << "Strip size = " << strip.size() 
-        //                     << " angle(deg) = " << ( strip.angle() * 180.0 / M_PI ) << std::endl;
         if ( strip.isConcave() )
           {
             unsigned int idx = strip.getFlippableEdgeIndex();
             Edge fedge = strip.e( idx );
-            // DGtal::trace.info() << " => strip is concave. Flipping "
-            //                     << TH.source( fedge )->point()
-            //                     << "(" << label( TH.source( fedge ) ) << ")"
-            //                     << " -> " << TH.target( fedge )->point() 
-            //                     << "(" << label( TH.target( fedge ) ) << ")"<< std::endl;
+            std::priority_queue<Concavity> smallQ;
             for ( unsigned int i = 1; i < strip.size() - 1; ++i )
-              if ( i != idx ) Q.push( Concavity( strip.pivot, strip.v( i ), TH, predNotL, strip.priority() ) );
+              if ( i != idx ) 
+                smallQ.push( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
+            while ( ! smallQ.empty() )
+              { 
+                if ( inQueue.find( std::make_pair( smallQ.top()._v0, smallQ.top()._v1 ) ) == inQueue.end() )
+                  {
+                    Q.push( smallQ.top() );
+                    inQueue.insert( std::make_pair( smallQ.top()._v0, smallQ.top()._v1 ) );
+                    break;
+                  }
+                smallQ.pop();
+              }
+            // for ( unsigned int i = 1; i < strip.size() - 1; ++i )
+            //   if ( i != idx ) 
+            //     { 
+            //       if ( inQueue.find( std::make_pair( strip.pivot(), strip.v( i ) ) ) == inQueue.end() )
+            //         {
+            //           Q.push( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
+            //           inQueue.insert( std::make_pair( strip.pivot(), strip.v( i ) ) );
+            //         }
+            //     }
             _T.flip( fedge.first, fedge.second );
-            changes = true;
+            changes = true; ++nb_flipped;
           }
       }
-    DGtal::trace.endBlock();
+    DGtal::trace.info() << "- Flipped " << nb_flipped << "/" << nb_checked << " edges in a concavity." << std::endl;
+    // DGtal::trace.endBlock();
     return changes;
   }
 
@@ -713,7 +813,7 @@ public:
         Edge e = *it;
         VertexHandle v = TH.source( e );
         CheckVertexLabelingInequality predNotL( labeling(), label( v ) );
-        strip.initStrip( predNotL, v, e );
+        strip.init( predNotL, e );
         double angle = strip.angle();
         if ( angle > M_PI + EPSILON )      tag[ v ] = Convex;
         else if ( angle < M_PI - EPSILON ) tag[ v ] = Concave;
@@ -736,7 +836,7 @@ public:
     Strip strip( _T );
     VertexHandle v = TH.source( e );
     CheckVertexLabelingInequality predNotL( labeling(), label( v ) );
-    strip.initStrip( predNotL, v, e );
+    strip.init( predNotL, e );
     double angle = strip.angle();
     GeometryTag tag;
     if ( angle > M_PI + EPSILON )      tag = Convex;
@@ -781,11 +881,23 @@ public:
     _dac->tagFrontierEdges( _eTags, _frontier.begin(), _frontier.end() );
   }
 
+  /// @return an iterator on the first frontier edge for this label.
   ConstIterator begin() const
   { return _frontier.begin(); }
 
+  /// @return an iterator after the last frontier edge for this label.
   ConstIterator end() const
   { return _frontier.end(); }
+
+  /**
+     @param e any edge of the frontier complex.
+     @return the geometric tag for this edge (Convex, Flat, Concave, Unknown).
+  */
+  GeometryTag tag( const Edge & e ) const
+  {
+    typename EdgeGeometryTagging::const_iterator it = _eTags.find( e );
+    return ( it != _eTags.end() ) ? it->second : Unknown;
+  }
 
   // Circulates to the next frontier edge.
   Edge next( const Edge & e ) const
@@ -813,21 +925,10 @@ public:
       }
   }
 
-  void getAllMLPContours( std::vector< std::vector<VertexHandle> > & contours ) const
-  {
-    EdgeSet visited;
-    for ( ConstIterator it = begin(), ite = end(); it != ite; ++it )
-      {
-        if ( visited.find( *it ) == visited.end() )
-          { // If this edge is not visited yet.
-            std::deque<VertexHandle> C;
-            getMLPContour( C, visited, *it );
-            contours.push_back( std::vector<VertexHandle>( C.size() ) );
-            std::copy( C.begin(), C.end(), contours.back().begin() );
-          }
-      }
-  }
-
+  /**
+     @param[out] returns the list of simplical complexes that defines the frontier
+     complex of the DAC.
+   */
   void getAllFrontierSimplices( std::vector< std::vector<Simplex> > & complexes ) const
   {
     EdgeSet visited;
@@ -913,6 +1014,19 @@ public:
 
   /**
      Adds a point with label _l to the current MLP.
+
+     @param[inout] C contains the (potentially updated) sequence of MLP points.
+
+     @param[inout] Q0 contains the (potentially updated) sequence of
+     inside points: the first is common with the first of Q1 and is a
+     corner, the others are points with label _l.
+
+     @param[inout] Q1 contains the (potentially updated) sequence of
+     outside points: the first is common with the first of Q0 and is a
+     corner, the others are points with label != _l.
+
+     @param[in] v0 a point with label _l.
+
      @pre Q0.front() == Q1.front() (it is called a corner).
      @post Q0.front() == Q1.front() (it is called a corner).
   */
@@ -947,7 +1061,20 @@ public:
   }
   
   /**
-     Adds a point with label _l to the current MLP.
+     Adds a point with label != _l to the current MLP.
+
+     @param[inout] C contains the (potentially updated) sequence of MLP points.
+
+     @param[inout] Q0 contains the (potentially updated) sequence of
+     inside points: the first is common with the first of Q1 and is a
+     corner, the others are points with label _l.
+
+     @param[inout] Q1 contains the (potentially updated) sequence of
+     outside points: the first is common with the first of Q0 and is a
+     corner, the others are points with label != _l.
+
+     @param[in] v1 a point with label != _l.
+
      @pre Q0.front() == Q1.front() (it is called a corner).
      @post Q0.front() == Q1.front() (it is called a corner).
   */
@@ -981,6 +1108,15 @@ public:
     return looped;
   }
   
+  /**
+     Computes the minimum length polygon (MLP) that remains in the
+     frontier complex, given a starting frontier edge in the frontier complex.
+
+     @param[out] C contains the sequence of points of the MLP.
+     @param[inout] fEdges is updated with the set of visited frontier
+     edges.  @param[in] start the frontier edge that determines a
+     component of the frontier complex.
+  */
   void getMLPContour( std::deque<VertexHandle> & C,
                       EdgeSet & fEdges, 
                       const Edge & start ) const
@@ -997,7 +1133,7 @@ public:
     do {
       fEdges.insert( e );
       next_e = next( e );
-      tag_v0 = _dac->tagFrontierEdge( e );
+      tag_v0 = tag( e ); //_dac->tagFrontierEdge( e );
       tag_v1 = _dac->tagFrontierEdge( _dac->T().mirror_edge( e ) );
       v0 = _dac->TH.source( e );
       v1 = _dac->TH.target( e );
@@ -1013,7 +1149,7 @@ public:
         }
       else
         { // v2 is the source of next_e
-          tag_v2 = _dac->tagFrontierEdge( next_e );
+          tag_v2 = tag( next_e ); // _dac->tagFrontierEdge( next_e );
           if ( ( tag_v0 == Convex ) && ( tag_v2 == Convex ) )
             {
               Q0.push_back( v0 );
@@ -1042,8 +1178,8 @@ public:
     do {
       fEdges.insert( e );
       Edge next_e = next( e );
-      tag_v0  = _dac->tagFrontierEdge( e );
-      tag_v1 = _dac->tagFrontierEdge( _dac->T().mirror_edge( e ) );
+      // tag_v0  = _dac->tagFrontierEdge( e );
+      // tag_v1 = _dac->tagFrontierEdge( _dac->T().mirror_edge( e ) );
       v0 = _dac->TH.source( e );
       ASSERT( _dac->label( v0 ) == _l && "[Frontier::getMLPContour] Invalid label for v0." );
       if ( addLPoint( C, Q0, Q1, v0 ) ) break; // the contour has looped
@@ -1058,20 +1194,47 @@ public:
     } while ( true ); //( e != new_start );
     if ( nbloop == 2 )
       {
-        DGtal::trace.error() << "[getMLPContour] nbloop=2 ";
+        DGtal::trace.info() << "[Frontier::getMLPContour] Bad initialization, nbloop=2 ";
         for ( unsigned int i = 0; i < C.size(); ++i )
           DGtal::trace.info() << C[ i ]->point();
         DGtal::trace.info() << std::endl;
+        DGtal::trace.info() << "[Frontier::getMLPContour] Correcting contour." << std::endl;
       }
-    else {
-      while ( C.front() != C.back() )
-        C.pop_front();
+    while ( C.front() != C.back() )
       C.pop_front();
-    }
-    DGtal::trace.info() << "[getMLPContour] #contour=" << C.size() << std::endl;
+    C.pop_front();
+    DGtal::trace.info() << "[Frontier::getMLPContour] #contour=" << C.size() << std::endl;
     DGtal::trace.endBlock();
   }
-  
+
+  /**
+     @return a vector containing polygons as sequence of vertices;
+     each polygon is the MLP (minimum length/perimeter polygon) of
+     this part of the frontier complex.
+
+     @see getMLPContour
+  */
+  void getAllMLPContours( std::vector< std::vector<VertexHandle> > & contours ) const
+  {
+    EdgeSet visited;
+    for ( ConstIterator it = begin(), ite = end(); it != ite; ++it )
+      {
+        if ( visited.find( *it ) == visited.end() )
+          { // If this edge is not visited yet.
+            std::deque<VertexHandle> C;
+            getMLPContour( C, visited, *it );
+            contours.push_back( std::vector<VertexHandle>( C.size() ) );
+            std::copy( C.begin(), C.end(), contours.back().begin() );
+          }
+      }
+  }
+
+
+  /**
+     Experimental. This is a tentative for extracting two frontier
+     contours (like an inside MLP and an outside MLP) from the
+     frontier simplicial complex.
+  */
   void getFrontierContour( std::vector<VertexHandle> & Q0, std::vector<VertexHandle> & Q1,
                            EdgeSet & fEdges, 
                            const Edge & start ) const
@@ -1160,47 +1323,29 @@ public:
     DGtal::trace.endBlock();
   }
   
-  void getContour( std::vector<VertexHandle> & contour, const std::vector<Simplex> & complex ) const
-  {
-    if ( complex.empty() ) return;
-    unsigned int j = complex.size()-1;
-    unsigned int k = 0; 
-    bool loop = false;
-    while ( true )
-      {
-        if ( complex[ k ].dim() <= 2 )
-          {
-            if ( complex[ j ].dim() != 3 )
-              contour.push_back( complex[ k ].front() );
-          }
-        j = k++;
-        if ( k == complex.size() )
-          {
-            loop = true;
-            k = 0;
-          }
-        if ( loop && ( contour.front() == contour.back() ) )
-          break;
-      }
-  }
   
 };
   
   
-
+/**
+   This class is intended for visualizing digital affine complex and
+   their frontier complexes.
+*/
 template <typename DigitalAffineComplex>
 class ViewerDAC
 {
 public:
-  typedef typename DigitalAffineComplex::Triangulation Triangulation;
-  typedef typename DigitalAffineComplex::Label         Label;
-  typedef typename DigitalAffineComplex::VertexHandle  VertexHandle;
-  typedef typename DigitalAffineComplex::Edge          Edge;
-  typedef typename DigitalAffineComplex::EdgeIterator  EdgeIterator;
-  typedef typename DigitalAffineComplex::Point         CPoint;
+  typedef typename DigitalAffineComplex::Triangulation   Triangulation;
+  typedef typename DigitalAffineComplex::Label           Label;
+  typedef typename DigitalAffineComplex::VertexHandle    VertexHandle;
+  typedef typename DigitalAffineComplex::FiniteVerticesIterator FiniteVerticesIterator;
+  typedef typename DigitalAffineComplex::Edge            Edge;
+  typedef typename DigitalAffineComplex::EdgeIterator    EdgeIterator;
+  typedef typename DigitalAffineComplex::FaceHandle      FaceHandle;
+  typedef typename DigitalAffineComplex::Point           CPoint;
   typedef typename DigitalAffineComplex::VertexGeometryTagging  VertexGeometryTagging;
-  typedef typename DigitalAffineComplex::EdgeSet       EdgeSet;
-  typedef typename DigitalAffineComplex::Simplex       Simplex;
+  typedef typename DigitalAffineComplex::EdgeSet         EdgeSet;
+  typedef typename DigitalAffineComplex::Simplex         Simplex;
   typedef DGtal::Board2D Board;
   typedef DGtal::Color Color;
   typedef DGtal::Z2i::Point DPoint;
@@ -1213,19 +1358,78 @@ public:
 private:
   Board & _board;
   const DigitalAffineComplex & _dac;
+  std::vector<Color> _label_colors;
+  std::vector<Color> _other_colors;
 
 public:
-  ViewerDAC( Board & board, const DigitalAffineComplex & dac )
+  /**
+     Constructor. Requires a board \a board for display and a digital
+     affine complex \a dac.
+  */
+  ViewerDAC( DGtal::Alias<Board> board, 
+             DGtal::ConstAlias<DigitalAffineComplex> dac )
     : _board( board ), _dac( dac ) 
-  {}
-
-  void viewAll()
   {
-    Color colors[ 4 ];
-    colors[ 0 ] = Color::Red;
-    colors[ 1 ] = Color::Green;
-    colors[ 2 ] = Color::Blue;
+    _label_colors.push_back( Color::Red );
+    _label_colors.push_back( Color::Green );
+    _label_colors.push_back( Color::Blue );
+    _label_colors.push_back( Color::Magenta );
+    _other_colors.push_back( Color::Black );
+  }
+
+  /**
+     View vertices of the triangulation. 
+     @param l when -1, view all vertices, otherwise view the vertices with given label.
+  */
+  void viewVertices( int l )
+  {
+    DPoint dummy;
+    std::string specificStyle =  dummy.className() + "/Grid";
+    _board << DGtal::SetMode( dummy.className(), "Grid" );
+    
+    for ( FiniteVerticesIterator it = _dac.T().finite_vertices_begin(), itend = _dac.T().finite_vertices_end();
+          it != itend; ++it )
+      {
+        int l1 = _dac.label( it );
+        if ( ( l == -1 ) || ( l1 == l ) )
+          {
+            Color c = _label_colors[ l1 ];
+            DPoint a = toDGtal( it->point() );
+            _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( c, c ) )
+                   << a;
+          }
+      }
+  }
+
+  /**
+     View vertices of the triangulation. 
+     @param l when -1, view all vertices, otherwise view the vertices with given label.
+  */
+  void viewPavingVertices( int l )
+  {
+    DPoint dummy;
+    std::string specificStyle =  dummy.className() + "/Paving";
+    _board << DGtal::SetMode( dummy.className(), "Paving" );
+    
+    for ( FiniteVerticesIterator it = _dac.T().finite_vertices_begin(), itend = _dac.T().finite_vertices_end();
+          it != itend; ++it )
+      {
+        int l1 = _dac.label( it );
+        if ( ( l == -1 ) || ( l1 == l ) )
+          {
+            Color c = _label_colors[ l1 ];
+            DPoint a = toDGtal( it->point() );
+            _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( Color::Black, c ) )
+                   << a;
+          }
+      }
+  }
+
+  void viewAllTriangulationEdges()
+  {
     _board.setLineStyle( Board::Shape::SolidStyle );
+    _board.setFillColor( DGtal::Color::None );
+    _board.setLineWidth( 1.0 );
     for ( EdgeIterator it = _dac.T().edges_begin(), itend = _dac.T().edges_end();
           it != itend; ++it )
       {
@@ -1234,14 +1438,55 @@ public:
         DPoint b = toDGtal( _dac.TH.target( edge )->point() );
         int l1 = _dac.labeling().find( _dac.TH.source( edge ) )->second;
         int l2 = _dac.labeling().find( _dac.TH.target( edge ) )->second;
-        int i = ( l1 == 0 ) && ( l2 == 0 ) ? 0
-          : ( l1 == 1 ) && ( l2 == 1 ) ? 1
-          : 2;
-        double w = _dac.T().is_constrained( edge ) ? 2.0 : 1.0;
-        _board.setPenColor( colors[ i ] );
-        _board.setFillColor( DGtal::Color::None );
-        _board.setLineWidth( w );
+        Color c = ( l1 == l2 ) ? _label_colors[ l1 ] : _other_colors[ 0 ]; 
+        // double w = 1.0; // _dac.T().is_constrained( edge ) ? 2.0 : 1.0;
+        _board.setPenColor( c );
         _board.drawLine(a[0],a[1],b[0],b[1]);
+      }
+  }
+
+  void viewTriangulationEdges( int l )
+  {
+    _board.setLineStyle( Board::Shape::SolidStyle );
+    _board.setFillColor( DGtal::Color::None );
+    _board.setLineWidth( 1.0 );
+    for ( EdgeIterator it = _dac.T().edges_begin(), itend = _dac.T().edges_end();
+          it != itend; ++it )
+      {
+        Edge edge = *it;
+        DPoint a = toDGtal( _dac.TH.source( edge )->point() );
+        DPoint b = toDGtal( _dac.TH.target( edge )->point() );
+        int l1 = _dac.labeling().find( _dac.TH.source( edge ) )->second;
+        int l2 = _dac.labeling().find( _dac.TH.target( edge ) )->second;
+        if ( ( l == -1 ) || ( ( l == l1 ) && ( l == l2 ) ) )
+          {
+            Color c = ( l1 == l2 ) ? _label_colors[ l1 ] : _other_colors[ 0 ]; 
+            // double w = 1.0; // _dac.T().is_constrained( edge ) ? 2.0 : 1.0;
+            _board.setPenColor( c );
+            _board.drawLine(a[0],a[1],b[0],b[1]);
+          }
+      }
+  }
+
+  void viewConstrainedEdges( int l )
+  {
+    _board.setLineStyle( Board::Shape::SolidStyle );
+    _board.setFillColor( DGtal::Color::None );
+    _board.setLineWidth( 3.0 );
+    for ( EdgeIterator it = _dac.T().edges_begin(), itend = _dac.T().edges_end();
+          it != itend; ++it )
+      {
+        Edge edge = *it;
+        DPoint a = toDGtal( _dac.TH.source( edge )->point() );
+        DPoint b = toDGtal( _dac.TH.target( edge )->point() );
+        int l1 = _dac.labeling().find( _dac.TH.source( edge ) )->second;
+        if ( ( ( l == -1 ) || ( l == l1 ) )
+             && _dac.T().is_constrained( edge ) )
+          {
+            Color c = _label_colors[ l1 ];
+            _board.setPenColor( c );
+            _board.drawLine(a[0],a[1],b[0],b[1]);
+          }
       }
   }
   
@@ -1260,11 +1505,11 @@ public:
       }
   }
   
-  void viewBoundarySurface( Label l, Color c, double w )
+  void viewBoundarySurface( Label l, double w )
   {
     EdgeSet edges;
     _dac.getBoundarySurface( edges, l );
-    viewEdges( edges.begin(), edges.end(), c, w );
+    viewEdges( edges.begin(), edges.end(), _label_colors[ l ], w );
   }
 
   void viewConvexSurface( Label l, Color c, double w )
@@ -1289,7 +1534,6 @@ public:
   void viewFrontierContour( Label l, Color c, double w )
   {
     typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
-    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
     Frontier<DigitalAffineComplex> frontier( _dac, l );
     std::vector< std::vector<VertexHandle> > contours;
     frontier.getAllFrontierContours( contours );
@@ -1312,9 +1556,8 @@ public:
       }
   }
 
-  void viewMLPContour( Label l, Color c, double w )
+  void viewMLPContour( Label l, Color c, double w, bool arrow )
   {
-    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
     typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
     Frontier<DigitalAffineComplex> frontier( _dac, l );
     std::vector< std::vector<VertexHandle> > contours;
@@ -1323,7 +1566,10 @@ public:
       {
         if ( contours[ i ].empty() ) continue;
         std::vector<VertexHandle> & contour = contours[ i ];
-        DGtal::HueShadeColorMap<unsigned int,1> hueShade( 0, contour.size() );
+        DGtal::GradientColorMap<unsigned int> gradient( 0, contour.size() + 1 );
+        gradient.addColor( _label_colors[ l ] );
+        gradient.addColor( c );
+        gradient.addColor( _label_colors[ l ] );
         DPoint a = toDGtal( contour[ contour.size()-1 ]->point() );
         _board.setFillColor( DGtal::Color::None );
         _board.setLineWidth( w );
@@ -1332,17 +1578,20 @@ public:
               its != itsend; ++its, ++j )
           {
             DPoint b = toDGtal( (*its)->point() );
-            _board.setPenColor( c ); //hueShade( j ) );
+            _board.setPenColor( arrow ? gradient( j ) : c );
             _board.drawDot(a[0],a[1]);
-            if ( a != b ) _board.drawArrow(a[0],a[1],b[0],b[1]);
+            if ( a != b ) 
+              {
+                if ( arrow ) _board.drawArrow(a[0],a[1],b[0],b[1]);
+                else         _board.drawLine(a[0],a[1],b[0],b[1]);
+              }
             a = b;
           }
       }
   }
 
-  void viewFrontier( Label l, Color c, double w )
+  void viewFrontier( Label l, Color pc, Color c, double w )
   {
-    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
     typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
     Frontier<DigitalAffineComplex> frontier( _dac, l );
     std::vector< std::vector<Simplex> > complexes;
@@ -1354,21 +1603,21 @@ public:
               its != itsend; ++its )
           {
             Simplex s = *its;
-            _board.setPenColor( c );
+            _board.setPenColor( pc );
             _board.setFillColor( c );
             _board.setLineWidth( w );
-            if ( s.dim() == 1 )
+            if ( s.dim() == 0 )
               {
                 DPoint a = toDGtal( s[ 0 ]->point() );
                 _board.drawDot(a[0],a[1]);
               }
-            else if ( s.dim() == 2 )
+            else if ( s.dim() == 1 )
               {
                 DPoint a = toDGtal( s[ 0 ]->point() );
                 DPoint b = toDGtal( s[ 1 ]->point() );
                 _board.drawLine(a[0],a[1],b[0],b[1]);
               }
-            else if ( s.dim() == 3 )
+            else if ( s.dim() == 2 )
               {
                 DPoint a = toDGtal( s[ 0 ]->point() );
                 DPoint b = toDGtal( s[ 1 ]->point() );
@@ -1379,9 +1628,30 @@ public:
       }
   }
 
-  
+  /**
+     The border is the set of simplices that borders the affine complex of region \a l.
+  */
+  void viewBorder( Label l, Color pc, Color c, double w )
+  {
+    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
+    Frontier<DigitalAffineComplex> frontier( _dac, l );
+    _board.setPenColor( pc );
+    _board.setFillColor( c );
+    _board.setLineWidth( w );
+    for ( FrontierConstIterator it = frontier.begin(), ite = frontier.end();
+          it != ite; ++it )
+      {
+        FaceHandle f = (*it).first;
+        DPoint a = toDGtal( f->vertex( 0 )->point() );
+        DPoint b = toDGtal( f->vertex( 1 )->point() );
+        DPoint c = toDGtal( f->vertex( 2 )->point() );
+        _board.drawTriangle(a[0],a[1],b[0],b[1],c[0],c[1]);
+      }
+  }  
 };
 
+///////////////////////////////////////////////////////////////////////////////
+namespace po = boost::program_options;
 
 int main( int argc, char** argv )
 {
@@ -1393,22 +1663,94 @@ int main( int argc, char** argv )
   typedef DGtal::Z2i::Point DPoint;
   using namespace DGtal;
 
-  std::set<DPoint> p,q;
-  DigitalAffineComplex dac;
-  // p.insert( DPoint( 0,0 ) );
-  // p.insert( DPoint( 1,1 ) );
-  // p.insert( DPoint( 2,1 ) );
-  // p.insert( DPoint( 3,1 ) );
-  // p.insert( DPoint( 4,0 ) );
-  // p.insert( DPoint( 3,-1 ) );
-  // p.insert( DPoint( 2,-1 ) );
-  // p.insert( DPoint( 1,-1 ) );
-  // p.insert( DPoint( 0,-1 ) );
-  // p.insert( DPoint( 10,10 ) );
-  // p.insert( DPoint( 11,11 ) );
-  // p.insert( DPoint( 10,12 ) );
+  // parse command line ----------------------------------------------
+  po::options_description general_opt("Allowed options are: ");
+  general_opt.add_options()
+    ("help,h", "display this message")
+    ("point-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points, 'x y' per line.")
+    ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image filename.")
+    ("min,m", po::value<int>()->default_value(1), "Specifies the min threshold of the input 2D image.")
+    ("max,M", po::value<int>()->default_value(255), "Specifies the max threshold of the input 2D image.")
+    ("dac,d", po::value< std::vector<int> >(), "View the digital affine complex of the points with label [arg], or all of them when arg=-1; may be specified several times on the command line.")
+    ("delaunay,D", po::value< std::vector<int> >(), "View the Delaunay triangulation of the points with label [arg], or all of them when arg=-1; may be specified several times on the command line.")
+    ("vertices,v", po::value< std::vector<int> >(), "View the vertices (grid mode) of the triangulation with label [arg], or all of them when arg=-1; may be specified several times on the command line.")
+    ("paving-vertices,V", po::value< std::vector<int> >(), "View the vertices (paving mode) of the triangulation with label [arg], or all of them when arg=-1; may be specified several times on the command line.")
+    ("canonic,c", po::value< std::vector<int> >(), "View the constrained edges of the triangulation with label [arg], or all of them when arg=-1; may be specified several times on the command line.")
+    ("border,b", po::value< std::vector<int> >(), "View the border complex of the triangulation with label [arg]; may be specified several times on the command line.")
+    ("frontier,f", po::value< std::vector<int> >(), "View the frontier complex of the triangulation with label [arg]; may be specified several times on the command line.")
+    ("surface,s", po::value< std::vector<int> >(), "View the boundary surface of the triangulation with label [arg]; may be specified several times on the command line.")
+    ("mlp,L", po::value< std::vector<int> >(), "View the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
+    ("blue-mlp,B", po::value< std::vector<int> >(), "View in blue the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
+    ;
+  bool parseOK = true;
+  po::variables_map vm;
+  try {
+    po::store( po::parse_command_line(argc, argv, general_opt), vm );  
+  } catch ( const std::exception& ex ) {
+    parseOK = false;
+    trace.info() << "Error checking program options: " << ex.what() << std::endl;
+  }
+    
+  po::notify(vm);    
+  if( ! parseOK || vm.count("help") || argc <=1 )
+    {
+      trace.info()<< "Generate a 2D triangulation from an arbitrary set of points. The triangulation provides a kind of piecewise linear approximation of the digitized set. The digitized set has label 0, the exterior points have label 1." <<std::endl << "Basic usage: " << std::endl
+		  << "\2d-triangulation [options] -l <point-list> -v -1"<<std::endl
+		  << general_opt << "\n";
+      return 0;
+    }
 
-  trace.beginBlock("Construction the shape");
+
+  std::set<DPoint> p,q;
+  std::set<DPoint> p2,q2;
+  DigitalAffineComplex dac;
+  Z2i::KSpace ks;
+
+  trace.beginBlock("Construction of the shape");
+  if ( vm.count( "point-list" ) )
+    {
+      DPoint lo, hi;
+      std::vector<DPoint> pts;
+      if ( readPointList<DPoint>( pts, lo, hi, vm["point-list"].as<std::string>() ) != 0 )
+        {
+          trace.error() << "Error reading file <" << vm["point-list"].as<std::string>() << ">." << std::endl;
+          return 1;
+        }
+      // ks.init( lo, hi, true );
+      for ( std::vector<DPoint>::const_iterator it = pts.begin(), ite = pts.end();
+            it != ite; ++it )
+        p.insert( *it );
+
+      trace.beginBlock( "Computing border." );
+      computeBorder<Space>( q, p );
+      removeInside<Space>( p2, p );
+      removeInside<Space>( q2, q );
+      trace.endBlock();
+    }
+  if ( vm.count( "image" ) )
+    {
+      typedef ImageSelector < Z2i::Domain, unsigned char>::Type Image;
+      typedef IntervalThresholder<Image::Value> Binarizer; 
+      typedef Image::Domain Domain;
+      std::string imageFileName = vm[ "image" ].as<std::string>();
+      Image image = GenericReader<Image>::import( imageFileName ); 
+      Binarizer b( vm[ "min" ].as<int>(), vm[ "max" ].as<int>() ); 
+      PointFunctorPredicate<Image,Binarizer> predicate(image, b); 
+      for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
+            it != ite; ++it )
+        if ( predicate( *it ) )
+          p.insert( *it );
+
+      trace.beginBlock( "Computing border." );
+      computeBorder<Space>( q, p );
+      removeInside<Space>( p2, p );
+      removeInside<Space>( q2, q );
+      // computeBorderInDomain<Space,Domain>( q, p, image.domain() );
+      // removeInsideInDomain<Space,Domain>( p2, p, image.domain() );
+      // removeInsideInDomain<Space,Domain>( q2, q, image.domain() );
+      trace.endBlock();
+    }
+
   // typedef Ellipse2D<Z2i::Space> Ellipse; 
   // int a = 5, b = 1;
   // Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), a, b, 0.3 );
@@ -1418,71 +1760,95 @@ int main( int argc, char** argv )
   // dig.attach( ellipse );
   // dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
   //           ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
-  typedef Flower2D<Z2i::Space> Flower; 
-  int a = 19, b = 9;
-  Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
-  double h = 0.5; 
-  int N = 5;
-  GaussDigitizer<Z2i::Space,Flower> dig;  
-  dig.attach( flower );
-  dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
-            flower.getUpperBound()+Z2i::Vector(1,1), h ); 
-  Z2i::KSpace ks;
-  ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
-  SurfelAdjacency<2> sAdj( true );
-  Z2i::SCell bel = Surfaces<Z2i::KSpace>::findABel( ks, dig, 1000 );
-  std::vector<Z2i::Point> boundaryPoints;
-  Surfaces<Z2i::KSpace>
-    ::track2DBoundaryPoints( boundaryPoints, ks, sAdj, dig, bel );
-  Z2i::Curve c;
-  c.initFromVector( boundaryPoints );  
-  typedef Z2i::Curve::PointsRange Range; 
-  Range r = c.getPointsRange(); 
-  for ( Range::ConstIterator it = r.begin(), itE = r.end(); it != itE; ++it )
-    {
-      Z2i::Point P( *it );
-      p.insert( P );
-      p.insert( P + Z2i::Point( 2*N+2, -2*N ) );
-      p.insert( Z2i::Point( P[ 1 ], P[ 0 ] ) );
-    }
-  for ( int x = 0; x < 10*N; ++x )
-    {
-      p.insert( Z2i::Point( x, (12*x)/13 - 4*N - 2 ) );
-    }
+  // typedef Flower2D<Z2i::Space> Flower; 
+  // int a = 19, b = 9;
+  // Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
+  // double h = 0.5; 
+  // int N = 5;
+  // GaussDigitizer<Z2i::Space,Flower> dig;  
+  // dig.attach( flower );
+  // dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
+  //           flower.getUpperBound()+Z2i::Vector(1,1), h ); 
+  // Z2i::KSpace ks;
+  // ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
+  // SurfelAdjacency<2> sAdj( true );
+  // Z2i::SCell bel = Surfaces<Z2i::KSpace>::findABel( ks, dig, 1000 );
+  // std::vector<Z2i::Point> boundaryPoints;
+  // Surfaces<Z2i::KSpace>
+  //   ::track2DBoundaryPoints( boundaryPoints, ks, sAdj, dig, bel );
+  // Z2i::Curve c;
+  // c.initFromVector( boundaryPoints );  
+  // typedef Z2i::Curve::PointsRange Range; 
+  // Range r = c.getPointsRange(); 
+  // for ( Range::ConstIterator it = r.begin(), itE = r.end(); it != itE; ++it )
+  //   {
+  //     Z2i::Point P( *it );
+  //     p.insert( P );
+  //     p.insert( P + Z2i::Point( 2*N+2, -2*N ) );
+  //     p.insert( Z2i::Point( P[ 1 ], P[ 0 ] ) );
+  //   }
+  // for ( int x = 0; x < 10*N; ++x )
+  //   {
+  //     p.insert( Z2i::Point( x, (12*x)/13 - 4*N - 2 ) );
+  //   }
   trace.endBlock();
 
 
 
-  trace.beginBlock( "Computing border." );
-  computeBorder<Space>( q, p );
-  trace.endBlock();
 
   trace.beginBlock( "Creating constrained Delaunay triangulation." );
   std::vector<Point> pts;
-  for ( std::set<DPoint>::const_iterator it = p.begin(), ite = p.end();
+  for ( std::set<DPoint>::const_iterator it = p2.begin(), ite = p2.end();
         it != ite; ++it )
     pts.push_back( toCGAL<Point>( *it ) );
   dac.add( pts.begin(), pts.end(), 1, 0 );
   pts.clear();
-  for ( std::set<DPoint>::const_iterator it = q.begin(), ite = q.end();
+  for ( std::set<DPoint>::const_iterator it = q2.begin(), ite = q2.end();
         it != ite; ++it )
     pts.push_back( toCGAL<Point>( *it ) );
   dac.add( pts.begin(), pts.end(), 0, 1 );
   trace.endBlock();
 
-  trace.beginBlock( "Visualizing Delaunay complex." );
   Board2D board;
   ViewerDAC<DigitalAffineComplex> viewer( board, dac );
-  for ( std::set<DPoint>::const_iterator it = p.begin(), ite = p.end();
-        it != ite; ++it )
-    board << *it;
-  // board << Domain( DPoint( -2, -2 ), DPoint( 13, 13 ) );
-  viewer.viewAll();
+
+  trace.beginBlock( "Visualizing Delaunay complex." );
+  if ( vm.count( "paving-vertices" ) ) {
+    std::vector<int> labels = vm[ "paving-vertices" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewPavingVertices( *it );
+  }
+  if ( vm.count( "border" ) ) {
+    std::vector<int> labels = vm[ "border" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewBorder( *it, Color::Black, Color( 200, 200, 200, 0 ), 1.0 );
+  }
+  if ( vm.count( "delaunay" ) ) {
+    std::vector<int> labels = vm[ "delaunay" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewTriangulationEdges( *it );
+  }
+  if ( vm.count( "canonic" ) ) {
+    std::vector<int> labels = vm[ "canonic" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewConstrainedEdges( *it );
+  }
+  if ( vm.count( "surface" ) ) {
+    std::vector<int> labels = vm[ "surface" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewBoundarySurface( *it, 4.0 );
+  }
+  if ( vm.count( "vertices" ) ) {
+    std::vector<int> labels = vm[ "vertices" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewVertices( *it );
+  }
   board.saveSVG("delaunay.svg");
   board.saveEPS("delaunay.eps");
   board.clear();
   trace.endBlock();
 
+  trace.beginBlock( "Computing Digital Affine Complex." );
   bool rc;
   do {
     rc = dac.removeConcavities( 0 );
@@ -1490,38 +1856,71 @@ int main( int argc, char** argv )
   do {
     rc = dac.removeConcavities( 1 );
   } while ( rc );
-  //   rc = dac.removeConcavities( 0 );
-  // rc = dac.removeConcavities( 1 );
-  // rc = dac.removeConcavities( 1 );
-  //rc = dac.removeConcavities( 0 );
-    
+  trace.endBlock();    
 
   trace.beginBlock( "Visualizing Digital Affine Complex." );
-  // Board2D board;
-  // ViewerDAC<DigitalAffineComplex> viewer( board, dac );
-  for ( std::set<DPoint>::const_iterator it = p.begin(), ite = p.end();
-        it != ite; ++it )
-    board << *it;
-  // board << Domain( DPoint( -2, -2 ), DPoint( 13, 13 ) );
-  viewer.viewAll();
+  if ( vm.count( "paving-vertices" ) ) {
+    std::vector<int> labels = vm[ "paving-vertices" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewPavingVertices( *it );
+  }
+  if ( vm.count( "border" ) ) {
+    std::vector<int> labels = vm[ "border" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewBorder( *it, Color::Black, Color( 200, 200, 200, 0 ), 1.0 );
+  }
+  if ( vm.count( "frontier" ) ) {
+    std::vector<int> labels = vm[ "frontier" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewFrontier( *it, Color( 130, 130, 250 ), Color( 200, 200, 250, 0 ), 3.0 );
+  }
+  if ( vm.count( "dac" ) ) {
+    std::vector<int> labels = vm[ "dac" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewTriangulationEdges( *it );
+  }
+  if ( vm.count( "canonic" ) ) {
+    std::vector<int> labels = vm[ "canonic" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewConstrainedEdges( *it );
+  }
+  if ( vm.count( "surface" ) ) {
+    std::vector<int> labels = vm[ "surface" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewBoundarySurface( *it, 4.0 );
+  }
+  if ( vm.count( "mlp" ) ) {
+    std::vector<int> labels = vm[ "mlp" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewMLPContour( *it, Color( 0, 0, 255 ), 2.0, true );
+  }
+  if ( vm.count( "blue-mlp" ) ) {
+    std::vector<int> labels = vm[ "blue-mlp" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewMLPContour( *it, Color::Blue, 3.0, false );
+  }
+  if ( vm.count( "vertices" ) ) {
+    std::vector<int> labels = vm[ "vertices" ].as< std::vector<int> >();
+    for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
+      viewer.viewVertices( *it );
+  }
   board.saveSVG("dac.svg");
   board.saveEPS("dac.eps");
   board.clear();
-  for ( std::set<DPoint>::const_iterator it = p.begin(), ite = p.end();
-        it != ite; ++it )
-    board << *it;
-  // board << Domain( DPoint( -2, -2 ), DPoint( 13, 13 ) );
-  std::set<DigitalAffineComplex::Edge> edges;
-  viewer.viewConvexSurface( 0, DGtal::Color( 255, 0, 0 ), 4.0 );
-  viewer.viewConvexSurface( 1, DGtal::Color( 0, 255, 0 ), 4.0 );
-  viewer.viewBoundarySurface( 0, DGtal::Color( 200, 0, 0 ), 1.0 );
-  viewer.viewBoundarySurface( 1, DGtal::Color( 0, 200, 0 ), 1.0 );
-  // Frontier 0 and Frontier 1 are the same.
-  //viewer.viewFrontier( 0, DGtal::Color( 255, 255, 0, 0 ), 3.0 );
-  //viewer.viewFrontierContour( 0, DGtal::Color( 0, 255, 0, 0 ), 3.0 );
-  viewer.viewMLPContour( 0, DGtal::Color( 0, 0, 255, 0 ), 2.0 );
-  board.saveSVG("dac-bdy.svg");
-  board.saveEPS("dac-bdy.eps");
+  // for ( std::set<DPoint>::const_iterator it = p.begin(), ite = p.end();
+  //       it != ite; ++it )
+  //   board << *it;
+  // // board << Domain( DPoint( -2, -2 ), DPoint( 13, 13 ) );
+  // // viewer.viewConvexSurface( 0, DGtal::Color( 255, 0, 0 ), 4.0 );
+  // // viewer.viewConvexSurface( 1, DGtal::Color( 0, 255, 0 ), 4.0 );
+  // // viewer.viewBoundarySurface( 0, DGtal::Color( 200, 0, 0 ), 1.0 );
+  // // viewer.viewBoundarySurface( 1, DGtal::Color( 0, 200, 0 ), 1.0 );
+  // // Frontier 0 and Frontier 1 are the same.
+  // //viewer.viewFrontier( 0, DGtal::Color( 255, 255, 0, 0 ), 3.0 );
+  // //viewer.viewFrontierContour( 0, DGtal::Color( 255, 255, 0, 0 ), 4.0 );
+  // viewer.viewMLPContour( 0, DGtal::Color( 0, 0, 255, 100 ), 5.0, false );
+  // board.saveSVG("dac-bdy.svg");
+  // board.saveEPS("dac-bdy.eps");
   trace.endBlock();
   return 0;
 }
