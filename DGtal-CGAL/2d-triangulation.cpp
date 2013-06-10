@@ -483,7 +483,7 @@ public:
       for ( ConstIterator it1 = this->begin(), it2 = other.begin(), it1e = this->end();
             ( it1 != it1e ); ++it1, ++it2 )
         if ( *it1 < *it2 ) return true;
-        else if ( *it1 > *it2 ) return false;
+        else if ( *it2 < *it1 ) return false;
       return false;
     }
     bool operator==( const Simplex & other ) const
