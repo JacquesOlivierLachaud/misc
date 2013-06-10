@@ -417,7 +417,8 @@ public:
   typedef typename CGAL::Triangulation_vertex_base_2<Kernel>       Vb;
   typedef CGAL::Constrained_triangulation_face_base_2<Kernel>      Fb;
   typedef CGAL::Triangulation_data_structure_2<Vb,Fb>              TDS;
-  typedef CGAL::Exact_predicates_tag                               Itag;
+  typedef CGAL::No_intersection_tag                                Itag;
+  // Exact_predicates_tag                               Itag;
   typedef CGAL::Constrained_Delaunay_triangulation_2<Kernel, TDS, Itag> Triangulation;
   // typedef typename CGAL::Delaunay_triangulation_2<Kernel> Delaunay;
   typedef typename Triangulation::Finite_vertices_iterator FiniteVerticesIterator;
@@ -437,24 +438,14 @@ public:
   typedef typename std::map<Edge,GeometryTag>         EdgeGeometryTagging;
   typedef typename std::set<Edge>                     EdgeSet;
 
-private:
-  /// The current triangulation.
-  Triangulation _T;
-  /// A mapping VertexHandle -> Label that stores for each vertex to which set it belongs.
-  VertexLabeling _vLabeling;
-  /// The set of all points of the triangulation (Debug).
-  std::set<Point> _points;
-
-public:
-  /// Provides useful methods on triangulation
-  TriangulationHelper<Triangulation,Kernel> TH;
-  static const Label INVALID = -1;
-
   /**
      A simplex of dimension n is the convex hull of n+1 points.
   */ 
   struct Simplex : public std::vector<VertexHandle>
   {
+    typedef typename std::vector<VertexHandle>::iterator Iterator;
+    typedef typename std::vector<VertexHandle>::const_iterator ConstIterator;
+
     Simplex()
     {}
     Simplex( VertexHandle v0 )
@@ -465,16 +456,43 @@ public:
     {
       this->push_back( v0 );
       this->push_back( v1 );
+      std::sort( this->begin(), this->end() );
     }
     Simplex( VertexHandle v0, VertexHandle v1, VertexHandle v2 )
     {
       this->push_back( v0 );
       this->push_back( v1 );
       this->push_back( v2 );
+      std::sort( this->begin(), this->end() );
+    }
+    Simplex( VertexHandle v0, VertexHandle v1, VertexHandle v2, VertexHandle v3 )
+    {
+      this->push_back( v0 );
+      this->push_back( v1 );
+      this->push_back( v2 );
+      this->push_back( v3 );
+      std::sort( this->begin(), this->end() );
     }
     int dim() const
     {
       return ((int)this->size())-1;
+    }
+    bool operator<( const Simplex & other ) const
+    {
+      ASSERT( this->dim() == other.dim() );
+      for ( ConstIterator it1 = this->begin(), it2 = other.begin(), it1e = this->end();
+            ( it1 != it1e ); ++it1, ++it2 )
+        if ( *it1 < *it2 ) return true;
+        else if ( *it1 > *it2 ) return false;
+      return false;
+    }
+    bool operator==( const Simplex & other ) const
+    {
+      ASSERT( this->dim() == other.dim() );
+      ConstIterator it1 = this->begin(), it2 = other.begin(), it1e = this->end();
+      while ( ( it1 != it1e ) && ( *it1 == *it2 ) )
+        { ++it1, ++it2; }
+      return it1 == it1e;
     }
   };
 
@@ -565,6 +583,25 @@ public:
     }
   };
 
+
+private:
+  /// The current triangulation.
+  Triangulation _T;
+  /// A mapping VertexHandle -> Label that stores for each vertex to which set it belongs.
+  VertexLabeling _vLabeling;
+  /// The set of all points of the triangulation (Debug).
+  std::set<Point> _points;
+  /// The set of quads that have already been flipped.
+  std::set<Simplex> _flippedQuads;
+
+  DGtal::Board2D _debugBoard;
+
+public:
+  /// Provides useful methods on triangulation
+  TriangulationHelper<Triangulation,Kernel> TH;
+  static const Label INVALID = -1;
+
+
   //---------------------------------------------------------------------------
 public:
   /// Constructor.
@@ -617,7 +654,44 @@ public:
     addConstraints0( current );
     if ( k == 1 ) addConstraints1( current );
   }
-  
+
+  void addConstraint( const Point & p, const Point & q )
+  {
+    VertexHandle vp = _T.insert( p );
+    VertexHandle vq = _T.insert( q );
+    _T.insert_constraint( vp, vq );
+  }
+  // For speed-up
+  void addBand( const Point & p1, const Point & p2, const Point & midp, 
+                const Point & q1, const Point & q2, const Point & midq,
+                bool p1cvx, bool p2cvx )
+  {
+    DGtal::trace.info() << "[DAC.addBand] ";
+    int val = ( p1cvx ? 2 : 0 ) + ( p2cvx ? 1 : 0 );
+    switch ( val ) {
+    case 0: // ccv1, ccv2
+      DGtal::trace.info() << " C=" << q1 << " -> " << midp;
+      DGtal::trace.info() << " C=" << midp << " -> " << q2 << std::endl;
+      _T.insert_constraint( q1, midp );
+      _T.insert_constraint( midp, q2 );
+      break;
+    case 1: // ccv1, cvx2
+      DGtal::trace.info() << " C=" << q1 << " -> " << p2 << std::endl;
+      _T.insert_constraint( q1, p2 );
+      break;
+    case 2: // cvx1, ccv2
+      DGtal::trace.info() << " C=" << p1 << " -> " << q2 << std::endl;
+      _T.insert_constraint( p1, q2 );
+      break;
+    case 3: // cvx1, cvx2
+      DGtal::trace.info() << " C=" << p1 << " -> " << midq;
+      DGtal::trace.info() << " C=" << midq << " -> " << p2 << std::endl;
+      _T.insert_constraint( p1, midq );
+      _T.insert_constraint( midq, p2 );
+      break;
+    }
+  }
+
   void addConstraints0( const std::set<Point> & pts )
   {
     for ( typename std::set<Point>::const_iterator it = pts.begin(), ite = pts.end();
@@ -647,6 +721,30 @@ public:
   }
 
   /**
+     This procedure removes all concavities around vertices with label \a
+     l. Complexity is O(e x n), where e is the number of edges.
+
+     @param[in] any label, as given with method \ref add.
+     @return 'true' if some concavity was flipped, 'false' when no concavity was found.
+  */
+  void removeAllConcavities( Label l ) 
+  {
+    _flippedQuads.clear();
+    bool rc;
+    unsigned int i = 0;
+    do {
+      _debugBoard.clear();
+      _debugBoard.setPenColor( DGtal::Color::Black );
+      _debugBoard.setFillColor( DGtal::Color::None );
+      _debugBoard.setLineWidth( 2.0 );
+      rc = this->removeConcavities( l );
+      std::ostringstream sname;
+      sname << "tmp/dac-rc-" << l << "-" << i++ << ".eps";
+      _debugBoard.saveEPS( sname.str().c_str() );
+    } while ( rc );
+  }
+
+  /**
      This procedure removes concavities around vertices with label \a
      l. Complexity is O(e), where e is the number of edges.
 
@@ -673,7 +771,7 @@ public:
         if ( ( l0 == l ) && ( l1 != l ) && ( l1 != INVALID ) )
           {
             Concavity c( v0, v1, TH, predNotL );
-            if ( c.priority() <= M_PI ) 
+            if ( c.priority() < M_PI - EPSILON ) 
               { 
                 Q.push( c ); // only concave vertices are flippable.
                 inQueue.insert( std::make_pair( v0, v1 ) );
@@ -682,7 +780,7 @@ public:
         else if ( ( l1 == l ) && ( l0 != l ) && ( l0 != INVALID ) )
           {
             Concavity c( v1, v0, TH, predNotL );
-            if ( c.priority() <= M_PI ) 
+            if ( c.priority() <  M_PI - EPSILON ) 
               {
                 Q.push( c ); // only concave vertices are flippable.
                 inQueue.insert( std::make_pair( v1, v0 ) );
@@ -698,6 +796,10 @@ public:
       {
         Concavity concavity = Q.top();
         Q.pop(); ++nb_checked;
+        if ( nb_checked % 1000 == 0 ) 
+          DGtal::trace.info() << "- Queue=" << Q.size()
+                              << ", flipped " << nb_flipped << "/" << nb_checked 
+                              << " edges in a concavity." << std::endl;
         inQueue.erase( std::make_pair( concavity._v0, concavity._v1 ) );
         Edge e;
         Strip strip( _T );
@@ -715,33 +817,41 @@ public:
           {
             unsigned int idx = strip.getFlippableEdgeIndex();
             Edge fedge = strip.e( idx );
-            std::priority_queue<Concavity> smallQ;
-            for ( unsigned int i = 1; i < strip.size() - 1; ++i )
-              if ( i != idx ) 
-                smallQ.push( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
-            while ( ! smallQ.empty() )
-              { 
-                if ( inQueue.find( std::make_pair( smallQ.top()._v0, smallQ.top()._v1 ) ) == inQueue.end() )
-                  {
-                    Q.push( smallQ.top() );
-                    inQueue.insert( std::make_pair( smallQ.top()._v0, smallQ.top()._v1 ) );
-                    break;
-                  }
-                smallQ.pop();
-              }
+            Simplex quad( concavity._v0, strip.v( idx - 1 ), concavity._v1, strip.v( idx + 1) );
+            if ( _flippedQuads.find( quad ) != _flippedQuads.end() )
+              continue; // already flipped.
+            _flippedQuads.insert( quad );
+            std::vector<Concavity> smallQ;
             // for ( unsigned int i = 1; i < strip.size() - 1; ++i )
             //   if ( i != idx ) 
-            //     { 
-            //       if ( inQueue.find( std::make_pair( strip.pivot(), strip.v( i ) ) ) == inQueue.end() )
-            //         {
-            //           Q.push( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
-            //           inQueue.insert( std::make_pair( strip.pivot(), strip.v( i ) ) );
-            //         }
-            //     }
+            //     Q.push( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
+            // Q.push( Concavity( strip.v0(), strip.v( 1 ), TH, predNotL ) );
+            // Q.push( Concavity( strip.vn(), strip.v( strip.size() - 2 ), TH, predNotL ) );
+            for ( unsigned int i = 1; i < strip.size() - 1; ++i )
+              if ( i != idx ) 
+                smallQ.push_back( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
+            // if ( idx != 1 ) 
+            smallQ.push_back( Concavity( strip.v0(), strip.v( 1 ), TH, predNotL ) );
+            // if ( idx != strip.size() - 2 ) 
+            smallQ.push_back( Concavity( strip.vn(), strip.v( strip.size() - 2 ), TH, predNotL ) );
+            for ( typename std::vector<Concavity>::const_iterator it = smallQ.begin(),
+                    ite = smallQ.end(); it != ite; ++it )
+              { 
+                if ( inQueue.find( std::make_pair( it->_v0, it->_v1 ) ) == inQueue.end() )
+                  {
+                    Q.push( *it );
+                    inQueue.insert( std::make_pair( it->_v0, it->_v1 ) );
+                  }
+              }
+            DGtal::Z2i::Point a = toDGtal( TH.source( fedge )->point() );
+            DGtal::Z2i::Point b = toDGtal( TH.target( fedge )->point() );
+            _debugBoard.drawLine(a[0],a[1],b[0],b[1]);
             _T.flip( fedge.first, fedge.second );
             changes = true; ++nb_flipped;
           }
       }
+    ASSERT( inQueue.empty() );
+    ASSERT( Q.empty() );
     DGtal::trace.info() << "- Flipped " << nb_flipped << "/" << nb_checked << " edges in a concavity." << std::endl;
     // DGtal::trace.endBlock();
     return changes;
@@ -1375,6 +1485,7 @@ public:
     _label_colors.push_back( Color::Blue );
     _label_colors.push_back( Color::Magenta );
     _other_colors.push_back( Color::Black );
+    _other_colors.push_back( Color::Yellow );
   }
 
   /**
@@ -1480,10 +1591,11 @@ public:
         DPoint a = toDGtal( _dac.TH.source( edge )->point() );
         DPoint b = toDGtal( _dac.TH.target( edge )->point() );
         int l1 = _dac.labeling().find( _dac.TH.source( edge ) )->second;
+        int l2 = _dac.labeling().find( _dac.TH.target( edge ) )->second;
         if ( ( ( l == -1 ) || ( l == l1 ) )
              && _dac.T().is_constrained( edge ) )
           {
-            Color c = _label_colors[ l1 ];
+            Color c = ( l1 == l2 ) ? _label_colors[ l1 ] : _other_colors[ 1 ];
             _board.setPenColor( c );
             _board.drawLine(a[0],a[1],b[0],b[1]);
           }
@@ -1649,7 +1761,167 @@ public:
       }
   }  
 };
+  
+  
+template <typename Image, typename Predicate,
+          typename DAC>
+void
+insertBands( DAC & dac, const Image & image, const Predicate & predicate,
+             int k )
+{
+  typedef typename Image::Domain Domain;
+  typedef typename Domain::Space Space;
+  typedef typename Domain::ConstSubRange ConstSubRange;
+  typedef typename Space::Point DPoint;
+  typedef typename DAC::Point Point;
+  // Find bands
+  Domain imageDomain = image.domain();
+  DPoint d1 = DPoint::diagonal( 1 );
+  Domain extDomain( imageDomain.lowerBound() - d1, imageDomain.upperBound() + d1 );
+  {
+    // Horizontal bands
+    ConstSubRange subRangeY = extDomain.subRange( 1, extDomain.lowerBound() );
+    DPoint band_p, band_p1;
+    for ( typename ConstSubRange::ConstIterator ity = subRangeY.begin(), 
+            ityend = subRangeY.end(); ity != ityend; ++ity )
+      {
+        bool prev_p_inside  = false; // value at (x-1, y)
+        bool prev_p1_inside = false; // value at (x-1, y+1)
+        bool inside = false;
+        ConstSubRange subRangeX = extDomain.subRange( 0, (*ity) + DPoint( 1, 0 ) );
+        int sBand = 0;
+        for ( typename ConstSubRange::ConstIterator itx = subRangeX.begin(), 
+                itxend = subRangeX.end(); itx != itxend; ++itx )
+          {
+            DPoint p = *itx;
+            DPoint p1 = p + DPoint( 0, 1 );
+            bool p_inside =  imageDomain.isInside( p ) && predicate( p );
+            bool p1_inside = imageDomain.isInside( p1 ) && predicate( p1 );
+            if ( prev_p_inside == prev_p1_inside )
+              { // was not in a band.
+                if ( p_inside != p1_inside ) 
+                  { // start a band.
+                    band_p = p; 
+                    band_p1 = p1; 
+                    sBand = 1;
+                  }
+                else // still not in band, but may be the start of a new band.
+                  {
+                    inside = p_inside;
+                  }
+              }
+            else
+              { // In a band.
+                if ( ( p_inside != p1_inside ) && ( p_inside == prev_p_inside ) ) 
+                  { // Still in the band.
+                    sBand += 1;  // increase length
+                  }
+                else // end of band
+                  {
+                    bool ins1 = inside;
+                    bool ins2 = ( p_inside == p1_inside )
+                      ? p_inside
+                      : ( k == 1 );
+                    if ( sBand >= 3 )
+                      {
+                        DPoint prev_p =  p - DPoint( 1, 0 );
+                        DPoint prev_p1 = p1 - DPoint( 1, 0 );
+                        DPoint mid = ( band_p + prev_p ) / 2;
+                        DPoint mid1 = ( band_p1 + prev_p1 ) / 2;
+                        dac.addBand( toCGAL<Point>( band_p ), toCGAL<Point>( prev_p ), toCGAL<Point>( mid ),
+                                     toCGAL<Point>( band_p1 ), toCGAL<Point>( prev_p1 ), toCGAL<Point>( mid1 ),
+                                     ins1 != prev_p_inside, 
+                                     ins2 != prev_p_inside );
+                      }
+                    inside = ins2;
+                    if ( p_inside != p1_inside )
+                      { // start a band.
+                        band_p = p; 
+                        band_p1 = p1; 
+                        sBand = 1;
+                      }
+                    else
+                      sBand = 0;
+                  }
+              }
+            prev_p_inside = p_inside;
+            prev_p1_inside = p1_inside;
+          } // end of loop on x-axis.
+      } // end of loop on y-axis.
+  }
+  {
+    // Vertical bands
+    ConstSubRange subRangeX = extDomain.subRange( 0, extDomain.lowerBound() );
+    DPoint band_p, band_p1;
+    for ( typename ConstSubRange::ConstIterator itx = subRangeX.begin(), 
+            itxend = subRangeX.end(); itx != itxend; ++itx )
+      {
+        bool prev_p_inside  = false; // value at (x, y-1)
+        bool prev_p1_inside = false; // value at (x+1, y-1)
+        bool inside = false;
+        ConstSubRange subRangeY = extDomain.subRange( 1, (*itx) + DPoint( 0, 1 ) );
+        int sBand = 0;
+        for ( typename ConstSubRange::ConstIterator ity = subRangeY.begin(), 
+                ityend = subRangeY.end(); ity != ityend; ++ity )
+          {
+            DPoint p = *ity;
+            DPoint p1 = p + DPoint( 1, 0 );
+            bool p_inside =  imageDomain.isInside( p ) && predicate( p );
+            bool p1_inside = imageDomain.isInside( p1 ) && predicate( p1 );
+            if ( prev_p_inside == prev_p1_inside )
+              { // was not in a band.
+                if ( p_inside != p1_inside ) 
+                  { // start a band.
+                    band_p = p; 
+                    band_p1 = p1; 
+                    sBand = 1;
+                  }
+                else // still not in band, but may be the start of a new band.
+                  {
+                    inside = p_inside;
+                  }
+              }
+            else
+              { // In a band.
+                if ( ( p_inside != p1_inside ) && ( p_inside == prev_p_inside ) ) 
+                  { // Still in the band.
+                    sBand += 1;  // increase length
+                  }
+                else // end of band
+                  {
+                    bool ins1 = inside;
+                    bool ins2 = ( p_inside == p1_inside )
+                      ? p_inside
+                      : ( k == 1 );
+                    if ( sBand >= 3 )
+                      {
+                        DPoint prev_p =  p - DPoint( 0, 1 );
+                        DPoint prev_p1 = p1 - DPoint( 0, 1 );
+                        DPoint mid = ( band_p + prev_p ) / 2;
+                        DPoint mid1 = ( band_p1 + prev_p1 ) / 2;
+                        dac.addBand( toCGAL<Point>( band_p ), toCGAL<Point>( prev_p ), toCGAL<Point>( mid ),
+                                     toCGAL<Point>( band_p1 ), toCGAL<Point>( prev_p1 ), toCGAL<Point>( mid1 ),
+                                     ins1 != prev_p_inside, 
+                                     ins2 != prev_p_inside );
+                      }
+                    inside = ins2;
+                    if ( p_inside != p1_inside )
+                      { // start a band.
+                        band_p = p; 
+                        band_p1 = p1; 
+                        sBand = 1;
+                      }
+                    else
+                      sBand = 0;
+                  }
+              }
+            prev_p_inside = p_inside;
+            prev_p1_inside = p1_inside;
+          } // end of loop on y-axis.
+      } // end of loop on x-axis.
+  }
 
+}
 ///////////////////////////////////////////////////////////////////////////////
 namespace po = boost::program_options;
 
@@ -1736,6 +2008,7 @@ int main( int argc, char** argv )
       Image image = GenericReader<Image>::import( imageFileName ); 
       Binarizer b( vm[ "min" ].as<int>(), vm[ "max" ].as<int>() ); 
       PointFunctorPredicate<Image,Binarizer> predicate(image, b); 
+      insertBands( dac, image, predicate, 1 );
       for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
             it != ite; ++it )
         if ( predicate( *it ) )
@@ -1849,13 +2122,15 @@ int main( int argc, char** argv )
   trace.endBlock();
 
   trace.beginBlock( "Computing Digital Affine Complex." );
-  bool rc;
-  do {
-    rc = dac.removeConcavities( 0 );
-  } while ( rc );
-  do {
-    rc = dac.removeConcavities( 1 );
-  } while ( rc );
+  dac.removeAllConcavities( 0 );
+  dac.removeAllConcavities( 1 );
+  // bool rc;
+  // do {
+  //   rc = dac.removeConcavities( 0 );
+  // } while ( rc );
+  // do {
+  //   rc = dac.removeConcavities( 1 );
+  // } while ( rc );
   trace.endBlock();    
 
   trace.beginBlock( "Visualizing Digital Affine Complex." );
@@ -1922,5 +2197,22 @@ int main( int argc, char** argv )
   // board.saveSVG("dac-bdy.svg");
   // board.saveEPS("dac-bdy.eps");
   trace.endBlock();
+
+  typedef DigitalAffineComplex::Triangulation Triangulation;
+  typedef DigitalAffineComplex::VertexHandle VertexHandle;
+  Triangulation T;
+  trace.info() << " nbv=" << T.tds().number_of_vertices()
+               << " nbe=" << T.tds().number_of_edges()
+               << " nbf=" << T.tds().number_of_faces() << std::endl;
+  Point newp( 0,0 );
+  VertexHandle v0 = T.insert( newp );
+  trace.info() << " nbv=" << T.tds().number_of_vertices()
+               << " nbe=" << T.tds().number_of_edges()
+               << " nbf=" << T.tds().number_of_faces() << std::endl;
+  VertexHandle v1 = T.insert( newp );
+  trace.info() << " nbv=" << T.tds().number_of_vertices()
+               << " nbe=" << T.tds().number_of_edges()
+               << " nbf=" << T.tds().number_of_faces() << std::endl;
+  trace.info() << "v0==v1" << (v0 == v1) << std::endl;
   return 0;
 }
