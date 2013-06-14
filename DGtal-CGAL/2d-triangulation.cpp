@@ -252,28 +252,28 @@ public:
   /// Constructor from triangulation.
   SimplicialStrip( const Triangulation & T ) : TH( T ) {};
 
-  /// Define a strip around the source edge of \a frontier, starting around \a frontier.
+  /// Define a strip around the source edge of \a border, starting around \a border.
   /// The \a predicate should return true for all vertices inside the strip.
   template <typename VertexHandlePredicate>
   void init( const VertexHandlePredicate & predicate, 
-             const Edge & frontier )
+             const Edge & border )
   {
     umbrella.clear();
-    VertexHandle pivot = TH.source( frontier );
+    VertexHandle pivot = TH.source( border );
     _loop = false;
-    Edge e = frontier;
+    Edge e = border;
     while ( (! _loop) && predicate( TH.target( e ) ) )
       {
         umbrella.push_back( e );
         e = TH.nextCCWAroundSourceVertex( e );
-        if ( e == frontier )
+        if ( e == border )
           _loop = true; 
         ASSERT( TH.source( e ) == pivot );
       }
     if ( ! _loop )
       {
         umbrella.push_back( e ); // last
-        Edge e = TH.nextCWAroundSourceVertex( frontier );
+        Edge e = TH.nextCWAroundSourceVertex( border );
         while ( predicate( TH.target( e ) ) )
           {
             umbrella.push_front( e );
@@ -899,7 +899,7 @@ public:
      @param[in] l0 any label
      @param[out] the set of such edges.
   */
-  void getFrontierEdges( EdgeSet & bEdges, Label l0 ) const
+  void getBorderEdges( EdgeSet & bEdges, Label l0 ) const
   {
     bEdges.clear();
     for ( FiniteEdgesIterator it = T().finite_edges_begin(), itend = T().finite_edges_end();
@@ -919,7 +919,7 @@ public:
      Tags every source of given edges as convex(1),flat(0), concave(-1).
   */
   template <typename EdgeIterator>
-  void tagFrontierEdges( VertexGeometryTagging & tag, EdgeIterator it, EdgeIterator ite ) const
+  void tagBorderEdges( VertexGeometryTagging & tag, EdgeIterator it, EdgeIterator ite ) const
   {
     Strip strip( _T );
     for ( ; it != ite; ++it )
@@ -939,13 +939,13 @@ public:
      Tags every edge as convex(1),flat(0), concave(-1).
   */
   template <typename EdgeIterator>
-  void tagFrontierEdges( EdgeGeometryTagging & tag, EdgeIterator it, EdgeIterator ite ) const
+  void tagBorderEdges( EdgeGeometryTagging & tag, EdgeIterator it, EdgeIterator ite ) const
   {
     for ( ; it != ite; ++it )
-      tag[ *it ] = tagFrontierEdge( *it );
+      tag[ *it ] = tagBorderEdge( *it );
   }
 
-  GeometryTag tagFrontierEdge( Edge e ) const
+  GeometryTag tagBorderEdge( Edge e ) const
   {
     Strip strip( _T );
     VertexHandle v = TH.source( e );
@@ -961,10 +961,10 @@ public:
 };
 
 /**
-   The frontier of a region in a DAC.
+   The border of a region in a DAC.
 */
 template <typename DigitalAffineComplex>
-class Frontier
+class Border
 {
 public:
   typedef typename DigitalAffineComplex::Triangulation Triangulation;
@@ -984,27 +984,27 @@ public:
 private: 
   const DigitalAffineComplex* _dac;
   Label _l;
-  EdgeSet _frontier;
+  EdgeSet _border;
   EdgeGeometryTagging _eTags;
 
 public:
-  Frontier( DGtal::ConstAlias<DigitalAffineComplex> dac, Label l )
+  Border( DGtal::ConstAlias<DigitalAffineComplex> dac, Label l )
     : _dac( dac ), _l( l )
   {
-    _dac->getFrontierEdges( _frontier, _l );
-    _dac->tagFrontierEdges( _eTags, _frontier.begin(), _frontier.end() );
+    _dac->getBorderEdges( _border, _l );
+    _dac->tagBorderEdges( _eTags, _border.begin(), _border.end() );
   }
 
-  /// @return an iterator on the first frontier edge for this label.
+  /// @return an iterator on the first border edge for this label.
   ConstIterator begin() const
-  { return _frontier.begin(); }
+  { return _border.begin(); }
 
-  /// @return an iterator after the last frontier edge for this label.
+  /// @return an iterator after the last border edge for this label.
   ConstIterator end() const
-  { return _frontier.end(); }
+  { return _border.end(); }
 
   /**
-     @param e any edge of the frontier complex.
+     @param e any edge of the border complex.
      @return the geometric tag for this edge (Convex, Flat, Concave, Unknown).
   */
   GeometryTag tag( const Edge & e ) const
@@ -1013,7 +1013,7 @@ public:
     return ( it != _eTags.end() ) ? it->second : Unknown;
   }
 
-  // Circulates to the next frontier edge.
+  // Circulates to the next border edge.
   Edge next( const Edge & e ) const
   {
     // Edge is (s,t) with l(s) = _l, l(st) != _l
@@ -1025,7 +1025,7 @@ public:
       return _dac->T().mirror_edge( _dac->TH.nextCWAroundFace( e ) );
   }
 
-  void getAllFrontierContours( std::vector< std::vector<VertexHandle> > & contours ) const
+  void getAllBorderContours( std::vector< std::vector<VertexHandle> > & contours ) const
   {
     EdgeSet visited;
     for ( ConstIterator it = begin(), ite = end(); it != ite; ++it )
@@ -1034,13 +1034,13 @@ public:
           { // If this edge is not visited yet.
             contours.push_back( std::vector<VertexHandle>() );
             contours.push_back( std::vector<VertexHandle>() );
-            getFrontierContour( contours[ contours.size() - 2 ], contours[ contours.size() - 1 ], visited, *it );
+            getBorderContour( contours[ contours.size() - 2 ], contours[ contours.size() - 1 ], visited, *it );
           }
       }
   }
 
   /**
-     @param[out] returns the list of simplical complexes that defines the frontier
+     @param[out] returns the list of simplical complexes that defines the border
      complex of the DAC.
    */
   void getAllFrontierSimplices( std::vector< std::vector<Simplex> > & complexes ) const
@@ -1065,22 +1065,22 @@ public:
     do {
       fEdges.insert( e );
       Edge next_e = next( e );
-      GeometryTag tag_e  = _dac->tagFrontierEdge( e );
-      GeometryTag tag_me = _dac->tagFrontierEdge( _dac->T().mirror_edge( e ) );
+      GeometryTag tag_e  = _dac->tagBorderEdge( e );
+      GeometryTag tag_me = _dac->tagBorderEdge( _dac->T().mirror_edge( e ) );
       v0 = _dac->TH.source( e );
       v1 = _dac->TH.target( e );
       if ( _dac->label( v0 ) != _l )
-        DGtal::trace.error() << "[Frontier::getFrontierSimplices] Invalid label for v0." << std::endl;
+        DGtal::trace.error() << "[Border::getFrontierSimplices] Invalid label for v0." << std::endl;
       if ( _dac->label( v1 ) == _l )
-        DGtal::trace.error() << "[Frontier::getFrontierSimplices] Invalid label for v1." << std::endl;
+        DGtal::trace.error() << "[Border::getFrontierSimplices] Invalid label for v1." << std::endl;
       if ( v0 == _dac->TH.source( next_e ) )
         {
-          tag_next = _dac->tagFrontierEdge( _dac->T().mirror_edge( next_e ) );
+          tag_next = _dac->tagBorderEdge( _dac->T().mirror_edge( next_e ) );
           v2 = _dac->TH.target( next_e );
         }
       else
         {
-          tag_next = _dac->tagFrontierEdge( next_e );
+          tag_next = _dac->tagBorderEdge( next_e );
           v2 = _dac->TH.source( next_e );
         }
       if ( ( tag_e == Convex ) || ( tag_e == Flat ) )
@@ -1112,7 +1112,7 @@ public:
                 simplices.push_back( Simplex( v2 ) );
               else
                 {
-                  DGtal::trace.error() << "[Frontier::getFrontierSimplices] Empty simplex." << std::endl;
+                  DGtal::trace.error() << "[Border::getFrontierSimplices] Empty simplex." << std::endl;
                   simplices.push_back( Simplex() );
                 }
             }
@@ -1224,12 +1224,12 @@ public:
   
   /**
      Computes the minimum length polygon (MLP) that remains in the
-     frontier complex, given a starting frontier edge in the frontier complex.
+     border complex, given a starting border edge in the border complex.
 
      @param[out] C contains the sequence of points of the MLP.
-     @param[inout] fEdges is updated with the set of visited frontier
-     edges.  @param[in] start the frontier edge that determines a
-     component of the frontier complex.
+     @param[inout] fEdges is updated with the set of visited border
+     edges.  @param[in] start the border edge that determines a
+     component of the border complex.
   */
   void getMLPContour( std::deque<VertexHandle> & C,
                       EdgeSet & fEdges, 
@@ -1241,19 +1241,19 @@ public:
     GeometryTag tag_v0, tag_v1, tag_v2;
     Edge e, next_e;
 
-    DGtal::trace.beginBlock( "Computing MLP of frontier." );
+    DGtal::trace.beginBlock( "Computing MLP of border." );
     // Finding a first reasonnable corner.
     e = start;
     do {
       fEdges.insert( e );
       next_e = next( e );
-      tag_v0 = tag( e ); //_dac->tagFrontierEdge( e );
-      tag_v1 = _dac->tagFrontierEdge( _dac->T().mirror_edge( e ) );
+      tag_v0 = tag( e ); //_dac->tagBorderEdge( e );
+      tag_v1 = _dac->tagBorderEdge( _dac->T().mirror_edge( e ) );
       v0 = _dac->TH.source( e );
       v1 = _dac->TH.target( e );
       if ( _dac->TH.source( next_e ) == v0 )
         { // v2 is the target of next_e
-          tag_v2 = _dac->tagFrontierEdge( _dac->T().mirror_edge( next_e ) );
+          tag_v2 = _dac->tagBorderEdge( _dac->T().mirror_edge( next_e ) );
           if ( ( tag_v1 == Convex ) && ( tag_v2 == Convex ) )
             {
               Q0.push_back( v1 );
@@ -1263,7 +1263,7 @@ public:
         }
       else
         { // v2 is the source of next_e
-          tag_v2 = tag( next_e ); // _dac->tagFrontierEdge( next_e );
+          tag_v2 = tag( next_e ); // _dac->tagBorderEdge( next_e );
           if ( ( tag_v0 == Convex ) && ( tag_v2 == Convex ) )
             {
               Q0.push_back( v0 );
@@ -1280,7 +1280,7 @@ public:
         if ( tag_v0 == Convex ) C.push_back( v0 );
         else if ( tag_v1 == Convex ) C.push_back( v1 );
         else 
-          DGtal::trace.error() << "[Frontier::getMLPContour] Unable to find first corner." << std::endl;
+          DGtal::trace.error() << "[Border::getMLPContour] Unable to find first corner." << std::endl;
         DGtal::trace.endBlock();
         return;
       }
@@ -1292,13 +1292,13 @@ public:
     do {
       fEdges.insert( e );
       Edge next_e = next( e );
-      // tag_v0  = _dac->tagFrontierEdge( e );
-      // tag_v1 = _dac->tagFrontierEdge( _dac->T().mirror_edge( e ) );
+      // tag_v0  = _dac->tagBorderEdge( e );
+      // tag_v1 = _dac->tagBorderEdge( _dac->T().mirror_edge( e ) );
       v0 = _dac->TH.source( e );
-      ASSERT( _dac->label( v0 ) == _l && "[Frontier::getMLPContour] Invalid label for v0." );
+      ASSERT( _dac->label( v0 ) == _l && "[Border::getMLPContour] Invalid label for v0." );
       if ( addLPoint( C, Q0, Q1, v0 ) ) break; // the contour has looped
       v1 = _dac->TH.target( e );
-      ASSERT( _dac->label( v1 ) != _l && "[Frontier::getMLPContour] Invalid label for v1." );
+      ASSERT( _dac->label( v1 ) != _l && "[Border::getMLPContour] Invalid label for v1." );
       if ( addNotLPoint( C, Q0, Q1, v1 ) ) break; // the contour has looped
       // Go to next
       e = next_e;
@@ -1308,23 +1308,23 @@ public:
     } while ( true ); //( e != new_start );
     if ( nbloop == 2 )
       {
-        DGtal::trace.info() << "[Frontier::getMLPContour] Bad initialization, nbloop=2 ";
+        DGtal::trace.info() << "[Border::getMLPContour] Bad initialization, nbloop=2 ";
         for ( unsigned int i = 0; i < C.size(); ++i )
           DGtal::trace.info() << C[ i ]->point();
         DGtal::trace.info() << std::endl;
-        DGtal::trace.info() << "[Frontier::getMLPContour] Correcting contour." << std::endl;
+        DGtal::trace.info() << "[Border::getMLPContour] Correcting contour." << std::endl;
       }
     while ( C.front() != C.back() )
       C.pop_front();
     C.pop_front();
-    DGtal::trace.info() << "[Frontier::getMLPContour] #contour=" << C.size() << std::endl;
+    DGtal::trace.info() << "[Border::getMLPContour] #contour=" << C.size() << std::endl;
     DGtal::trace.endBlock();
   }
 
   /**
      @return a vector containing polygons as sequence of vertices;
      each polygon is the MLP (minimum length/perimeter polygon) of
-     this part of the frontier complex.
+     this part of the border complex.
 
      @see getMLPContour
   */
@@ -1361,14 +1361,14 @@ public:
     do {
       fEdges.insert( e );
       Edge next_e = next( e );
-      GeometryTag tag_e  = _dac->tagFrontierEdge( e );
-      GeometryTag tag_me = _dac->tagFrontierEdge( _dac->T().mirror_edge( e ) );
+      GeometryTag tag_e  = _dac->tagBorderEdge( e );
+      GeometryTag tag_me = _dac->tagBorderEdge( _dac->T().mirror_edge( e ) );
       // only convex vertices belong to the MLP.
       v0 = _dac->TH.source( e );
       //DGtal::trace.info() << "[getFrontierContour] Convex  v0=" << v0->point() << std::endl;
       if ( tag_e == Convex )
         {
-          ASSERT( _dac->label( v0 ) == _l && "[Frontier::getFrontierContour] Invalid label for v0." );
+          ASSERT( _dac->label( v0 ) == _l && "[Border::getFrontierContour] Invalid label for v0." );
           if ( Q0.empty() ) 
             Q0.push_back( v0 );
           else if ( v0 != Q0.back() )
@@ -1400,7 +1400,7 @@ public:
       if ( tag_me == Convex )
         {
           //DGtal::trace.info() << "[getFrontierContour] Concave v1=" << v1->point() << std::endl;
-          ASSERT( _dac->label( v1 ) != _l && "[Frontier::getFrontierContour] Invalid label for v1." );
+          ASSERT( _dac->label( v1 ) != _l && "[Border::getFrontierContour] Invalid label for v1." );
           if ( Q1.empty() )
             Q1.push_back( v1 );
           else if ( v1 != Q1.back() )
@@ -1443,7 +1443,7 @@ public:
   
 /**
    This class is intended for visualizing digital affine complex and
-   their frontier complexes.
+   their border complexes.
 */
 template <typename DigitalAffineComplex>
 class ViewerDAC
@@ -1632,8 +1632,8 @@ public:
   {
     EdgeSet edges;
     VertexGeometryTagging vTags;
-    _dac.getFrontierEdges( edges, l );
-    _dac.tagFrontierEdges( vTags, edges.begin(), edges.end() );
+    _dac.getBorderEdges( edges, l );
+    _dac.tagBorderEdges( vTags, edges.begin(), edges.end() );
     _dac.getBoundarySurface( edges, l );
     std::vector<Edge> nonConcaveEdges;
     for ( typename EdgeSet::const_iterator it = edges.begin(), ite = edges.end();
@@ -1649,10 +1649,10 @@ public:
 
   void viewFrontierContour( Label l, Color c, double w )
   {
-    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
-    Frontier<DigitalAffineComplex> frontier( _dac, l );
+    typedef typename Border<DigitalAffineComplex>::ConstIterator BorderConstIterator;
+    Border<DigitalAffineComplex> border( _dac, l );
     std::vector< std::vector<VertexHandle> > contours;
-    frontier.getAllFrontierContours( contours );
+    border.getAllFrontierContours( contours );
     for ( unsigned int i = 0; i < contours.size(); ++i )
       {
         if ( contours[ i ].empty() ) continue;
@@ -1674,10 +1674,10 @@ public:
 
   void viewMLPContour( Label l, Color c, double w, bool arrow )
   {
-    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
-    Frontier<DigitalAffineComplex> frontier( _dac, l );
+    typedef typename Border<DigitalAffineComplex>::ConstIterator BorderConstIterator;
+    Border<DigitalAffineComplex> border( _dac, l );
     std::vector< std::vector<VertexHandle> > contours;
-    frontier.getAllMLPContours( contours );
+    border.getAllMLPContours( contours );
     for ( unsigned int i = 0; i < contours.size(); ++i )
       {
         if ( contours[ i ].empty() ) continue;
@@ -1708,10 +1708,10 @@ public:
 
   void viewFrontier( Label l, Color pc, Color c, double w )
   {
-    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
-    Frontier<DigitalAffineComplex> frontier( _dac, l );
+    typedef typename Border<DigitalAffineComplex>::ConstIterator BorderConstIterator;
+    Border<DigitalAffineComplex> border( _dac, l );
     std::vector< std::vector<Simplex> > complexes;
-    frontier.getAllFrontierSimplices( complexes );
+    border.getAllFrontierSimplices( complexes );
     for ( unsigned int i = 0; i < complexes.size(); ++i )
       {
         std::vector<Simplex> & simplices = complexes[ i ];
@@ -1749,12 +1749,12 @@ public:
   */
   void viewBorder( Label l, Color pc, Color c, double w )
   {
-    typedef typename Frontier<DigitalAffineComplex>::ConstIterator FrontierConstIterator;
-    Frontier<DigitalAffineComplex> frontier( _dac, l );
+    typedef typename Border<DigitalAffineComplex>::ConstIterator BorderConstIterator;
+    Border<DigitalAffineComplex> border( _dac, l );
     _board.setPenColor( pc );
     _board.setFillColor( c );
     _board.setLineWidth( w );
-    for ( FrontierConstIterator it = frontier.begin(), ite = frontier.end();
+    for ( BorderConstIterator it = border.begin(), ite = border.end();
           it != ite; ++it )
       {
         FaceHandle f = (*it).first;
