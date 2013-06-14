@@ -19,6 +19,10 @@
 #include "DGtal/io/readers/GenericReader.h"
 #include <DGtal/geometry/curves/ArithmeticalDSS.h>
 #include <DGtal/geometry/curves/SaturatedSegmentation.h>
+#include "DGtal/io/readers/PointListReader.h"
+#include "DGtal/geometry/curves/FreemanChain.h"
+
+
 
 #include <CGAL/Delaunay_triangulation_2.h>
 #include <CGAL/Constrained_Delaunay_triangulation_2.h>
@@ -1933,6 +1937,11 @@ int main( int argc, char** argv )
   typedef DGtal::Z2i::Space Space;
   typedef DGtal::Z2i::Domain Domain;
   typedef DGtal::Z2i::Point DPoint;
+  typedef DGtal::Z2i::KSpace KSpace;
+  typedef DGtal::Z2i::Integer Integer;
+  typedef DGtal::FreemanChain<Integer> FreemanChain;
+  typedef KSpace::SCell SCell;
+
   using namespace DGtal;
 
   // parse command line ----------------------------------------------
@@ -1940,6 +1949,7 @@ int main( int argc, char** argv )
   general_opt.add_options()
     ("help,h", "display this message")
     ("point-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points, 'x y' per line.")
+    ("freeman-chain,f", po::value<std::string>(), "Specifies the input shape as a closed contour, coded by a Freeman chaincode: x y 00121001...")
     ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image filename.")
     ("min,m", po::value<int>()->default_value(1), "Specifies the min threshold of the input 2D image.")
     ("max,M", po::value<int>()->default_value(255), "Specifies the max threshold of the input 2D image.")
@@ -1949,7 +1959,7 @@ int main( int argc, char** argv )
     ("paving-vertices,V", po::value< std::vector<int> >(), "View the vertices (paving mode) of the triangulation with label [arg], or all of them when arg=-1; may be specified several times on the command line.")
     ("canonic,c", po::value< std::vector<int> >(), "View the constrained edges of the triangulation with label [arg], or all of them when arg=-1; may be specified several times on the command line.")
     ("border,b", po::value< std::vector<int> >(), "View the border complex of the triangulation with label [arg]; may be specified several times on the command line.")
-    ("frontier,f", po::value< std::vector<int> >(), "View the frontier complex of the triangulation with label [arg]; may be specified several times on the command line.")
+    ("frontier,F", po::value< std::vector<int> >(), "View the frontier complex of the triangulation with label [arg]; may be specified several times on the command line.")
     ("surface,s", po::value< std::vector<int> >(), "View the boundary surface of the triangulation with label [arg]; may be specified several times on the command line.")
     ("mlp,L", po::value< std::vector<int> >(), "View the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
     ("blue-mlp,B", po::value< std::vector<int> >(), "View in blue the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
@@ -1976,7 +1986,7 @@ int main( int argc, char** argv )
   std::set<DPoint> p,q;
   std::set<DPoint> p2,q2;
   DigitalAffineComplex dac;
-  Z2i::KSpace ks;
+  KSpace ks;
 
   trace.beginBlock("Construction of the shape");
   if ( vm.count( "point-list" ) )
@@ -2023,6 +2033,52 @@ int main( int argc, char** argv )
       // removeInsideInDomain<Space,Domain>( q2, q, image.domain() );
       trace.endBlock();
     }
+  if ( vm.count( "freeman-chain" ) )
+    {
+      trace.beginBlock( "Computing points from freeman chains." );
+      // read freeman chain(s).
+      std::string fileName = vm["freeman-chain"].as<std::string>();
+      std::vector< FreemanChain > vectFcs = PointListReader< DPoint >
+        ::getFreemanChainsFromFile<Integer>( fileName ); 
+      // compute bounding box
+      DPoint lo, hi;
+      vectFcs[ 0 ].computeBoundingBox( lo[ 0 ], lo[ 1 ], hi[ 0 ], hi[ 1 ] );
+      for ( unsigned int i = 1; i < vectFcs.size(); ++i )
+        {
+          // bool isClosed = vectFcs.at(i).isClosed(); 
+          DPoint nlo, nhi;
+          vectFcs[ i ].computeBoundingBox( nlo[ 0 ], nlo[ 1 ], nhi[ 0 ], nhi[ 1 ] );
+          lo = lo.inf( nlo );
+          hi = hi.sup( nhi );
+        }
+      DGtal::trace.info() << "- " << vectFcs.size() << " contours." << std::endl;
+      DGtal::trace.info() << "- bbox=" << lo << ", " << hi << std::endl;
+      // init Khalimsky space.
+      ks.init( lo, hi, true );
+      // extracts inner and outer points.
+      for ( unsigned int i = 0; i < vectFcs.size(); ++i )
+        {
+          std::vector<DPoint> vectPts; 
+          FreemanChain::getContourPoints( vectFcs.at(i), vectPts ); 
+          GridCurve<KSpace> gc;
+          bool ok = gc.initFromPointsVector( vectPts );
+          DGtal::trace.info() << "- conversion to GridCurve is " <<  (ok ? "ok" : "KO" ) 
+                              << std::endl;
+          typedef GridCurve<KSpace>::SCellsRange SCellsRange;
+          SCellsRange range = gc.getSCellsRange();
+          for ( SCellsRange::ConstIterator it = range.begin(), ite = range.end();
+                it != ite; ++it )
+            {
+              SCell in = ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
+              SCell out = ks.sIndirectIncident( *it, ks.sOrthDir( *it ) );
+              p2.insert( toCGAL<DPoint>( ks.sCoords( in ) ) );
+              q2.insert( toCGAL<DPoint>( ks.sCoords( out ) ) );
+            }
+        }
+      trace.endBlock();
+ 
+    }
+    
 
   // typedef Ellipse2D<Z2i::Space> Ellipse; 
   // int a = 5, b = 1;
