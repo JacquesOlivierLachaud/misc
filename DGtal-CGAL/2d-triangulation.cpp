@@ -397,7 +397,7 @@ public:
 };
 
 enum GeometryTag 
-  { Unknown = -2, Convex = 1, Flat = 0, Concave = -1, Multiple = 2 
+  { Unknown = -2, Convex = 1, Flat = 0, Concave = -1, Multiple = 2, Infinite = 3  
   };
 
 /**
@@ -430,6 +430,7 @@ public:
   typedef typename Triangulation::Vertex_handle           VertexHandle;
   typedef typename Triangulation::Edge_iterator           EdgeIterator;
   typedef typename Triangulation::Finite_edges_iterator   FiniteEdgesIterator;
+  typedef typename Triangulation::All_edges_iterator      AllEdgesIterator;
   typedef typename Triangulation::Edge                    Edge;
   typedef typename Triangulation::Finite_faces_iterator   FacesIterator;
   typedef typename Triangulation::Face_handle             FaceHandle;
@@ -441,6 +442,12 @@ public:
   typedef typename std::map<VertexHandle,GeometryTag> VertexGeometryTagging;
   typedef typename std::map<Edge,GeometryTag>         EdgeGeometryTagging;
   typedef typename std::set<Edge>                     EdgeSet;
+  // maps inside edges to outside edges. Each edge has either no or one outside edge.
+  typedef typename std::map<Edge,Edge>                In2OutEdgeMapping;
+  // maps outside edges to inside edges. Each edge has either no or two inside edges.
+  typedef typename std::map<Edge,std::pair<Edge,Edge> > Out2inEdgeMapping;
+  
+
 
   /**
      A simplex of dimension n is the convex hull of n+1 points.
@@ -631,7 +638,12 @@ public:
     if ( it == labeling().end() ) return INVALID;
     return it->second;
   }
-  
+
+  inline void setInfiniteLabel( Label l )
+  {
+    _vLabeling[ _T.infinite_vertex() ] = l;
+  }
+
   /** 
       Adds (digital) points to the triangulation.
       
@@ -902,7 +914,9 @@ public:
   void getBorderEdges( EdgeSet & bEdges, Label l0 ) const
   {
     bEdges.clear();
-    for ( FiniteEdgesIterator it = T().finite_edges_begin(), itend = T().finite_edges_end();
+    // for ( FiniteEdgesIterator it = T().finite_edges_begin(), itend = T().finite_edges_end();
+    //       it != itend; ++it )
+    for ( AllEdgesIterator it = T().all_edges_begin(), itend = T().all_edges_end();
           it != itend; ++it )
       {
         Edge e = *it;
@@ -925,13 +939,18 @@ public:
     for ( ; it != ite; ++it )
       {
         Edge e = *it;
-        VertexHandle v = TH.source( e );
-        CheckVertexLabelingInequality predNotL( labeling(), label( v ) );
-        strip.init( predNotL, e );
-        double angle = strip.angle();
-        if ( angle > M_PI + EPSILON )      tag[ v ] = Convex;
-        else if ( angle < M_PI - EPSILON ) tag[ v ] = Concave;
-        else                               tag[ v ] = Flat;
+        if ( T().is_infinite( e ) )
+          tag[ TH.source( e ) ] = T().is_infinite( TH.source( e ) ) ? Concave : Convex;
+        else 
+          {
+            VertexHandle v = TH.source( e );
+            CheckVertexLabelingInequality predNotL( labeling(), label( v ) );
+            strip.init( predNotL, e );
+            double angle = strip.angle();
+            if ( angle > M_PI + EPSILON )      tag[ v ] = Convex;
+            else if ( angle < M_PI - EPSILON ) tag[ v ] = Concave;
+            else                               tag[ v ] = Flat;
+          }
       }
   }
 
@@ -947,15 +966,20 @@ public:
 
   GeometryTag tagBorderEdge( Edge e ) const
   {
-    Strip strip( _T );
-    VertexHandle v = TH.source( e );
-    CheckVertexLabelingInequality predNotL( labeling(), label( v ) );
-    strip.init( predNotL, e );
-    double angle = strip.angle();
     GeometryTag tag;
-    if ( angle > M_PI + EPSILON )      tag = Convex;
-    else if ( angle < M_PI - EPSILON ) tag = Concave;
-    else                               tag = Flat;
+    if ( T().is_infinite( e ) )
+      tag = T().is_infinite( TH.source( e ) ) ? Concave : Convex;
+    else
+      {
+        Strip strip( _T );
+        VertexHandle v = TH.source( e );
+        CheckVertexLabelingInequality predNotL( labeling(), label( v ) );
+        strip.init( predNotL, e );
+        double angle = strip.angle();
+        if ( angle > M_PI + EPSILON )      tag = Convex;
+        else if ( angle < M_PI - EPSILON ) tag = Concave;
+        else                               tag = Flat;
+      }
     return tag;
   }
 };
@@ -1926,6 +1950,11 @@ insertBands( DAC & dac, const Image & image, const Predicate & predicate,
   }
 
 }
+
+double randomUniform()
+{
+  return (double) random() / (double) RAND_MAX;
+}
 ///////////////////////////////////////////////////////////////////////////////
 namespace po = boost::program_options;
 
@@ -1963,6 +1992,8 @@ int main( int argc, char** argv )
     ("surface,s", po::value< std::vector<int> >(), "View the boundary surface of the triangulation with label [arg]; may be specified several times on the command line.")
     ("mlp,L", po::value< std::vector<int> >(), "View the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
     ("blue-mlp,B", po::value< std::vector<int> >(), "View in blue the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
+    ("random-inside,r",  po::value<double>()->default_value(1.0), "Specifies the % of inside points that are kept. Simulates a degradation noise." )
+    ("random-outside,R",  po::value<double>()->default_value(1.0), "Specifies the % of outside points that are kept. Simulates a degradation noise." )
     ;
   bool parseOK = true;
   po::variables_map vm;
@@ -1987,6 +2018,8 @@ int main( int argc, char** argv )
   std::set<DPoint> p2,q2;
   DigitalAffineComplex dac;
   KSpace ks;
+  double r_in = vm[ "random-inside" ].as<double>();
+  double r_out = vm[ "random-outside" ].as<double>();
 
   trace.beginBlock("Construction of the shape");
   if ( vm.count( "point-list" ) )
@@ -2071,8 +2104,10 @@ int main( int argc, char** argv )
             {
               SCell in = ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
               SCell out = ks.sIndirectIncident( *it, ks.sOrthDir( *it ) );
-              p2.insert( toCGAL<DPoint>( ks.sCoords( in ) ) );
-              q2.insert( toCGAL<DPoint>( ks.sCoords( out ) ) );
+              if ( randomUniform() <= r_in ) 
+                p2.insert( toCGAL<DPoint>( ks.sCoords( in ) ) );
+              if ( randomUniform() <= r_out ) 
+                q2.insert( toCGAL<DPoint>( ks.sCoords( out ) ) );
             }
         }
       trace.endBlock();
@@ -2136,6 +2171,7 @@ int main( int argc, char** argv )
         it != ite; ++it )
     pts.push_back( toCGAL<Point>( *it ) );
   dac.add( pts.begin(), pts.end(), 0, 1 );
+  dac.setInfiniteLabel( 1 );
   trace.endBlock();
 
   Board2D board;
