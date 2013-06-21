@@ -838,11 +838,6 @@ public:
               continue; // already flipped.
             _flippedQuads.insert( quad );
             std::vector<Concavity> smallQ;
-            // for ( unsigned int i = 1; i < strip.size() - 1; ++i )
-            //   if ( i != idx ) 
-            //     Q.push( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
-            // Q.push( Concavity( strip.v0(), strip.v( 1 ), TH, predNotL ) );
-            // Q.push( Concavity( strip.vn(), strip.v( strip.size() - 2 ), TH, predNotL ) );
             for ( unsigned int i = 1; i < strip.size() - 1; ++i )
               if ( i != idx ) 
                 smallQ.push_back( Concavity( strip.pivot(), strip.v( i ), TH, predNotL, strip.priority() ) );
@@ -982,6 +977,83 @@ public:
       }
     return tag;
   }
+
+
+  bool flipBorder( Label l )
+  {
+    static const int array_flip[ 16 ] = // 0: no flip, 1: flip always; 2: check length.
+      { 0 /* dcba */, 0 /* dcbA */, 1 /* dcBa */, 2 /* dcBA */,
+        0 /* dCba */, 0 /* dCbA */, 2 /* dCBa */, 0 /* dCBA */,
+        1 /* Dcba */, 2 /* DcbA */, 1 /* DcBa */, 1 /* DcBA */,
+        2 /* DCba */, 0 /* DCbA */, 1 /* DCBa */, 2 /* DCBA */ };
+      // { 0 /* dcba */, 0 /* dcbA */, 1 /* dcBa */, 2 /* dcBA */,
+      //   0 /* dCba */, 0 /* dCbA */, 2 /* dCBa */, 2 /* dCBA */,
+      //   1 /* Dcba */, 2 /* DcbA */, 1 /* DcBa */, 2 /* DcBA */,
+      //   2 /* DCba */, 2 /* DCbA */, 2 /* DCBa */, 2 /* DCBA */ };
+    GeometryTag tag_a, tag_b, tag_c, tag_d;
+    EdgeSet bEdges;
+    this->getBorderEdges( bEdges, l );
+    unsigned int nbflips = 0;
+    while ( ! bEdges.empty() )
+      { // Get edge
+        typename EdgeSet::iterator itEdge = bEdges.begin();
+        Edge ac = *itEdge;
+        bEdges.erase( itEdge );
+        Edge ca = T().mirror_edge( ac );
+        Edge ab = TH.nextCWAroundSourceVertex( ac );
+        Edge ad = TH.nextCCWAroundSourceVertex( ac );
+        if ( T().is_infinite( ac ) || T().is_infinite( ab ) || T().is_infinite( ad ) ) continue;
+        // Get vertices E = a -> c
+        VertexHandle a = TH.source( ac );
+        VertexHandle b = TH.target( ab );
+        VertexHandle c = TH.target( ac );
+        VertexHandle d = TH.target( ad );
+        ASSERT( ( label( a ) == l ) && ( label( c ) != l ) );
+        if ( label( b ) == label( d ) ) continue;
+        if ( ! TH.isConvexQuadrilateral( a, b, c, d ) ) continue;
+        if ( label( b ) == l )
+          {
+            tag_a = tagBorderEdge( ac );                         // ac
+            tag_b = tagBorderEdge( TH.nextCCWAroundFace( ab ) ); // bc
+            tag_c = tagBorderEdge( T().mirror_edge( ac ) );      // ca
+            tag_d = tagBorderEdge( T().mirror_edge( ad ) );      // da
+          }
+        else // ( label( d ) == l )
+          {
+            tag_a = tagBorderEdge( ac );                         // ac
+            tag_b = tagBorderEdge( T().mirror_edge( ab ) );      // ba
+            tag_c = tagBorderEdge( T().mirror_edge( ac ) );      // ca
+            tag_d = tagBorderEdge( T().mirror_edge( TH.nextCCWAroundFace( ac ) ) ); // dc
+          }
+        int flag = ( ( tag_a != Concave ) ? 1 : 0 ) 
+          + ( ( tag_b != Concave ) ? 2 : 0 )
+          + ( ( tag_c != Concave ) ? 4 : 0 ) 
+          + ( ( tag_d != Concave ) ? 8 : 0 );
+        if ( array_flip[ flag ] == 0 ) continue; // no flip
+        if ( array_flip[ flag ] == 2 )           // check length
+          {
+            double l_ac = ( c->point() - a->point() ).squared_length();
+            double l_bd = ( d->point() - b->point() ).squared_length();
+            if ( l_ac >= l_bd ) continue;
+          }
+        if ( label( b ) == l )
+          {
+            bEdges.insert( TH.nextCCWAroundFace( ab ) ); // bc
+            bEdges.insert( ad );                         // ad
+          }
+        else  // ( label( d ) == l )
+          {
+            bEdges.insert( ab );                         // ab
+            bEdges.insert( T().mirror_edge( TH.nextCCWAroundFace( ac ) ) ); // dc
+          }
+        _T.flip( ac.first, ac.second );
+        nbflips++;
+      }
+    DGtal::trace.info() << "[DAC::flipBorder] nbflips=" << nbflips << std::endl;
+    return nbflips != 0;
+  }
+
+
 };
 
 /**
@@ -1461,6 +1533,7 @@ public:
     DGtal::trace.endBlock();
   }
   
+
   
 };
   
@@ -1994,6 +2067,7 @@ int main( int argc, char** argv )
     ("blue-mlp,B", po::value< std::vector<int> >(), "View in blue the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
     ("random-inside,r",  po::value<double>()->default_value(1.0), "Specifies the % of inside points that are kept. Simulates a degradation noise." )
     ("random-outside,R",  po::value<double>()->default_value(1.0), "Specifies the % of outside points that are kept. Simulates a degradation noise." )
+    ("optimize,O",  "Flips the border so as to optimize its alignment with the mlp." )
     ;
   bool parseOK = true;
   po::variables_map vm;
@@ -2216,6 +2290,10 @@ int main( int argc, char** argv )
   trace.beginBlock( "Computing Digital Affine Complex." );
   dac.removeAllConcavities( 0 );
   dac.removeAllConcavities( 1 );
+  if ( vm.count( "optimize" ) )
+    {
+      while ( dac.flipBorder( 0 ) ) ;
+    }
   // bool rc;
   // do {
   //   rc = dac.removeConcavities( 0 );
