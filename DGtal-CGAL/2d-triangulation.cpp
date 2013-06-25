@@ -364,10 +364,45 @@ public:
     return totalAngle;
   }
   /// Concavity test.
-  bool isConcave() const
+  bool isConcaveAndFlippable() const
   {
     ASSERT( isValid() );
     if ( angle() >= M_PI - EPSILON ) return false;
+    bool quadrilaterals = true;
+    for ( unsigned int i = 1; i < size() - 1; ++i )
+      {
+        if ( TH.T().is_constrained( e( i ) )
+             || ( ! TH.isStabbedCCW( e( i ), v0(), vn() ) ) )
+          {
+            quadrilaterals = false;
+            break;
+          }
+      }
+    return quadrilaterals;
+  }
+  /// Concavity test.
+  bool isConcave() const
+  {
+    ASSERT( isValid() );
+    return ( angle() < M_PI - EPSILON );
+  }
+  /// Concavity test.
+  bool isConvex() const
+  {
+    ASSERT( isValid() );
+    return ( angle() > M_PI + EPSILON );
+  }
+  /// Concavity test.
+  bool isFlat() const
+  {
+    ASSERT( isValid() );
+    double a = angle();
+    return ( a <= M_PI + EPSILON ) && ( a >= M_PI - EPSILON );
+  }
+  /// Concavity test.
+  bool isFlippable() const
+  {
+    ASSERT( isValid() );
     bool quadrilaterals = true;
     for ( unsigned int i = 1; i < size() - 1; ++i )
       {
@@ -392,6 +427,19 @@ public:
            && ( ! TH.T().is_constrained( e( i ) ) ) )
         return i;
     DGtal::trace.error() << "[SimplicialStrip::getFlippableEdge] Unable to find a valid edge." << std::endl;
+    return size();
+  } 
+
+  // @return the index of the concavity in the strip.
+  unsigned int getUnflippableEdgeIndex() const
+  {
+    ASSERT( size() > 2 );
+    for ( unsigned int i = 1; i < size() - 1; ++i )
+      if ( ! TH.isStabbedCCW( e( i ), 
+                              v( i-1 ), 
+                              v( i+1 ) ) )
+        return i;
+    DGtal::trace.error() << "[SimplicialStrip::getUnflippableEdge] Unable to find a valid edge." << std::endl;
     return size();
   } 
 };
@@ -532,38 +580,75 @@ public:
     }
   };
 
+  /// A predicate that returns 'false' when the vertex is marked, or
+  /// if not, returns 'true' whenever the labeling is not the one
+  /// given at instanciation, .
+  struct CheckVertexLabelingInequalityWhenUnmarked {
+    const VertexLabeling & _vl;
+    const VertexLabeling & _vmark;
+    Label _l;
+    Label _mark;
+    
+    inline
+    CheckVertexLabelingInequalityWhenUnmarked
+    ( const VertexLabeling & vl, const VertexLabeling & vmark,
+      Label l, Label mark )
+      : _vl( vl ), _vmark( vmark ), _l( l ), _mark( mark )
+    {}
+
+    inline
+    CheckVertexLabelingInequalityWhenUnmarked
+    ( const CheckVertexLabelingInequalityWhenUnmarked & other )
+      : _vl( other._vl ), _vmark( other._vmark ), _l( other._l ), _mark( other._mark )
+    {}
+
+    inline
+    bool operator()( const VertexHandle & v ) const
+    {
+      typename VertexLabeling::const_iterator it = _vmark.find( v );
+      if ( it != _vmark.end() ) return it->second != _mark;
+      it = _vl.find( v );
+      return ( it == _vl.end() ) ? false
+        : ( it->second != _l );
+    }
+  };
+
+
   /// A potential concavity.
-  struct Concavity {
+  template <typename Predicate>
+  struct GenericConcavity {
     VertexHandle _v0;
     VertexHandle _v1;
     const TriangulationHelper<Triangulation,Kernel>* _TH;
-    const CheckVertexLabelingInequality* _pred;
+    const Predicate* _pred;
     double _n01;
 
-    Concavity( VertexHandle v0, VertexHandle v1, 
-               DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
-               DGtal::ConstAlias< CheckVertexLabelingInequality > pred )
+    GenericConcavity( VertexHandle v0, VertexHandle v1, 
+                      DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
+                      DGtal::ConstAlias< Predicate > pred )
       : _v0( v0 ), _v1( v1 ), _TH( TH ), _pred( pred )
     {
       //_n01 = ( _v1->point() - _v0->point() ).squared_length();
       Edge e;
       Strip strip( _TH->T() );
       _n01 = computePriority( e, strip );
+      ASSERT( ! (*_pred)( _v0 ) );
+      ASSERT( (*_pred)( _v1 ) );
     }
 
-    Concavity( VertexHandle v0, VertexHandle v1, 
-               DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
-               DGtal::ConstAlias< CheckVertexLabelingInequality > pred,
-               double prior )
+    GenericConcavity( VertexHandle v0, VertexHandle v1, 
+                      DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
+                      DGtal::ConstAlias< Predicate > pred,
+                      double prior )
       : _v0( v0 ), _v1( v1 ), _TH( TH ), _pred( pred ), _n01( prior )
     {}
 
-    Concavity( const Concavity & other )
+    GenericConcavity( const GenericConcavity & other )
       : _v0( other._v0 ), _v1( other._v1 ), _n01( other._n01 ),
         _TH( other._TH ), _pred( other._pred )
     {}
 
-    Concavity & operator=( const Concavity & other )
+    GenericConcavity & operator=( const GenericConcavity & other )
     {
       if ( this != &other )
         {
@@ -588,7 +673,7 @@ public:
       return strip.priority();
     }
 
-    bool operator<( const Concavity & other ) const
+    bool operator<( const GenericConcavity & other ) const
     {
       return _n01 > other._n01;
     }
@@ -600,6 +685,8 @@ private:
   Triangulation _T;
   /// A mapping VertexHandle -> Label that stores for each vertex to which set it belongs.
   VertexLabeling _vLabeling;
+  /// A mapping VertexHandle -> Label that stores for each vertex if it is marked.
+  VertexLabeling _vMarked;
   /// The set of all points of the triangulation (Debug).
   std::set<Point> _points;
   /// The set of quads that have already been flipped.
@@ -636,6 +723,13 @@ public:
   {
     typename VertexLabeling::const_iterator it = labeling().find( v );
     if ( it == labeling().end() ) return INVALID;
+    return it->second;
+  }
+
+  inline Label mark( VertexHandle v ) const
+  {
+    typename VertexLabeling::const_iterator it = _vMarked.find( v );
+    if ( it == _vMarked.end() ) return -1;
     return it->second;
   }
 
@@ -770,6 +864,7 @@ public:
   bool removeConcavities( Label l ) 
   {
     bool changes = false;
+    typedef GenericConcavity< CheckVertexLabelingInequality > Concavity;
     std::priority_queue<Concavity> Q;
     std::set< std::pair< VertexHandle, VertexHandle > > inQueue;
 
@@ -829,7 +924,7 @@ public:
             inQueue.insert( std::make_pair( concavity._v0, concavity._v1 ) );
             continue;
           }
-        if ( strip.isConcave() )
+        if ( strip.isConcaveAndFlippable() )
           {
             unsigned int idx = strip.getFlippableEdgeIndex();
             Edge fedge = strip.e( idx );
@@ -867,6 +962,136 @@ public:
     // DGtal::trace.endBlock();
     return changes;
   }
+
+
+  /**
+     This procedure computes the relative hull with the same principle
+     as removeConcavities. around vertices with label \a l. Complexity
+     is O(e), where e is the number of edges.
+
+     @param[in] any label, as given with method \ref add.
+     @return 'true' if some concavity was flipped, 'false' when no concavity was found.
+  */
+  bool relativeHull( Label l ) 
+  {
+    bool changes = false;
+    typedef GenericConcavity< CheckVertexLabelingInequalityWhenUnmarked > Concavity;
+    std::priority_queue<Concavity> Q;
+    std::set< std::pair< VertexHandle, VertexHandle > > inQueue;
+    const Label mark = 1;
+    CheckVertexLabelingInequalityWhenUnmarked predNotLWU( labeling(), _vMarked, l, mark );
+    // DGtal::trace.beginBlock( "Searching concavities" );
+    for ( FiniteEdgesIterator it = T().finite_edges_begin(), itend = T().finite_edges_end();
+          it != itend; ++it )
+      {
+        Edge e = *it;
+        if ( _T.is_constrained( e ) ) continue;
+        VertexHandle v0 = TH.source( e );
+        VertexHandle v1 = TH.target( e );
+        Label l0 = label( v0 );
+        Label l1 = label( v1 );
+        if ( ( l0 == l ) && predNotLWU( v1 ) && ( l1 != INVALID ) )
+          {
+            Concavity c( v0, v1, TH, predNotLWU );
+            if ( c.priority() < M_PI - EPSILON ) 
+              { 
+                Q.push( c ); // only concave vertices are flippable.
+                inQueue.insert( std::make_pair( v0, v1 ) );
+              }
+          }
+        else if ( ( l1 == l ) && predNotLWU( v0 ) && ( l0 != INVALID ) )
+          {
+            Concavity c( v1, v0, TH, predNotLWU );
+            if ( c.priority() <  M_PI - EPSILON ) 
+              {
+                Q.push( c ); // only concave vertices are flippable.
+                inQueue.insert( std::make_pair( v1, v0 ) );
+              }
+          }
+      }
+    DGtal::trace.info() << "- Found " << Q.size() << " potential concavities." << std::endl;
+    // DGtal::trace.endBlock();
+    // DGtal::trace.beginBlock( "Flipping concavities" );
+    unsigned int nb_checked = 0;
+    unsigned int nb_flipped = 0;
+    while ( ! Q.empty() )
+      {
+        Concavity concavity = Q.top();
+        Q.pop(); ++nb_checked;
+        if ( nb_checked % 1000 == 0 ) 
+          DGtal::trace.info() << "- Queue=" << Q.size()
+                              << ", flipped " << nb_flipped << "/" << nb_checked 
+                              << " edges in a concavity." << std::endl;
+        inQueue.erase( std::make_pair( concavity._v0, concavity._v1 ) );
+        Edge e;
+        Strip strip( _T );
+        double p = concavity.computePriority( e, strip );
+        if ( p <= 0.0 ) continue;           // Invalid concavity.
+        if ( ( p != concavity.priority() )  // priority has changed
+             && ( ! Q.empty() )             // but the queue is not empty
+             && ( p > Q.top().priority() ) )// and the priority is not the best
+          { 
+            Q.push( Concavity( concavity._v0, concavity._v1, TH, predNotLWU, p ) );
+            inQueue.insert( std::make_pair( concavity._v0, concavity._v1 ) );
+            continue;
+          }
+        if ( strip.isConcave() ) 
+          {
+            if ( strip.isFlippable() )
+              {
+                unsigned int idx = strip.getFlippableEdgeIndex();
+                Edge fedge = strip.e( idx );
+                Simplex quad( concavity._v0, strip.v( idx - 1 ), concavity._v1, strip.v( idx + 1) );
+                if ( _flippedQuads.find( quad ) != _flippedQuads.end() )
+                  continue; // already flipped.
+                _flippedQuads.insert( quad );
+                std::vector<Concavity> smallQ;
+                for ( unsigned int i = 1; i < strip.size() - 1; ++i )
+                  if ( i != idx ) 
+                    smallQ.push_back( Concavity( strip.pivot(), strip.v( i ), 
+                                                 TH, predNotLWU, strip.priority() ) );
+                // if ( idx != 1 ) 
+                if ( label( strip.v0() ) == l )
+                  smallQ.push_back( Concavity( strip.v0(), strip.v( 1 ), TH, predNotLWU ) );
+                // if ( idx != strip.size() - 2 ) 
+                if ( label( strip.vn() ) == l )
+                  smallQ.push_back( Concavity( strip.vn(), strip.v( strip.size() - 2 ), TH, predNotLWU ) );
+                for ( typename std::vector<Concavity>::const_iterator it = smallQ.begin(),
+                        ite = smallQ.end(); it != ite; ++it )
+                  { 
+                    if ( inQueue.find( std::make_pair( it->_v0, it->_v1 ) ) == inQueue.end() )
+                      {
+                        Q.push( *it );
+                        inQueue.insert( std::make_pair( it->_v0, it->_v1 ) );
+                      }
+                  }
+                DGtal::Z2i::Point a = toDGtal( TH.source( fedge )->point() );
+                DGtal::Z2i::Point b = toDGtal( TH.target( fedge )->point() );
+                _debugBoard.drawLine(a[0],a[1],b[0],b[1]);
+                _T.flip( fedge.first, fedge.second );
+                changes = true; ++nb_flipped;
+              }
+            else
+              {
+                unsigned int idx = strip.getUnflippableEdgeIndex();
+                if ( idx != strip.size() )
+                  {
+                    Edge fedge = strip.e( idx );
+                    _vMarked[ TH.target( fedge ) ] = mark;
+                    // DGtal::trace.info() << "- mark " << TH.target( fedge )->point()
+                    //                     << " source=" << TH.source( fedge )->point() << std::endl;
+                    changes = true;
+                  }
+              }
+          }
+      }
+    ASSERT( inQueue.empty() );
+    ASSERT( Q.empty() );
+    DGtal::trace.info() << "- Flipped " << nb_flipped << "/" << nb_checked << " edges in a concavity." << std::endl;
+    // DGtal::trace.endBlock();
+    return changes;
+  }
+
 
   /**
      Returns the boundary with label \a l within the digital affine
@@ -1552,6 +1777,7 @@ public:
   typedef typename DigitalAffineComplex::FiniteVerticesIterator FiniteVerticesIterator;
   typedef typename DigitalAffineComplex::Edge            Edge;
   typedef typename DigitalAffineComplex::EdgeIterator    EdgeIterator;
+  typedef typename DigitalAffineComplex::FacesIterator   FacesIterator;
   typedef typename DigitalAffineComplex::FaceHandle      FaceHandle;
   typedef typename DigitalAffineComplex::Point           CPoint;
   typedef typename DigitalAffineComplex::VertexGeometryTagging  VertexGeometryTagging;
@@ -1598,7 +1824,6 @@ public:
     DPoint dummy;
     std::string specificStyle =  dummy.className() + "/Grid";
     _board << DGtal::SetMode( dummy.className(), "Grid" );
-    
     for ( FiniteVerticesIterator it = _dac.T().finite_vertices_begin(), itend = _dac.T().finite_vertices_end();
           it != itend; ++it )
       {
@@ -1607,8 +1832,11 @@ public:
           {
             Color c = _label_colors[ l1 ];
             DPoint a = toDGtal( it->point() );
-            _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( c, c ) )
-                   << a;
+            if ( _dac.mark( it ) != -1 )
+              _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( Color::Black, Color::Black ) );
+            else
+              _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( c, c ) );
+            _board << a;
           }
       }
   }
@@ -1861,6 +2089,36 @@ public:
         _board.drawTriangle(a[0],a[1],b[0],b[1],c[0],c[1]);
       }
   }  
+
+  void viewRelativeHull( int l )
+  {
+    _board.setLineStyle( Board::Shape::SolidStyle );
+    DGtal::Color fillc = _label_colors[ l ];
+    if ( fillc.red() < 128 ) fillc.red( 200 );
+    if ( fillc.green() < 128 ) fillc.green( 200 );
+    if ( fillc.blue() < 128 ) fillc.blue( 200 );
+    _board.setFillColor( fillc );
+    _board.setPenColor( fillc );
+    _board.setLineWidth( 0.0 );
+    for ( FacesIterator it = _dac.T().finite_faces_begin(), itend = _dac.T().finite_faces_end();
+          it != itend; ++it )
+      {
+        FaceHandle f = it;
+        VertexHandle v0 = f->vertex( 0 );
+        VertexHandle v1 = f->vertex( 1 );
+        VertexHandle v2 = f->vertex( 2 );
+        if ( ( ( _dac.label( v0 ) == l ) || ( _dac.mark( v0 ) == 1 ) )
+             && ( ( _dac.label( v1 ) == l ) || ( _dac.mark( v1 ) == 1 ) )
+             && ( ( _dac.label( v2 ) == l ) || ( _dac.mark( v2 ) == 1 ) ) )
+          {
+            DPoint a = toDGtal( v0->point() );
+            DPoint b = toDGtal( v1->point() );
+            DPoint c = toDGtal( v2->point() );
+            _board.drawTriangle(a[0],a[1],b[0],b[1],c[0],c[1]);
+          }
+      }
+  }
+
 };
   
   
@@ -2068,6 +2326,7 @@ int main( int argc, char** argv )
     ("random-inside,r",  po::value<double>()->default_value(1.0), "Specifies the % of inside points that are kept. Simulates a degradation noise." )
     ("random-outside,R",  po::value<double>()->default_value(1.0), "Specifies the % of outside points that are kept. Simulates a degradation noise." )
     ("optimize,O",  "Flips the border so as to optimize its alignment with the mlp." )
+    ("relative-hull,H", po::value< std::vector<int> >(), "Computes and visualize the relative hull of label [arg]." )
     ;
   bool parseOK = true;
   po::variables_map vm;
@@ -2161,7 +2420,7 @@ int main( int argc, char** argv )
       DGtal::trace.info() << "- " << vectFcs.size() << " contours." << std::endl;
       DGtal::trace.info() << "- bbox=" << lo << ", " << hi << std::endl;
       // init Khalimsky space.
-      ks.init( lo, hi, true );
+      ks.init( lo - DPoint::diagonal(1), hi + DPoint::diagonal(1), true );
       // extracts inner and outer points.
       for ( unsigned int i = 0; i < vectFcs.size(); ++i )
         {
@@ -2294,6 +2553,14 @@ int main( int argc, char** argv )
     {
       while ( dac.flipBorder( 0 ) ) ;
     }
+  if ( vm.count( "relative-hull" ) )
+    {
+      std::vector<int> labels = vm[ "relative-hull" ].as< std::vector<int> >();
+      for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); 
+            it != ite; ++it )
+        while ( dac.relativeHull( *it ) ) 
+          ;
+    }
   // bool rc;
   // do {
   //   rc = dac.removeConcavities( 0 );
@@ -2314,6 +2581,13 @@ int main( int argc, char** argv )
     for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
       viewer.viewBorder( *it, Color::Black, Color( 200, 200, 200, 0 ), 1.0 );
   }
+  if ( vm.count( "relative-hull" ) )
+    {
+      std::vector<int> labels = vm[ "relative-hull" ].as< std::vector<int> >();
+      for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); 
+            it != ite; ++it )
+        viewer.viewRelativeHull( *it );
+    }
   if ( vm.count( "frontier" ) ) {
     std::vector<int> labels = vm[ "frontier" ].as< std::vector<int> >();
     for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
@@ -2349,40 +2623,16 @@ int main( int argc, char** argv )
     for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); it != ite; ++it )
       viewer.viewVertices( *it );
   }
+
+  // DPoint a( -16, -10 );
+  // std::string specificStyle = a.className() + "/Paving";
+  // board << DGtal::SetMode( a.className(), "Paving" );
+  // board << DGtal::CustomStyle( specificStyle, 
+  //                              new DGtal::CustomColors( Color::Black, Color::Magenta ) )
+  //        << a;
   board.saveSVG("dac.svg");
   board.saveEPS("dac.eps");
   board.clear();
-  // for ( std::set<DPoint>::const_iterator it = p.begin(), ite = p.end();
-  //       it != ite; ++it )
-  //   board << *it;
-  // // board << Domain( DPoint( -2, -2 ), DPoint( 13, 13 ) );
-  // // viewer.viewConvexSurface( 0, DGtal::Color( 255, 0, 0 ), 4.0 );
-  // // viewer.viewConvexSurface( 1, DGtal::Color( 0, 255, 0 ), 4.0 );
-  // // viewer.viewBoundarySurface( 0, DGtal::Color( 200, 0, 0 ), 1.0 );
-  // // viewer.viewBoundarySurface( 1, DGtal::Color( 0, 200, 0 ), 1.0 );
-  // // Frontier 0 and Frontier 1 are the same.
-  // //viewer.viewFrontier( 0, DGtal::Color( 255, 255, 0, 0 ), 3.0 );
-  // //viewer.viewFrontierContour( 0, DGtal::Color( 255, 255, 0, 0 ), 4.0 );
-  // viewer.viewMLPContour( 0, DGtal::Color( 0, 0, 255, 100 ), 5.0, false );
-  // board.saveSVG("dac-bdy.svg");
-  // board.saveEPS("dac-bdy.eps");
   trace.endBlock();
-
-  typedef DigitalAffineComplex::Triangulation Triangulation;
-  typedef DigitalAffineComplex::VertexHandle VertexHandle;
-  Triangulation T;
-  trace.info() << " nbv=" << T.tds().number_of_vertices()
-               << " nbe=" << T.tds().number_of_edges()
-               << " nbf=" << T.tds().number_of_faces() << std::endl;
-  Point newp( 0,0 );
-  VertexHandle v0 = T.insert( newp );
-  trace.info() << " nbv=" << T.tds().number_of_vertices()
-               << " nbe=" << T.tds().number_of_edges()
-               << " nbf=" << T.tds().number_of_faces() << std::endl;
-  VertexHandle v1 = T.insert( newp );
-  trace.info() << " nbv=" << T.tds().number_of_vertices()
-               << " nbe=" << T.tds().number_of_edges()
-               << " nbf=" << T.tds().number_of_faces() << std::endl;
-  trace.info() << "v0==v1" << (v0 == v1) << std::endl;
   return 0;
 }
