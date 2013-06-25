@@ -284,6 +284,48 @@ public:
       }
   }
 
+  /// Define a strip around the source edge of \a border, starting
+  /// around \a border.  The \a predicate should return true for all
+  /// vertices inside the strip.  It also checks if faces have been
+  /// extended in the Digital Affine Complex \a dac.
+  template <typename DAC, typename VertexHandlePredicate>
+  void init( const DAC & dac, 
+	     const VertexHandlePredicate & predicate, 
+             const Edge & border )
+  {
+    umbrella.clear();
+    VertexHandle pivot = TH.source( border );
+    _loop = false;
+    Edge e = border;
+    while ( (! _loop) && predicate( TH.target( e ) )
+	    && ( ! dac.isFaceExtended( e.first ) ) ) // face has already been extended.
+      {
+        umbrella.push_back( e );
+        e = TH.nextCCWAroundSourceVertex( e );
+        if ( e == border )
+          _loop = true; 
+        ASSERT( TH.source( e ) == pivot );
+      }
+    if ( ! _loop )
+      {
+        umbrella.push_back( e ); // last
+        Edge e = TH.nextCWAroundSourceVertex( border );
+        while ( predicate( TH.target( e ) ) 
+		&& ( ! dac.isFaceExtended
+		     ( dac.T().mirror_edge( e ).first ) ) ) // face has already been extended.
+          {
+	    // if ( e != umbrella.front() )
+	    umbrella.push_front( e );
+            e = TH.nextCWAroundSourceVertex( e );
+            ASSERT( TH.source( e ) == pivot );
+          }
+        umbrella.push_front( e );
+      }
+    // std::cout << "[Umbrella] v=" << pivot->point() << " s=" << umbrella.size()<< std::endl;
+    ASSERT( ! predicate( pivot ) );
+    ASSERT( predicate( TH.target( border ) ) );
+  }
+
   /// @return 'true' iff the strip was initialized. It must have an
   /// umbrella of size at least 2.
   inline bool isValid() const
@@ -354,7 +396,9 @@ public:
   inline Component angle() const
   {
     ASSERT( isValid() );
-    if ( isTrivial() || isLoop() ) return 2.0*M_PI;
+    if ( isLoop() ) return 2.0*M_PI;
+    if ( ( size() == 2 ) && ( umbrella.front() == umbrella.back() ) )
+      return 2.0*M_PI;
     Component totalAngle = 0.0;
     for ( typename std::deque<Edge>::const_iterator it = umbrella.begin(), ite = umbrella.end() - 1;
           it != ite; ++it )
@@ -419,14 +463,13 @@ public:
   // @return the index of an edge that is flippable in the strip.
   unsigned int getFlippableEdgeIndex() const
   {
-    ASSERT( size() > 2 );
     for ( unsigned int i = 1; i < size() - 1; ++i )
       if ( ( TH.isStabbedCCW( e( i ), 
                               v( i-1 ), 
                               v( i+1 ) ) ) 
            && ( ! TH.T().is_constrained( e( i ) ) ) )
         return i;
-    DGtal::trace.error() << "[SimplicialStrip::getFlippableEdge] Unable to find a valid edge." << std::endl;
+    // DGtal::trace.error() << "[SimplicialStrip::getFlippableEdge] Unable to find a valid edge." << std::endl;
     return size();
   } 
 
@@ -496,6 +539,70 @@ public:
   typedef typename std::map<Edge,std::pair<Edge,Edge> > Out2inEdgeMapping;
   
 
+  /**
+     This structure is associated with a face. When a face is added to
+     the relative hull, some edges of the face are inside the hull,
+     some edges are outside the hull. We can therefore build an
+     extension from the inside edges to the outside edges, as well as
+     a retraction from the outside edges and the inner face to the
+     inside edge(s).
+   */
+  struct Extension {
+    FaceHandle face;
+    int inside_edges[ 2 ]; //< stores the inside edges (indices in the face)
+    int outside_edges[ 2 ];//< stores the outside edges (indices in the face)
+    bool type;             //< 'true' 1 outside, 2 inside edges,
+			   //'false' 2 outside, 1 inside.
+    Extension() {}
+
+    Extension( const Extension & other )
+      : face( other.face ), type( other.type )
+    {
+      inside_edges[ 0 ] = inside_edges[ 1 ] = -1;
+      outside_edges[ 0 ] = outside_edges[ 1 ] = -1;
+    }
+
+    Extension( FaceHandle f, int outside )
+    {
+      face = f;
+      outside_edges[ 0 ] = outside;
+      outside_edges[ 1 ] = -1;
+      inside_edges[ 0 ] = ( outside + 1 ) % 3;
+      inside_edges[ 1 ] = ( outside + 2 ) % 3;
+      type = true;
+    }
+
+    Extension & operator=( const Extension & other )
+    {
+      if ( this != &other )
+	{
+	  face = other.face;
+	  inside_edges[ 0 ] = other.inside_edges[ 0 ];
+	  inside_edges[ 1 ] = other.inside_edges[ 1 ];
+	  outside_edges[ 0 ] = other.outside_edges[ 0 ];
+	  outside_edges[ 1 ] = other.outside_edges[ 1 ];
+	}
+      return *this;
+    }
+
+    Extension( FaceHandle f, int outside1, int outside2 )
+    {
+      face = f;
+      outside_edges[ 0 ] = ( outside1+1 ) % 3 == outside2 ? outside1 : outside2;
+      outside_edges[ 1 ] = ( outside1+1 ) % 3 == outside2 ? outside2 : outside1;
+      inside_edges[ 0 ] = ( outside_edges[ 1 ] + 1 ) % 3;
+      inside_edges[ 1 ] = -1;
+      type = false;
+    }
+    
+    Point retract( const Triangulation & T, const Point & p ) const
+    {
+      Point p1 = T.segment( Edge( face, inside_edges[ 0 ] ) )
+	.supporting_line().projection( p );
+      if ( ! type ) return p1;
+      
+    }
+  };
 
   /**
      A simplex of dimension n is the convex hull of n+1 points.
@@ -687,6 +794,13 @@ private:
   VertexLabeling _vLabeling;
   /// A mapping VertexHandle -> Label that stores for each vertex if it is marked.
   VertexLabeling _vMarked;
+
+  typedef typename std::map<FaceHandle, Extension> FaceMapping;
+  typedef typename FaceMapping::iterator FaceMappingIterator;
+  typedef typename FaceMapping::const_iterator FaceMappingConstIterator;
+  /// A mapping Face -> Info that stores faces that have been added to
+  /// the relative hull for each vertex if it is marked.
+  FaceMapping _vFaces;
   /// The set of all points of the triangulation (Debug).
   std::set<Point> _points;
   /// The set of quads that have already been flipped.
@@ -711,6 +825,8 @@ public:
     _T.clear();
     _vLabeling.clear();
     _points().clear();
+    _vMarked.clear();
+    _vFaces.clear();
   }
 
   inline const Triangulation & T() const
@@ -731,6 +847,38 @@ public:
     typename VertexLabeling::const_iterator it = _vMarked.find( v );
     if ( it == _vMarked.end() ) return -1;
     return it->second;
+  }
+
+  /**
+     @param f any face of the triangulation
+     @return 'true' iff the face has been extended during the relative
+     hull process and is part of global retraction of the relative
+     hull onto the canonic complex.
+  */
+  inline bool isFaceExtended( FaceHandle f ) const
+  {
+    FaceMappingConstIterator it = _vFaces.find( f );
+    return it != _vFaces.end();
+  }
+  
+  FaceMappingConstIterator itFaceExtension( FaceHandle f ) const
+  {
+    return _vFaces.find( f );
+  }
+  FaceMappingConstIterator endFaceExtension() const
+  {
+    return _vFaces.end();
+  }
+  /**
+     @param f a face of the triangulation that has been extended during the relative
+     hull process.
+     @return a const_reference to the associated extension.
+     @pre 'isFaceExtended( f ) == true'
+  */
+  const Extension & extension( FaceHandle f ) const
+  {
+    ASSERT( isFaceExtended( f ) );
+    return *( itFaceExtension( f ) );
   }
 
   inline void setInfiniteLabel( Label l )
@@ -958,6 +1106,125 @@ public:
       }
     ASSERT( inQueue.empty() );
     ASSERT( Q.empty() );
+    DGtal::trace.info() << "- Flipped " << nb_flipped << "/" << nb_checked << " edges in a concavity." << std::endl;
+    // DGtal::trace.endBlock();
+    return changes;
+  }
+
+
+  /**
+     This procedure computes the relative hull with the same principle
+     as removeConcavities. around vertices with label \a l. Complexity
+     is O(e), where e is the number of edges.
+
+     @param[in] any label, as given with method \ref add.
+     @return 'true' if some concavity was flipped, 'false' when no concavity was found.
+  */
+  bool relativeHull2( Label l ) 
+  {
+    bool changes = false;
+    std::set< std::pair< VertexHandle, VertexHandle > > inQueue;
+    const Label mark = 1;
+    CheckVertexLabelingInequality predNotL( labeling(), l );
+    Strip strip( T() );
+    // DGtal::trace.beginBlock( "Searching concavities" );
+    for ( FiniteEdgesIterator it = T().finite_edges_begin(), itend = T().finite_edges_end();
+          it != itend; ++it )
+      {
+        Edge e = *it;
+        if ( T().is_constrained( e ) ) continue;
+        VertexHandle v0 = TH.source( e );
+        VertexHandle v1 = TH.target( e );
+        Label l0 = label( v0 );
+        Label l1 = label( v1 );
+        if ( ( l0 == l ) && predNotL( v1 ) && ( l1 != INVALID ) )
+          {
+	    strip.init( *this, predNotL, e );
+	    if ( strip.isConcave() ) 
+	      inQueue.insert( std::make_pair( v0, v1 ) );
+          }
+        else if ( ( l1 == l ) && predNotL( v0 ) && ( l0 != INVALID ) )
+          {
+	    strip.init( *this, predNotL, T().mirror_edge( e ) );
+	    if ( strip.isConcave() ) 
+	      inQueue.insert( std::make_pair( v1, v0 ) );
+          }
+      }
+    DGtal::trace.info() << "- Found " << inQueue.size() << " potential concavities." 
+			<< std::endl;
+    // DGtal::trace.endBlock();
+    // DGtal::trace.beginBlock( "Flipping concavities" );
+    unsigned int nb_checked = 0;
+    unsigned int nb_flipped = 0;
+    Edge e;
+    while ( ! inQueue.empty() )
+      {
+	VertexHandle v0 = inQueue.begin()->first;
+	VertexHandle v1 = inQueue.begin()->second;
+        ++nb_checked;
+        if ( nb_checked % 1000 == 0 ) 
+          DGtal::trace.info() << "- Queue=" << inQueue.size()
+                              << ", flipped " << nb_flipped << "/" << nb_checked 
+                              << " edges in a concavity." << std::endl;
+	if ( ! T().is_edge( v0, v1, e.first, e.second ) )
+	  {
+	    inQueue.erase( inQueue.begin() );
+	    continue; // (v0,v1) is not an edge anymore.
+	  }
+	if ( TH.source( e ) != v0 ) 
+	  e = T().mirror_edge( e );
+	strip.init( *this, predNotL, e );
+	ASSERT( strip.isValid() );
+        if ( strip.isConcave() ) 
+          {
+	    unsigned int i = strip.getFlippableEdgeIndex();
+	    if ( i != strip.size() ) // at least one edge is flippable.
+	      {
+                Edge fedge = strip.e( i );
+		ASSERT( ! T().is_constrained( fedge ) );
+		// if ( ! predNotL( strip.v( i-1 ) ) ) 
+		//   inQueue.insert( std::make_pair( strip.v( i-1 ), strip.v( i ) ) );
+		// if ( ! predNotL( strip.v( i+1 ) ) ) 
+		//   inQueue.insert( std::make_pair( strip.v( i+1 ), strip.v( i ) ) );
+		// if ( predNotL( strip.v( i+1 ) ) )
+		//   inQueue.insert( std::make_pair( strip.pivot(), strip.v( i+1 ) ) );
+		Edge mirror_first = T().mirror_edge( strip.e( 0 ) );
+		_T.flip( fedge.first, fedge.second );
+		if ( strip.size() == 3 ) 
+		  { // last flip made a triangle
+		    Edge nedge = T().mirror_edge( mirror_first );
+		    _vFaces[ nedge.first ] = Extension( nedge.first, 
+							T().ccw( nedge.second ) );
+		  }
+		changes = true; ++nb_flipped;
+	      }
+	    else // none are flippable. This is a concave/flat piece.
+	      {
+		Edge fedge = strip.e( 0 );
+		if ( ! isFaceExtended( fedge.first ) )
+		  {
+		    _vFaces[ fedge.first ] = Extension( fedge.first, 
+							T().ccw( fedge.second ) );
+		    for ( unsigned int i = 1; i < strip.size() - 1; ++i ) 
+		      {
+			_vMarked[ strip.v( i ) ] = mark;
+			fedge = strip.e( i );
+			ASSERT( ! isFaceExtended( fedge.first ) );
+			_vFaces[ fedge.first ] = Extension( fedge.first, 
+							    fedge.second,
+							    T().ccw( fedge.second ) );
+			DGtal::trace.info() << "- mark " << TH.target( fedge )->point()
+					    << " source=" << TH.source( fedge )->point() << std::endl;
+		      }
+		    changes = true;
+		  }
+		inQueue.erase( inQueue.begin() );
+	      }
+          }
+	else
+	  inQueue.erase( inQueue.begin() );
+      }
+    ASSERT( inQueue.empty() );
     DGtal::trace.info() << "- Flipped " << nb_flipped << "/" << nb_checked << " edges in a concavity." << std::endl;
     // DGtal::trace.endBlock();
     return changes;
@@ -2107,9 +2374,12 @@ public:
         VertexHandle v0 = f->vertex( 0 );
         VertexHandle v1 = f->vertex( 1 );
         VertexHandle v2 = f->vertex( 2 );
-        if ( ( ( _dac.label( v0 ) == l ) || ( _dac.mark( v0 ) == 1 ) )
-             && ( ( _dac.label( v1 ) == l ) || ( _dac.mark( v1 ) == 1 ) )
-             && ( ( _dac.label( v2 ) == l ) || ( _dac.mark( v2 ) == 1 ) ) )
+        // if ( ( ( _dac.label( v0 ) == l ) || ( _dac.mark( v0 ) == 1 ) )
+        //      && ( ( _dac.label( v1 ) == l ) || ( _dac.mark( v1 ) == 1 ) )
+        //      && ( ( _dac.label( v2 ) == l ) || ( _dac.mark( v2 ) == 1 ) ) )
+        if ( _dac.isFaceExtended( f ) ||
+	     ( ( _dac.label( v0 ) == l ) && ( _dac.label( v1 ) == l ) 
+	       && ( _dac.label( v2 ) == l ) ) )
           {
             DPoint a = toDGtal( v0->point() );
             DPoint b = toDGtal( v1->point() );
@@ -2547,8 +2817,8 @@ int main( int argc, char** argv )
   trace.endBlock();
 
   trace.beginBlock( "Computing Digital Affine Complex." );
-  dac.removeAllConcavities( 0 );
-  dac.removeAllConcavities( 1 );
+  // dac.removeAllConcavities( 0 );
+  // dac.removeAllConcavities( 1 );
   if ( vm.count( "optimize" ) )
     {
       while ( dac.flipBorder( 0 ) ) ;
@@ -2558,7 +2828,7 @@ int main( int argc, char** argv )
       std::vector<int> labels = vm[ "relative-hull" ].as< std::vector<int> >();
       for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); 
             it != ite; ++it )
-        while ( dac.relativeHull( *it ) ) 
+        while ( dac.relativeHull2( *it ) ) 
           ;
     }
   // bool rc;
@@ -2624,12 +2894,13 @@ int main( int argc, char** argv )
       viewer.viewVertices( *it );
   }
 
-  // DPoint a( -16, -10 );
-  // std::string specificStyle = a.className() + "/Paving";
-  // board << DGtal::SetMode( a.className(), "Paving" );
-  // board << DGtal::CustomStyle( specificStyle, 
-  //                              new DGtal::CustomColors( Color::Black, Color::Magenta ) )
-  //        << a;
+  DPoint a( 25, 1 );
+  std::string specificStyle = a.className() + "/Paving";
+  board << DGtal::SetMode( a.className(), "Paving" );
+  board << DGtal::CustomStyle( specificStyle, 
+                               new DGtal::CustomColors( Color::Black, Color::Magenta ) )
+	<< a
+	<< DPoint( 24, 7 ) ;
   board.saveSVG("dac.svg");
   board.saveEPS("dac.eps");
   board.clear();
