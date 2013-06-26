@@ -31,7 +31,7 @@
 
 #include "Auxiliary.h"
 
-static const double EPSILON = 0.00001;
+static const double EPSILON = 0.0000001;
 template <typename CGALPoint>
 DGtal::Z2i::Point toDGtal( const CGALPoint & p )
 {
@@ -298,29 +298,45 @@ public:
     _loop = false;
     Edge e = border;
     while ( (! _loop) && predicate( TH.target( e ) )
-	    && ( ! dac.isFaceExtended( e.first ) ) ) // face has already been extended.
+	    && ( ! dac.isFaceExtended( dac.T().mirror_edge( e ).first ) ) )
       {
-        umbrella.push_back( e );
-        e = TH.nextCCWAroundSourceVertex( e );
-        if ( e == border )
-          _loop = true; 
-        ASSERT( TH.source( e ) == pivot );
+	e = TH.nextCWAroundSourceVertex( e );
+	if ( e == border )
+	  _loop = true; 
+	ASSERT( TH.source( e ) == pivot );
       }
-    if ( ! _loop )
+    if ( _loop ) return; // umbrella is the whole neighborhood.
+    while ( ! dac.isFaceExtended( e.first ) ) // face has already been extended.
       {
-        umbrella.push_back( e ); // last
-        Edge e = TH.nextCWAroundSourceVertex( border );
-        while ( predicate( TH.target( e ) ) 
-		&& ( ! dac.isFaceExtended
-		     ( dac.T().mirror_edge( e ).first ) ) ) // face has already been extended.
-          {
-	    // if ( e != umbrella.front() )
-	    umbrella.push_front( e );
-            e = TH.nextCWAroundSourceVertex( e );
-            ASSERT( TH.source( e ) == pivot );
-          }
-        umbrella.push_front( e );
+	umbrella.push_back( e );
+	e = TH.nextCCWAroundSourceVertex( e );
+	ASSERT( TH.source( e ) == pivot );
+	if ( ! predicate( TH.target( e ) ) ) break;
       }
+    umbrella.push_back( e );
+    // while ( (! _loop) && predicate( TH.target( e ) )
+    // 	    && ( ! dac.isFaceExtended( e.first ) ) ) // face has already been extended.
+    //   {
+    //     umbrella.push_back( e );
+    //     e = TH.nextCCWAroundSourceVertex( e );
+    //     if ( e == border )
+    //       _loop = true; 
+    //     ASSERT( TH.source( e ) == pivot );
+    //   }
+    // if ( ! _loop )
+    //   {
+    //     umbrella.push_back( e ); // last
+    //     Edge e = TH.nextCWAroundSourceVertex( border );
+    //     while ( predicate( TH.target( e ) ) 
+    // 		&& ( ! dac.isFaceExtended
+    // 		     ( dac.T().mirror_edge( e ).first ) ) ) // face has already been extended.
+    //       {
+    // 	    umbrella.push_front( e );
+    //         e = TH.nextCWAroundSourceVertex( e );
+    //         ASSERT( TH.source( e ) == pivot );
+    //       }
+    //     umbrella.push_front( e );
+    //   }
     // std::cout << "[Umbrella] v=" << pivot->point() << " s=" << umbrella.size()<< std::endl;
     ASSERT( ! predicate( pivot ) );
     ASSERT( predicate( TH.target( border ) ) );
@@ -329,7 +345,7 @@ public:
   /// @return 'true' iff the strip was initialized. It must have an
   /// umbrella of size at least 2.
   inline bool isValid() const
-  { return umbrella.size() >= 2; }
+  { return ( umbrella.size() >= 1 ) || isLoop(); }
 
   /// @return 'true' iff the strip contains all incident edges to the
   /// pivot (ie the whole umbrella).
@@ -340,7 +356,7 @@ public:
   inline bool isTrivial() const
   {
     ASSERT( isValid() );
-    return umbrella.size() == 2;
+    return umbrella.size() == 1;
   }
 
   /// @return 'true' iff the strip was initialized. It must have an
@@ -397,8 +413,9 @@ public:
   {
     ASSERT( isValid() );
     if ( isLoop() ) return 2.0*M_PI;
-    if ( ( size() == 2 ) && ( umbrella.front() == umbrella.back() ) )
-      return 2.0*M_PI;
+    if ( isTrivial() ) return 2.0*M_PI;
+    // if ( ( size() == 2 ) && ( umbrella.front() == umbrella.back() ) )
+    //   return 2.0*M_PI;
     Component totalAngle = 0.0;
     for ( typename std::deque<Edge>::const_iterator it = umbrella.begin(), ite = umbrella.end() - 1;
           it != ite; ++it )
@@ -411,6 +428,7 @@ public:
   bool isConcaveAndFlippable() const
   {
     ASSERT( isValid() );
+    if ( isTrivial() ) return false;
     if ( angle() >= M_PI - EPSILON ) return false;
     bool quadrilaterals = true;
     for ( unsigned int i = 1; i < size() - 1; ++i )
@@ -428,18 +446,21 @@ public:
   bool isConcave() const
   {
     ASSERT( isValid() );
+    if ( isTrivial() ) return false;
     return ( angle() < M_PI - EPSILON );
   }
   /// Concavity test.
   bool isConvex() const
   {
     ASSERT( isValid() );
+    if ( isTrivial() ) return false;
     return ( angle() > M_PI + EPSILON );
   }
   /// Concavity test.
   bool isFlat() const
   {
     ASSERT( isValid() );
+    if ( isTrivial() ) return false;
     double a = angle();
     return ( a <= M_PI + EPSILON ) && ( a >= M_PI - EPSILON );
   }
@@ -447,6 +468,7 @@ public:
   bool isFlippable() const
   {
     ASSERT( isValid() );
+    if ( isTrivial() ) return false;
     bool quadrilaterals = true;
     for ( unsigned int i = 1; i < size() - 1; ++i )
       {
@@ -934,12 +956,16 @@ public:
       _T.insert_constraint( midp, q2 );
       break;
     case 1: // ccv1, cvx2
-      DGtal::trace.info() << " C=" << q1 << " -> " << p2 << std::endl;
-      _T.insert_constraint( q1, p2 );
+      // These constraints may be false afterwards for the relative
+      // hull. We remove them.
+      // DGtal::trace.info() << " C=" << q1 << " -> " << p2 << std::endl;
+      // _T.insert_constraint( q1, p2 );
       break;
     case 2: // cvx1, ccv2
-      DGtal::trace.info() << " C=" << p1 << " -> " << q2 << std::endl;
-      _T.insert_constraint( p1, q2 );
+      // These constraints may be false afterwards for the relative
+      // hull. We remove them.
+      // DGtal::trace.info() << " C=" << p1 << " -> " << q2 << std::endl;
+      // _T.insert_constraint( p1, q2 );
       break;
     case 3: // cvx1, cvx2
       DGtal::trace.info() << " C=" << p1 << " -> " << midq;
@@ -1111,6 +1137,22 @@ public:
     return changes;
   }
 
+  void insertQueue( std::set< std::pair< VertexHandle, VertexHandle > > & inQueue,
+		    VertexHandle v0, VertexHandle v1,
+		    const CheckVertexLabelingInequality & predicate ) const
+  {
+    if ( ( ! predicate( v0 ) ) && predicate( v1 ) )
+      {
+	Edge e;
+	if ( T().is_edge( v0, v1, e.first, e.second ) )
+	  {
+	    Strip strip( T() );
+	    strip.init( *this, predicate, e );
+	    if ( strip.isConcave() ) 
+	      inQueue.insert( std::make_pair( v0, v1 ) );
+          }
+      }
+  }
 
   /**
      This procedure computes the relative hull with the same principle
@@ -1123,8 +1165,8 @@ public:
   bool relativeHull2( Label l ) 
   {
     bool changes = false;
+    static const Label rmark = 1;
     std::set< std::pair< VertexHandle, VertexHandle > > inQueue;
-    const Label mark = 1;
     CheckVertexLabelingInequality predNotL( labeling(), l );
     Strip strip( T() );
     // DGtal::trace.beginBlock( "Searching concavities" );
@@ -1138,12 +1180,14 @@ public:
         Label l0 = label( v0 );
         Label l1 = label( v1 );
         if ( ( l0 == l ) && predNotL( v1 ) && ( l1 != INVALID ) )
+	  // && ( _vMarked.find( v1 ) == _vMarked.end() ) )
           {
 	    strip.init( *this, predNotL, e );
 	    if ( strip.isConcave() ) 
 	      inQueue.insert( std::make_pair( v0, v1 ) );
           }
         else if ( ( l1 == l ) && predNotL( v0 ) && ( l0 != INVALID ) )
+	  // && ( _vMarked.find( v0 ) == _vMarked.end() ) )
           {
 	    strip.init( *this, predNotL, T().mirror_edge( e ) );
 	    if ( strip.isConcave() ) 
@@ -1173,6 +1217,11 @@ public:
 	  }
 	if ( TH.source( e ) != v0 ) 
 	  e = T().mirror_edge( e );
+	if ( T().is_constrained( e ) )
+	  {
+	    inQueue.erase( inQueue.begin() );
+	    continue; // (v0,v1) is constrained
+	  }
 	strip.init( *this, predNotL, e );
 	ASSERT( strip.isValid() );
         if ( strip.isConcave() ) 
@@ -1182,20 +1231,37 @@ public:
 	      {
                 Edge fedge = strip.e( i );
 		ASSERT( ! T().is_constrained( fedge ) );
-		// if ( ! predNotL( strip.v( i-1 ) ) ) 
-		//   inQueue.insert( std::make_pair( strip.v( i-1 ), strip.v( i ) ) );
-		// if ( ! predNotL( strip.v( i+1 ) ) ) 
-		//   inQueue.insert( std::make_pair( strip.v( i+1 ), strip.v( i ) ) );
-		// if ( predNotL( strip.v( i+1 ) ) )
-		//   inQueue.insert( std::make_pair( strip.pivot(), strip.v( i+1 ) ) );
+		ASSERT( ! isFaceExtended( fedge.first ) );
 		Edge mirror_first = T().mirror_edge( strip.e( 0 ) );
+		// std::cout << "[relativeHull2]" 
+		// 	  << " a=" << strip.pivot()->point()
+		// 	  << " b=" << strip.v(i-1)->point()
+		// 	  << " c=" << strip.v(i)->point()
+		// 	  << " d=" << strip.v(i+1)->point() << std::endl;
+		VertexHandle _v0 = strip.v0();
+		VertexHandle _v1 = strip.v( 1 );
+		VertexHandle _vn = strip.vn();
+		VertexHandle _vn1 = strip.v( strip.size() - 2 );
 		_T.flip( fedge.first, fedge.second );
 		if ( strip.size() == 3 ) 
 		  { // last flip made a triangle
 		    Edge nedge = T().mirror_edge( mirror_first );
+		    VertexHandle sv0 = TH.target( nedge );
+		    VertexHandle sv1 = TH.target( Edge( nedge.first, 
+							T().ccw( nedge.second ) ) );
+		    if ( predNotL( sv0 ) ) _vMarked[ sv0 ] = rmark;
+		    if ( predNotL( sv1 ) ) _vMarked[ sv1 ] = rmark;
 		    _vFaces[ nedge.first ] = Extension( nedge.first, 
 							T().ccw( nedge.second ) );
+		    // std::cout << "[relativeHull2] Last flip is a triangle." << std::endl;
 		  }
+		else
+		  {
+		    insertQueue( inQueue, _v0, _v1, predNotL );
+		    insertQueue( inQueue, _vn, _vn1, predNotL );
+		  }
+		// else 
+		//   std::cout << "[relativeHull2] flip, strip size =" << strip.size() << std::endl;
 		changes = true; ++nb_flipped;
 	      }
 	    else // none are flippable. This is a concave/flat piece.
@@ -1203,19 +1269,21 @@ public:
 		Edge fedge = strip.e( 0 );
 		if ( ! isFaceExtended( fedge.first ) )
 		  {
+		    if ( predNotL( strip.v0() ) ) _vMarked[ strip.v0() ] = rmark;
 		    _vFaces[ fedge.first ] = Extension( fedge.first, 
 							T().ccw( fedge.second ) );
 		    for ( unsigned int i = 1; i < strip.size() - 1; ++i ) 
 		      {
-			_vMarked[ strip.v( i ) ] = mark;
+			_vMarked[ strip.v( i ) ] = rmark;
 			fedge = strip.e( i );
 			ASSERT( ! isFaceExtended( fedge.first ) );
 			_vFaces[ fedge.first ] = Extension( fedge.first, 
 							    fedge.second,
 							    T().ccw( fedge.second ) );
-			DGtal::trace.info() << "- mark " << TH.target( fedge )->point()
-					    << " source=" << TH.source( fedge )->point() << std::endl;
+			// DGtal::trace.info() << "- mark " << TH.target( fedge )->point()
+			// 		    << " source=" << TH.source( fedge )->point() << std::endl;
 		      }
+		    if ( predNotL( strip.vn() ) ) _vMarked[ strip.vn() ] = rmark;
 		    changes = true;
 		  }
 		inQueue.erase( inQueue.begin() );
@@ -1226,6 +1294,7 @@ public:
       }
     ASSERT( inQueue.empty() );
     DGtal::trace.info() << "- Flipped " << nb_flipped << "/" << nb_checked << " edges in a concavity." << std::endl;
+    //if ( nb_flipped == 1 && nb_checked == 2 ) changes = false;
     // DGtal::trace.endBlock();
     return changes;
   }
@@ -2595,6 +2664,7 @@ int main( int argc, char** argv )
     ("blue-mlp,B", po::value< std::vector<int> >(), "View in blue the minimum length polygon (MLP) of the triangulation with label [arg]; may be specified several times on the command line.")
     ("random-inside,r",  po::value<double>()->default_value(1.0), "Specifies the % of inside points that are kept. Simulates a degradation noise." )
     ("random-outside,R",  po::value<double>()->default_value(1.0), "Specifies the % of outside points that are kept. Simulates a degradation noise." )
+    ("remove-concavities,C", "Remove all concavities (useful for computing a DAC that is not the relative hull." )
     ("optimize,O",  "Flips the border so as to optimize its alignment with the mlp." )
     ("relative-hull,H", po::value< std::vector<int> >(), "Computes and visualize the relative hull of label [arg]." )
     ;
@@ -2817,8 +2887,11 @@ int main( int argc, char** argv )
   trace.endBlock();
 
   trace.beginBlock( "Computing Digital Affine Complex." );
-  // dac.removeAllConcavities( 0 );
-  // dac.removeAllConcavities( 1 );
+  if ( vm.count( "remove-concavities" ) )
+    {
+      dac.removeAllConcavities( 0 );
+      dac.removeAllConcavities( 1 );
+    }
   if ( vm.count( "optimize" ) )
     {
       while ( dac.flipBorder( 0 ) ) ;
@@ -2828,16 +2901,24 @@ int main( int argc, char** argv )
       std::vector<int> labels = vm[ "relative-hull" ].as< std::vector<int> >();
       for ( std::vector<int>::const_iterator it = labels.begin(), ite = labels.end(); 
             it != ite; ++it )
-        while ( dac.relativeHull2( *it ) ) 
-          ;
+	{
+	  unsigned int i = 0;
+	  do 
+	    {
+	      viewer.viewRelativeHull( 0 );
+	      viewer.viewTriangulationEdges( -1 );
+	      viewer.viewVertices( -1 );
+	      std::ostringstream sname, snams;
+	      sname << "tmp/dac-rhull-" << *it << "-" << i << ".eps";
+	      snams << "tmp/dac-rhull-" << *it << "-" << i << ".svg";
+	      board.saveEPS( sname.str().c_str() );
+	      board.saveSVG( snams.str().c_str() );
+	      board.clear();
+	      ++i;
+	    }
+	  while ( dac.relativeHull2( *it ) );
+	}
     }
-  // bool rc;
-  // do {
-  //   rc = dac.removeConcavities( 0 );
-  // } while ( rc );
-  // do {
-  //   rc = dac.removeConcavities( 1 );
-  // } while ( rc );
   trace.endBlock();    
 
   trace.beginBlock( "Visualizing Digital Affine Complex." );
@@ -2894,13 +2975,15 @@ int main( int argc, char** argv )
       viewer.viewVertices( *it );
   }
 
-  DPoint a( 25, 1 );
-  std::string specificStyle = a.className() + "/Paving";
-  board << DGtal::SetMode( a.className(), "Paving" );
-  board << DGtal::CustomStyle( specificStyle, 
-                               new DGtal::CustomColors( Color::Black, Color::Magenta ) )
-	<< a
-	<< DPoint( 24, 7 ) ;
+  // DPoint a( 154, 105 );
+  // std::string specificStyle = a.className() + "/Paving";
+  // board << DGtal::SetMode( a.className(), "Paving" );
+  // board << DGtal::CustomStyle( specificStyle, 
+  //                              new DGtal::CustomColors( Color::Black, Color::Magenta ) )
+  // 	<< a
+  // 	<< DPoint( 153, 107 )
+  // 	<< DPoint( 156, 100 )
+  // 	<< DPoint( 157, 98 );
   board.saveSVG("dac.svg");
   board.saveEPS("dac.eps");
   board.clear();
