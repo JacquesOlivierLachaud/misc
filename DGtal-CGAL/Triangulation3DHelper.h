@@ -71,7 +71,7 @@ namespace DGtal
     typedef typename Triangulation3::Facet_circulator        FacetCirculator;
     typedef typename Triangulation3::Cell_handle             CellHandle;
     typedef typename Triangulation3::Point                   Point;
-    typedef typename Triangulation3::Triangle_3              Triangle;
+    typedef typename Triangulation3::Triangle                Triangle;
     typedef typename Kernel3::Plane_3                        Plane;
     typedef typename Kernel3::Vector_3                       Vector;
     typedef typename Kernel3::FT                             Coordinate;
