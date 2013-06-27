@@ -168,16 +168,6 @@ namespace DGtal
     
     /**
        @param[in] an index between 0 and umbrella.size()-1.
-       @return the \a i-th vertex of umbrella.
-    */
-    inline VertexHandle v( unsigned int i ) const
-    {
-      ASSERT( isValid() && ( i < _umbrella.size() ) );
-      return thirdVertex( _edge_umbrella.at( i ), _umbrella.at( i ) );
-    }
-
-    /**
-       @param[in] an index between 0 and umbrella.size()-1.
        @return the i-th facet of umbrella.
     */
     inline Edge f( unsigned int i ) const
@@ -196,6 +186,17 @@ namespace DGtal
       ASSERT( isValid() && ( i < _umbrella.size() ) );
       return _edge_umbrella.at( i );
     }
+
+    /**
+       @param[in] an index between 0 and umbrella.size()-1.
+       @return the \a i-th vertex of umbrella.
+    */
+    inline VertexHandle v( unsigned int i ) const
+    {
+      ASSERT( isValid() && ( i < _umbrella.size() ) );
+      return thirdVertex( pivot( i ), f( i ) );
+    }
+
 
     /**
        @return the first vertex of the pivot.
@@ -217,15 +218,10 @@ namespace DGtal
       return e.first.vertex( e.third );
     }
 
-    inline int indexV3( unsigned int i ) const
+    inline int indexV( unsigned int i ) const
     {
       ASSERT( isValid() && ( i < _umbrella.size() ) );
       return TH.indexThirdVertex( pivot( i ), f( i ) );
-    }
-    inline VertexHandle v3( unsigned int i ) const
-    {
-      ASSERT( isValid() && ( i < _umbrella.size() ) );
-      return TH.thirdVertex( pivot( i ), f( i ) );
     }
 
     /// first vertex of umbrella, equivalent to v( 0 )
@@ -315,15 +311,15 @@ namespace DGtal
 	  CellHandle c1 = pivot( 1 ).first.neighbor( pivot( 1 ).second );
 	  if ( c0 == c1 )
 	    {
-	      e = Edge( pivot( 1 ).first, pivot( 1 ).third, indexV3( 1 ) );
-	      return TH.isConvexEdge3( e, pivotV0(), v3( 0 ), v3( 2 ) );
+	      e = Edge( pivot( 1 ).first, pivot( 1 ).third, indexV( 1 ) );
+	      return TH.isConvexEdge3( e, pivotV0(), v( 0 ), v( 2 ) );
 	    }
 	  c0 = pivot( 0 ).first.neighbor( pivot( 0 ).third );
 	  c1 = pivot( 1 ).first.neighbor( pivot( 1 ).third );
 	  if ( c0 == c1 )
 	    {
-	      e = Edge( pivot( 1 ).first, pivot( 1 ).second, indexV3( 1 ) );
-	      return TH.isConvexEdge3( e, pivotV1(), v3( 2 ), v3( 0 ) );
+	      e = Edge( pivot( 1 ).first, pivot( 1 ).second, indexV( 1 ) );
+	      return TH.isConvexEdge3( e, pivotV1(), v( 2 ), v( 0 ) );
 	    }
 	}
       return false;
