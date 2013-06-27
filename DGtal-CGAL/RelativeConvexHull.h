@@ -350,6 +350,8 @@ namespace DGtal
                             TH.complementIn0123( indices[ 0 ], indices[ 1 ], indices[ 2 ] ) );
               Strip strip( T() );
               strip.init( *this, predicate, pivot, border );
+              DGtal::trace.info() << "- strip s=" << strip.size() << " a=" << strip.angle()
+                                  << std::endl;
               if ( strip.isConcave() ) 
                 inQueue.insert( BorderFacet( v[ l ], v[ (l+1)%3 ], v[ (l+2)%3 ] ) );
             }
