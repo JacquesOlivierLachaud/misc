@@ -120,20 +120,20 @@ namespace DGtal
       ASSERT( pivot.first == border.first );
       ASSERT( pivot.second != border.second );
       ASSERT( pivot.third != border.second );
-      ASSERT( ! predicate( pivot.first.vertex( pivot.second ) ) );
-      ASSERT( ! predicate( pivot.first.vertex( pivot.third ) ) );
+      ASSERT( ! predicate( pivot.first->vertex( pivot.second ) ) );
+      ASSERT( ! predicate( pivot.first->vertex( pivot.third ) ) );
       ASSERT( predicate( TH.thirdVertex( pivot, border ) ) );
 
       _loop = false;
       Edge e = pivot;
       Facet f = border;
       while ( (! _loop) && predicate( TH.thirdVertex( e, f ) )
-	      && ( ! dac.isCellExtended( f.first.neighbor( f.second ) ) ) )
+	      && ( ! dac.isCellExtended( f.first->neighbor( f.second ) ) ) )
       {
 	TH.previousAroundEdge( e, f );
 	if ( f == border ) _loop = true; 
-	ASSERT( e.first.vertex( e.second ) == pivot.first.vertex( pivot.second ) );
-	ASSERT( e.first.vertex( e.third ) == pivot.first.vertex( pivot.third ) );
+	ASSERT( e.first->vertex( e.second ) == pivot.first->vertex( pivot.second ) );
+	ASSERT( e.first->vertex( e.third ) == pivot.first->vertex( pivot.third ) );
       }
       if ( _loop ) return; // umbrella is the whole neighborhood.
       while ( ! dac.isCellExtended( f.first ) ) // cell has already been extended.
@@ -141,8 +141,8 @@ namespace DGtal
 	  _edge_umbrella.push_back( e );
 	  _umbrella.push_back( f );
 	  TH.nextAroundEdge( e, f );
-	  ASSERT( e.first.vertex( e.second ) == pivot.first.vertex( pivot.second ) );
-	  ASSERT( e.first.vertex( e.third ) == pivot.first.vertex( pivot.third ) );
+	  ASSERT( e.first->vertex( e.second ) == pivot.first->vertex( pivot.second ) );
+	  ASSERT( e.first->vertex( e.third ) == pivot.first->vertex( pivot.third ) );
 	  if ( ! predicate( TH.thirdVertex( e, f ) ) ) break;
       }
       _edge_umbrella.push_back( e );
@@ -170,7 +170,7 @@ namespace DGtal
        @param[in] an index between 0 and umbrella.size()-1.
        @return the i-th facet of umbrella.
     */
-    inline Edge f( unsigned int i ) const
+    inline Facet f( unsigned int i ) const
     {
       ASSERT( isValid() && ( i < _umbrella.size() ) );
       return _umbrella.at( i );
@@ -194,7 +194,7 @@ namespace DGtal
     inline VertexHandle v( unsigned int i ) const
     {
       ASSERT( isValid() && ( i < _umbrella.size() ) );
-      return thirdVertex( pivot( i ), f( i ) );
+      return TH.thirdVertex( pivot( i ), f( i ) );
     }
 
 
@@ -205,7 +205,7 @@ namespace DGtal
     {
       ASSERT( isValid() );
       Edge e = pivot( 0 );
-      return e.first.vertex( e.second );
+      return e.first->vertex( e.second );
     }
 
     /**
@@ -215,7 +215,7 @@ namespace DGtal
     {
       ASSERT( isValid() );
       Edge e = pivot( 0 );
-      return e.first.vertex( e.third );
+      return e.first->vertex( e.third );
     }
 
     inline int indexV( unsigned int i ) const
@@ -307,15 +307,15 @@ namespace DGtal
     {
       if ( size() == 3 )
 	{
-	  CellHandle c0 = pivot( 0 ).first.neighbor( pivot( 0 ).second );
-	  CellHandle c1 = pivot( 1 ).first.neighbor( pivot( 1 ).second );
+	  CellHandle c0 = pivot( 0 ).first->neighbor( pivot( 0 ).second );
+	  CellHandle c1 = pivot( 1 ).first->neighbor( pivot( 1 ).second );
 	  if ( c0 == c1 )
 	    {
 	      e = Edge( pivot( 1 ).first, pivot( 1 ).third, indexV( 1 ) );
 	      return TH.isConvexEdge3( e, pivotV0(), v( 0 ), v( 2 ) );
 	    }
-	  c0 = pivot( 0 ).first.neighbor( pivot( 0 ).third );
-	  c1 = pivot( 1 ).first.neighbor( pivot( 1 ).third );
+	  c0 = pivot( 0 ).first->neighbor( pivot( 0 ).third );
+	  c1 = pivot( 1 ).first->neighbor( pivot( 1 ).third );
 	  if ( c0 == c1 )
 	    {
 	      e = Edge( pivot( 1 ).first, pivot( 1 ).second, indexV( 1 ) );

@@ -200,6 +200,16 @@ int main (int argc, char** argv )
   rch.add( toCGAL, digital_outside_points.begin(), digital_outside_points.end(), 0, 1 );
   trace.endBlock();
 
+  trace.beginBlock("Computing the relative convex hull.");
+  unsigned int i = 0;
+  do 
+    {
+      trace.info() << "--------- step " << i << " ----------" << std::endl;
+      ++i;
+    }
+  while ( rch.relativeHull( 0 ) );
+  trace.endBlock();
+
   // start viewer
   int view = vm["view"].as<int>();
   Viewer3D viewerRCH;

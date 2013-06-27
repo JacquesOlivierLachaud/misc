@@ -175,7 +175,7 @@ namespace DGtal
 
     inline VertexHandle thirdVertex( const Edge & e, const Facet & f ) const
     {
-      return f.first.vertex( indexThirdVertex( e, f ) );
+      return f.first->vertex( indexThirdVertex( e, f ) );
     }
     
     /**
@@ -191,11 +191,11 @@ namespace DGtal
       ASSERT( e.first == f.first );
       int l = indexThirdVertex( e, f );
       CellHandle c = e.first;
-      CellHandle nc = c.neighbor( l ); // next cell
+      CellHandle nc = c->neighbor( l ); // next cell
       f.first = nc;
       f.second = T().mirror_index( c, l );
-      int i = nc.index( c.vertex( i ) );
-      int j = nc.index( c.vertex( j ) );
+      int i = nc->index( c->vertex( i ) );
+      int j = nc->index( c->vertex( j ) );
       e.first = nc;
       e.second = i;
       e.third = j;
@@ -214,11 +214,11 @@ namespace DGtal
       ASSERT( e.first == f.first );
       int l = f.second;
       CellHandle c = e.first;
-      CellHandle pc = c.neighbor( l ); // previous cell
+      CellHandle pc = c->neighbor( l ); // previous cell
       f.first = pc;
       f.second = T().mirror_index( c, l );
-      int i = pc.index( c.vertex( i ) );
-      int j = pc.index( c.vertex( j ) );
+      int i = pc->index( c->vertex( i ) );
+      int j = pc->index( c->vertex( j ) );
       e.first = pc;
       e.second = i;
       e.third = j;
@@ -247,11 +247,11 @@ namespace DGtal
     {
       ASSERT( ! T().is_infinite( f.first ) );
       ASSERT( ! T().is_infinite( T().mirror_facet( f ).first ) );
-      Point e0 = f.first.vertex( f.second )->point();       // top
-      Point f0 = f.first.vertex( (f.second+1)%4 )->point(); // facet p
-      Point f1 = f.first.vertex( (f.second+2)%4 )->point(); // facet q
-      Point f2 = f.first.vertex( (f.second+3)%4 )->point(); // facet r, (p,q,r) ccw from apex
-      Point e1 = T().mirror_vertex( f )->point();           // bottom
+      Point e0 = f.first->vertex( f.second )->point();       // top
+      Point f0 = f.first->vertex( (f.second+1)%4 )->point(); // facet p
+      Point f1 = f.first->vertex( (f.second+2)%4 )->point(); // facet q
+      Point f2 = f.first->vertex( (f.second+3)%4 )->point(); // facet r, (p,q,r) ccw from apex
+      Point e1 = T().mirror_vertex( f.first, f.second )->point();           // bottom
       ASSERT( Plane( f0, f1, f2 ).has_on_positive_side( e0 ) );
       ASSERT( Plane( f0, f1, f2 ).has_on_negative_side( e1 ) );
       return Plane( f0, f1, e1 ).has_on_positive_side( e0 )
