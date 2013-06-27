@@ -177,17 +177,14 @@ int main (int argc, char** argv )
   if ( ok != 0 ) return ok; // error.
 
   trace.beginBlock("Constructing the set of points");
-  std::vector<PointZ3> digital_points;
-  int geometry = vm["geometry"].as<int>();
-  if ( geometry == 0 )
-    getInnerVoxelCoordinates( digital_points, ks, boundary.begin(), boundary.end() );
-  else if ( geometry == 1 )
-    getInnerAndOuterVoxelCoordinates( digital_points, ks, boundary.begin(), boundary.end() );
-  else if ( geometry == 2 )
-    getPointelCoordinates( digital_points, ks, boundary.begin(), boundary.end() );
+  std::vector<PointZ3> digital_inside_points;
+  std::vector<PointZ3> digital_outside_points;
 
+  getInnerAndOuterVoxelCoordinates( digital_inside_points, digital_outside_points,
+                                    ks, boundary.begin(), boundary.end() );
   trace.beginBlock("Shuffle points.");
-  random_shuffle( digital_points.begin(), digital_points.end() );
+  random_shuffle( digital_inside_points.begin(), digital_inside_points.end() );
+  random_shuffle( digital_outside_points.begin(), digital_outside_points.end() );
   trace.endBlock();
   trace.endBlock();
 
@@ -195,9 +192,12 @@ int main (int argc, char** argv )
   ToCGAL toCGAL;
   ToDGtal toDGtal;
   RCH rch;
-  double setsize = (double) digital_points.size()-1;
+  double setsize = (double) digital_inside_points.size()-1;
   trace.info() << "Vertices to process: " << setsize << std::endl;
-  rch.add( toCGAL, digital_points.begin(), digital_points.end(), 0, 0 );
+  rch.add( toCGAL, digital_inside_points.begin(), digital_inside_points.end(), 1, 0 );
+  double setsize2 = (double) digital_outside_points.size()-1;
+  trace.info() << "Vertices to process: " << setsize2 << std::endl;
+  rch.add( toCGAL, digital_outside_points.begin(), digital_outside_points.end(), 0, 1 );
   trace.endBlock();
 
   // start viewer
