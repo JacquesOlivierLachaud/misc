@@ -194,8 +194,8 @@ namespace DGtal
       CellHandle nc = c->neighbor( l ); // next cell
       f.first = nc;
       f.second = T().mirror_index( c, l );
-      int i = nc->index( c->vertex( i ) );
-      int j = nc->index( c->vertex( j ) );
+      int i = nc->index( c->vertex( e.second ) );
+      int j = nc->index( c->vertex( e.third ) );
       e.first = nc;
       e.second = i;
       e.third = j;
@@ -217,8 +217,8 @@ namespace DGtal
       CellHandle pc = c->neighbor( l ); // previous cell
       f.first = pc;
       f.second = T().mirror_index( c, l );
-      int i = pc->index( c->vertex( i ) );
-      int j = pc->index( c->vertex( j ) );
+      int i = pc->index( c->vertex( e.second ) );
+      int j = pc->index( c->vertex( e.third ) );
       e.first = pc;
       e.second = i;
       e.third = j;
