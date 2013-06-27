@@ -62,7 +62,7 @@ inline
 void
 DGtal::SimplicialStrip3D<TTriangulation3, TKernel3>::selfDisplay ( std::ostream & out ) const
 {
-  out << "[SimplicialStrip3D]";
+  out << "[SimplicialStrip3D] s=" << size() << " a=" << angle() << std::endl;
 }
 
 
