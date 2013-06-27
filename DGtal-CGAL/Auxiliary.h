@@ -259,6 +259,36 @@ namespace DGtal
 
   template <typename KSpace, typename SCellSetConstIterator>
   int
+  getInnerAndOuterVoxelCoordinates( std::vector< typename KSpace::Point > & v_inside_points,
+                                    std::vector< typename KSpace::Point > & v_outside_points,
+				    const KSpace & ks,
+				    SCellSetConstIterator it, SCellSetConstIterator ite )
+  {
+    typedef typename KSpace::Cell Cell;
+    trace.beginBlock("Getting inner and outer voxel coordinates.");
+    std::set<Cell> inside_points;
+    std::set<Cell> outside_points;
+    for( ; it != ite; ++it )
+      { 
+	// Get inner point.
+	inside_points.insert( ks.unsigns( ks.sDirectIncident( *it, ks.sOrthDir( *it ) ) ) );
+	// Get Outer point.
+	outside_points.insert( ks.unsigns( ks.sIndirectIncident( *it, ks.sOrthDir( *it ) ) ) );
+      }
+    for ( typename std::set<Cell>::const_iterator itS = inside_points.begin(), 
+            itSEnd = inside_points.end();
+	  itS != itSEnd; ++itS )
+      v_inside_points.push_back( ks.uCoords( *itS ) );
+    for ( typename std::set<Cell>::const_iterator itS = outside_points.begin(), 
+            itSEnd = outside_points.end();
+	  itS != itSEnd; ++itS )
+      v_outside_points.push_back( ks.uCoords( *itS ) );
+    trace.endBlock();
+    return 0;
+  }
+
+  template <typename KSpace, typename SCellSetConstIterator>
+  int
   getPointelCoordinates( std::vector< typename KSpace::Point > & points,
 			 const KSpace & ks,
 			 SCellSetConstIterator it, SCellSetConstIterator ite )
