@@ -1032,6 +1032,12 @@ public:
      This procedure removes concavities around vertices with label \a
      l. Complexity is O(e), where e is the number of edges.
 
+     Note: It is in fact deprecated. This procedure works but build an
+     affine complex that uses only the inside input points. The
+     problem is that there are several complexes that share the same
+     properties. Method relativeHull2 should be preferred in most
+     cases.
+
      @param[in] any label, as given with method \ref add.
      @return 'true' if some concavity was flipped, 'false' when no concavity was found.
   */
@@ -1137,6 +1143,9 @@ public:
     return changes;
   }
 
+  /**
+     Used by relativeHull2 to insert candidate concavities into the Queue.
+  */
   void insertQueue( std::set< std::pair< VertexHandle, VertexHandle > > & inQueue,
 		    VertexHandle v0, VertexHandle v1,
 		    const CheckVertexLabelingInequality & predicate ) const
@@ -1155,9 +1164,40 @@ public:
   }
 
   /**
+     Used by relativeHull2 to insert candidate concavities into the Queue.
+  */
+  void insertQueue( std::set< std::pair< VertexHandle, VertexHandle > > & inQueue,
+		    const Edge & e,
+		    const CheckVertexLabelingInequality & predicate ) const
+  {
+    VertexHandle v0 = TH.source( e );
+    VertexHandle v1 = TH.target( e );
+    if ( ( ! predicate( v0 ) ) && predicate( v1 ) )
+      {
+	Strip strip( T() );
+	strip.init( *this, predicate, e );
+	if ( strip.isConcave() ) 
+	  inQueue.insert( std::make_pair( v0, v1 ) );
+      }
+    else if ( ( ! predicate( v1 ) ) && predicate( v0 ) )
+      {
+	Strip strip( T() );
+	strip.init( *this, predicate, T().mirror_edge( e ) );
+	if ( strip.isConcave() ) 
+	  inQueue.insert( std::make_pair( v1, v0 ) );
+      }
+  }
+
+  /**
      This procedure computes the relative hull with the same principle
      as removeConcavities. around vertices with label \a l. Complexity
      is O(e), where e is the number of edges.
+
+     This is a kind of simplest algorithm, where we do not try to sort
+     concavities, or push again edges around
+     concavities. Surprisingly, it is hard to do better without
+     complexifying a lot the way concavities (v0,v1) are pushed into
+     the queue.
 
      @param[in] any label, as given with method \ref add.
      @return 'true' if some concavity was flipped, 'false' when no concavity was found.
@@ -1175,24 +1215,7 @@ public:
       {
         Edge e = *it;
         if ( T().is_constrained( e ) ) continue;
-        VertexHandle v0 = TH.source( e );
-        VertexHandle v1 = TH.target( e );
-        Label l0 = label( v0 );
-        Label l1 = label( v1 );
-        if ( ( l0 == l ) && predNotL( v1 ) && ( l1 != INVALID ) )
-	  // && ( _vMarked.find( v1 ) == _vMarked.end() ) )
-          {
-	    strip.init( *this, predNotL, e );
-	    if ( strip.isConcave() ) 
-	      inQueue.insert( std::make_pair( v0, v1 ) );
-          }
-        else if ( ( l1 == l ) && predNotL( v0 ) && ( l0 != INVALID ) )
-	  // && ( _vMarked.find( v0 ) == _vMarked.end() ) )
-          {
-	    strip.init( *this, predNotL, T().mirror_edge( e ) );
-	    if ( strip.isConcave() ) 
-	      inQueue.insert( std::make_pair( v1, v0 ) );
-          }
+	insertQueue( inQueue, e, predNotL );
       }
     DGtal::trace.info() << "- Found " << inQueue.size() << " potential concavities." 
 			<< std::endl;
@@ -1233,35 +1256,19 @@ public:
 		ASSERT( ! T().is_constrained( fedge ) );
 		ASSERT( ! isFaceExtended( fedge.first ) );
 		Edge mirror_first = T().mirror_edge( strip.e( 0 ) );
-		// std::cout << "[relativeHull2]" 
-		// 	  << " a=" << strip.pivot()->point()
-		// 	  << " b=" << strip.v(i-1)->point()
-		// 	  << " c=" << strip.v(i)->point()
-		// 	  << " d=" << strip.v(i+1)->point() << std::endl;
-		VertexHandle _v0 = strip.v0();
-		VertexHandle _v1 = strip.v( 1 );
-		VertexHandle _vn = strip.vn();
-		VertexHandle _vn1 = strip.v( strip.size() - 2 );
 		_T.flip( fedge.first, fedge.second );
 		if ( strip.size() == 3 ) 
 		  { // last flip made a triangle
 		    Edge nedge = T().mirror_edge( mirror_first );
-		    VertexHandle sv0 = TH.target( nedge );
-		    VertexHandle sv1 = TH.target( Edge( nedge.first, 
-							T().ccw( nedge.second ) ) );
-		    if ( predNotL( sv0 ) ) _vMarked[ sv0 ] = rmark;
-		    if ( predNotL( sv1 ) ) _vMarked[ sv1 ] = rmark;
+		    // VertexHandle sv0 = TH.target( nedge );
+		    // VertexHandle sv1 = TH.target( Edge( nedge.first, 
+		    // 					T().ccw( nedge.second ) ) );
+		    // if ( predNotL( sv0 ) ) _vMarked[ sv0 ] = rmark;
+		    // if ( predNotL( sv1 ) ) _vMarked[ sv1 ] = rmark;
 		    _vFaces[ nedge.first ] = Extension( nedge.first, 
 							T().ccw( nedge.second ) );
-		    // std::cout << "[relativeHull2] Last flip is a triangle." << std::endl;
+		    inQueue.erase( inQueue.begin() );
 		  }
-		else
-		  {
-		    insertQueue( inQueue, _v0, _v1, predNotL );
-		    insertQueue( inQueue, _vn, _vn1, predNotL );
-		  }
-		// else 
-		//   std::cout << "[relativeHull2] flip, strip size =" << strip.size() << std::endl;
 		changes = true; ++nb_flipped;
 	      }
 	    else // none are flippable. This is a concave/flat piece.
@@ -1280,8 +1287,6 @@ public:
 			_vFaces[ fedge.first ] = Extension( fedge.first, 
 							    fedge.second,
 							    T().ccw( fedge.second ) );
-			// DGtal::trace.info() << "- mark " << TH.target( fedge )->point()
-			// 		    << " source=" << TH.source( fedge )->point() << std::endl;
 		      }
 		    if ( predNotL( strip.vn() ) ) _vMarked[ strip.vn() ] = rmark;
 		    changes = true;
@@ -1305,11 +1310,17 @@ public:
      as removeConcavities. around vertices with label \a l. Complexity
      is O(e), where e is the number of edges.
 
+     @deprecated It is only an experimental first version of relative
+     hull. User should call @ref relativeHull. Its problem is that it marks
+     (outside) vertices when computing the relative hull, while in
+     fact faces should be marked. 
+
      @param[in] any label, as given with method \ref add.
      @return 'true' if some concavity was flipped, 'false' when no concavity was found.
   */
   bool relativeHull( Label l ) 
   {
+    DGtal::trace.warning() << "[DAC::relativeHull] Deprecated. Use relativeHull2." << std::endl;
     bool changes = false;
     typedef GenericConcavity< CheckVertexLabelingInequalityWhenUnmarked > Concavity;
     std::priority_queue<Concavity> Q;
@@ -2667,6 +2678,7 @@ int main( int argc, char** argv )
     ("remove-concavities,C", "Remove all concavities (useful for computing a DAC that is not the relative hull." )
     ("optimize,O",  "Flips the border so as to optimize its alignment with the mlp." )
     ("relative-hull,H", po::value< std::vector<int> >(), "Computes and visualize the relative hull of label [arg]." )
+    ("output-in-tmp,T", "Outputs intermediate computation of relative hull in directory tmp." )
     ;
   bool parseOK = true;
   po::variables_map vm;
@@ -2905,15 +2917,21 @@ int main( int argc, char** argv )
 	  unsigned int i = 0;
 	  do 
 	    {
-	      viewer.viewRelativeHull( 0 );
-	      viewer.viewTriangulationEdges( -1 );
-	      viewer.viewVertices( -1 );
-	      std::ostringstream sname, snams;
-	      sname << "tmp/dac-rhull-" << *it << "-" << i << ".eps";
-	      snams << "tmp/dac-rhull-" << *it << "-" << i << ".svg";
-	      board.saveEPS( sname.str().c_str() );
-	      board.saveSVG( snams.str().c_str() );
-	      board.clear();
+	      trace.info() << "--------- step " << i << " ----------" << std::endl;
+	      if ( vm.count( "output-in-tmp" ) )
+		{
+		  viewer.viewRelativeHull( 0 );
+		  viewer.viewTriangulationEdges( -1 );
+		  viewer.viewVertices( -1 );
+		  std::ostringstream sname, snams;
+		  sname << "tmp/dac-rhull-" << *it << "-" 
+			<< std::setfill( '0' ) << std::setw( 2 ) << i << ".eps";
+		  snams << "tmp/dac-rhull-" << *it << "-" 
+			<< std::setfill( '0' ) << std::setw( 2 ) << i << ".svg";
+		  board.saveEPS( sname.str().c_str() );
+		  board.saveSVG( snams.str().c_str() );
+		  board.clear();
+		}
 	      ++i;
 	    }
 	  while ( dac.relativeHull2( *it ) );

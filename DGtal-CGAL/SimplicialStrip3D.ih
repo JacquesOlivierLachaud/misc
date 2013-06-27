@@ -1,0 +1,86 @@
+/**
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as
+ *  published by the Free Software Foundation, either version 3 of the
+ *  License, or  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **/
+
+/**
+ * @file SimplicialStrip3D.ih
+ * @author Jacques-Olivier Lachaud (\c jacques-olivier.lachaud@univ-savoie.fr )
+ * Laboratory of Mathematics (CNRS, UMR 5127), University of Savoie, France
+ *
+ * @date 2013/06/27
+ *
+ * Implementation of inline methods defined in SimplicialStrip3D.h
+ *
+ * This file is part of the DGtal library.
+ */
+
+
+//////////////////////////////////////////////////////////////////////////////
+#include <cstdlib>
+//////////////////////////////////////////////////////////////////////////////
+
+template <typename TTriangulation3, typename TKernel3>
+const double DGtal::SimplicialStrip3D<TTriangulation3, TKernel3>::EPSILON = 0.000001;
+
+///////////////////////////////////////////////////////////////////////////////
+// IMPLEMENTATION of inline methods.
+///////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////
+// ----------------------- Standard services ------------------------------
+
+/**
+ * Destructor.
+ */
+template <typename TTriangulation3, typename TKernel3>
+inline
+DGtal::SimplicialStrip3D<TTriangulation3, TKernel3>::~SimplicialStrip3D()
+{
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Interface - public :
+
+/**
+ * Writes/Displays the object on an output stream.
+ * @param out the output stream where the object is written.
+ */
+template <typename TTriangulation3, typename TKernel3>
+inline
+void
+DGtal::SimplicialStrip3D<TTriangulation3, TKernel3>::selfDisplay ( std::ostream & out ) const
+{
+  out << "[SimplicialStrip3D]";
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Implementation of inline functions                                        //
+
+template <typename TTriangulation3, typename TKernel3>
+inline
+std::ostream&
+DGtal::operator<< ( std::ostream & out, 
+		  const SimplicialStrip3D<TTriangulation3, TKernel3> & object )
+{
+  object.selfDisplay( out );
+  return out;
+}
+
+//                                                                           //
+///////////////////////////////////////////////////////////////////////////////
+
+
