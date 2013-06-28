@@ -120,8 +120,8 @@ namespace DGtal
       ASSERT( pivot.first == border.first );
       ASSERT( pivot.second != border.second );
       ASSERT( pivot.third != border.second );
-      ASSERT( ! predicate( pivot.first->vertex( pivot.second ) ) );
-      ASSERT( ! predicate( pivot.first->vertex( pivot.third ) ) );
+      ASSERT( ( ! predicate( pivot.first->vertex( pivot.second ) ) )
+	      || ( ! predicate( pivot.first->vertex( pivot.third ) ) ) );
       ASSERT( predicate( TH.thirdVertex( pivot, border ) ) );
 
       _loop = false;
@@ -130,7 +130,17 @@ namespace DGtal
       while ( (! _loop) && predicate( TH.thirdVertex( e, f ) )
 	      && ( ! dac.isCellExtended( f.first->neighbor( f.second ) ) ) )
       {
+	// DGtal::trace.info() << "[SimplicialStrip3D::init] L1 Facet"
+	// 		    << " [(" << f.first->vertex( (f.second+1)%4 )->point() << ")"
+	// 		    << ",(" << f.first->vertex( (f.second+2)%4 )->point() << ")"
+	// 		    << ",(" << f.first->vertex( (f.second+3)%4 )->point() << ")]" 
+	// 		    << std::endl;
 	TH.previousAroundEdge( e, f );
+	// DGtal::trace.info() << "[SimplicialStrip3D::init] L1 prevF"
+	// 		    << " [(" << f.first->vertex( (f.second+1)%4 )->point() << ")"
+	// 		    << ",(" << f.first->vertex( (f.second+2)%4 )->point() << ")"
+	// 		    << ",(" << f.first->vertex( (f.second+3)%4 )->point() << ")]" 
+	// 		    << std::endl;
 	if ( f == border ) _loop = true; 
 	ASSERT( e.first->vertex( e.second ) == pivot.first->vertex( pivot.second ) );
 	ASSERT( e.first->vertex( e.third ) == pivot.first->vertex( pivot.third ) );
@@ -138,6 +148,11 @@ namespace DGtal
       if ( _loop ) return; // umbrella is the whole neighborhood.
       while ( ! dac.isCellExtended( f.first ) ) // cell has already been extended.
 	{
+	  // DGtal::trace.info() << "[SimplicialStrip3D::init] L2 Facet"
+	  // 		      << " [(" << f.first->vertex( (f.second+1)%4 )->point() << ")"
+	  // 		      << ",(" << f.first->vertex( (f.second+2)%4 )->point() << ")"
+	  // 		      << ",(" << f.first->vertex( (f.second+3)%4 )->point() << ")]" 
+	  // 		      << std::endl;
 	  _edge_umbrella.push_back( e );
 	  _umbrella.push_back( f );
 	  TH.nextAroundEdge( e, f );
@@ -147,6 +162,7 @@ namespace DGtal
       }
       _edge_umbrella.push_back( e );
       _umbrella.push_back( f );
+      // DGtal::trace.info() << *this;
     }
     
     /// @return 'true' iff the strip was initialized. It must have an

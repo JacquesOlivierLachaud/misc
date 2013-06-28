@@ -68,6 +68,7 @@ namespace DGtal
     typedef TTriangulation3                                  Triangulation3;
     typedef TKernel3                                         Kernel3;
     typedef RelativeConvexHull<Triangulation3, Kernel3>      Self;
+    typedef CGAL::Delaunay_triangulation_3<Kernel3>          DelaunayTriangulation3;
     typedef typename Triangulation3::Vertex_handle           VertexHandle;
     typedef typename Triangulation3::Edge                    Edge;
     typedef typename Triangulation3::Facet                   Facet;
@@ -76,6 +77,8 @@ namespace DGtal
     typedef typename Triangulation3::Finite_facets_iterator  FiniteFacetsIterator;
     typedef typename Triangulation3::Triangle                Triangle;
     typedef typename Kernel3::Vector_3                       Vector;
+    typedef typename Kernel3::Line_3                         Line;
+    typedef typename Kernel3::Plane_3                        Plane;
     typedef typename Kernel3::FT                             Coordinate;
     typedef typename Kernel3::FT                             Component;
     typedef int                                              Label;
@@ -176,6 +179,7 @@ namespace DGtal
     void clear()
     {
       _T.clear();
+      _DT.clear();
       _vLabeling.clear();
       _vMarked.clear();
       _cellsExt.clear();
@@ -209,6 +213,15 @@ namespace DGtal
       typename VertexLabeling::const_iterator it = _vMarked.find( v );
       if ( it == _vMarked.end() ) return INVALID;
       return it->second;
+    }
+
+    /**
+       @param v any vertex.
+       @return 'true' iff the mark of this vertex is not INVALID.
+    */
+    inline Label isMarked( VertexHandle v ) const
+    {
+      return mark( v ) != INVALID;
     }
 
     /**
@@ -257,11 +270,17 @@ namespace DGtal
       for ( ; itb != ite; ++itb )
         {
           Point p = f( *itb );
-          VertexHandle v = _T.insert( p );
+          VertexHandle v = _DT.insert( p );
           _vLabeling[ v ] = l;
         }
       // addConstraints0( current );
       // if ( k == 1 ) addConstraints1( current );
+    }
+
+    /// Terminate the point insertion.
+    void terminate() 
+    {
+      _T.swap( _DT );
     }
 
     /**
@@ -275,6 +294,35 @@ namespace DGtal
                && ( label( c->vertex( (i+1)%4 ) ) == l )
                && ( label( c->vertex( (i+2)%4 ) ) == l )
                && ( label( c->vertex( (i+3)%4 ) ) == l ) );
+    }
+
+    /**
+       @return 'true' iff the facet \a f is a boundary facet of label \a l.
+    */
+    bool isFacetOnRelativeBoundary( Facet f, Label l ) const
+    {
+      CellHandle c = f.first;
+      int i = f.second;
+      return ( ( label( c->vertex( i ) ) != l )
+               && ( ( label( c->vertex( (i+1)%4 ) ) == l ) || isMarked( c->vertex( (i+1)%4 ) ) )
+               && ( ( label( c->vertex( (i+2)%4 ) ) == l ) || isMarked( c->vertex( (i+2)%4 ) ) )
+               && ( ( label( c->vertex( (i+3)%4 ) ) == l ) || isMarked( c->vertex( (i+3)%4 ) ) ) );
+    }
+
+    /**
+       @return 'true' iff the facet \a f is a boundary facet of label \a l.
+    */
+    bool isFacetSubdivided( Facet f, Label l ) const
+    {
+      CellHandle c = f.first;
+      int i = f.second;
+      return ( ( label( c->vertex( i ) ) != l )
+               && ( ( label( c->vertex( (i+1)%4 ) ) == l )
+		    || ( label( c->vertex( (i+1)%4 ) ) == 2 ) )
+               && ( ( label( c->vertex( (i+2)%4 ) ) == l )
+		    || ( label( c->vertex( (i+2)%4 ) ) == 2 ) )
+               && ( ( label( c->vertex( (i+3)%4 ) ) == l )
+		    || ( label( c->vertex( (i+3)%4 ) ) == 2 ) ) );
     }
 
     /**
@@ -339,6 +387,7 @@ namespace DGtal
         }
       for ( unsigned int l = 0; l < 3; ++l ) 
         {
+          // if ( ( pred_v[ (l+2)%3 ] && ( ! pred_v[ l ] ) && ( ! pred_v[ (l+1)%3 ] ) ) )
           if ( pred_v[ (l+2)%3 ] 
                && ( ( ( ! pred_v[ l ] ) && ( ( ! pred_v[ (l+1)%3 ] )
                                              || mark_v[ (l+1)%3 ] ) )
@@ -350,8 +399,8 @@ namespace DGtal
                             TH.complementIn0123( indices[ 0 ], indices[ 1 ], indices[ 2 ] ) );
               Strip strip( T() );
               strip.init( *this, predicate, pivot, border );
-              DGtal::trace.info() << "- strip s=" << strip.size() << " a=" << strip.angle()
-                                  << std::endl;
+              // DGtal::trace.info() << "- strip s=" << strip.size() << " a=" << strip.angle()
+              //                     << std::endl;
               if ( strip.isConcave() ) 
                 inQueue.insert( BorderFacet( v[ l ], v[ (l+1)%3 ], v[ (l+2)%3 ] ) );
             }
@@ -393,7 +442,11 @@ namespace DGtal
       // DGtal::trace.endBlock();
       // DGtal::trace.beginBlock( "Flipping concavities" );
       unsigned int nb_checked = 0;
-      unsigned int nb_flipped = 0;
+      unsigned int nb_flipped3_2 = 0;
+      unsigned int nb_flipped2_3 = 0;
+      unsigned int nb_simple = 0;
+      unsigned int nb_concave = 0;
+      unsigned int nb_new = 0;
       Edge pivot;
       Facet border;
       CellHandle c;
@@ -407,8 +460,12 @@ namespace DGtal
           ++nb_checked;
           if ( nb_checked % 1000 == 0 ) 
             DGtal::trace.info() << "- Queue=" << inQueue.size()
-                                << ", flipped " << nb_flipped << "/" << nb_checked 
-                                << " edges in a concavity." << std::endl;
+				<< ", flipped 2->3=" << nb_flipped2_3
+				<< ", 3->2=" << nb_flipped3_2
+				<< ", ccv=" << nb_concave
+				<< ", simple=" << nb_simple
+				<< ", new=" << nb_new
+				<< " / " << nb_checked << " concave facets." << std::endl;
           if ( ! T().is_facet( v0, v1, ve, c, i, j, k ) )
             {
               inQueue.erase( inQueue.begin() );
@@ -420,12 +477,14 @@ namespace DGtal
           ASSERT( strip.isValid() );
           if ( strip.isConcave() ) 
             {
+	      // DGtal::trace.info() << "Ccv strip " << strip << std::endl;
               Edge e;
               unsigned int i;
               if ( strip.checkSimpleCase() )
                 {
                   _cellsExt[ strip.f( 0 ).first ] = Extension( strip.f( 0 ).first );
                   inQueue.erase( inQueue.begin() );
+		  changes = true; ++nb_simple;
                 }
               else if ( strip.checkFlippableEdge( e ) )
                 {
@@ -435,6 +494,7 @@ namespace DGtal
                                          << std::endl;
                   // the created inside cell will be added at next iteration with checkSimpleCase.
                   inQueue.erase( inQueue.begin() );
+		  changes = true; ++nb_flipped3_2;
                 }
               else if ( ( i = strip.getFlippableFacetIndex() ) != strip.size() )
                 { // at least one facet is flippable.
@@ -451,33 +511,61 @@ namespace DGtal
                       _cellsExt[ nfacet.first ] = Extension( nfacet.first );
                       inQueue.erase( inQueue.begin() );
                     }
-                  changes = true; ++nb_flipped;
+                  changes = true; ++nb_flipped2_3;
                 }
-              else // none are flippable. This is a concave/flat piece.
-                {
-                  Facet facet = strip.f( 0 );
-                  if ( ! isCellExtended( facet.first ) )
-                    {
-                      if ( predNotL( strip.v0() ) ) _vMarked[ strip.v0() ] = rmark;
-                      _cellsExt[ facet.first ] = Extension( facet.first );
-                      for ( unsigned int i = 1; i < strip.size() - 1; ++i ) 
-                        {
-                          _vMarked[ strip.v( i ) ] = rmark;
-                          facet = strip.f( i );
-                          ASSERT( ! isCellExtended( facet.first ) );
-                          _cellsExt[ facet.first ] = Extension( facet.first );
-                        }
-                      if ( predNotL( strip.vn() ) ) _vMarked[ strip.vn() ] = rmark;
-                      changes = true;
-                    }
-                  inQueue.erase( inQueue.begin() );
-                }
+              else // none are flippable. Check is their a flat face.
+		{
+		  Edge e;
+		  if ( ( strip.size() == 3 )
+		       && TH.isFlatConvexFacet( strip.f( 1 ), e ) )
+		    {
+		      Point v0 = strip.v( 2 )->point();
+		      Point v1 = strip.v( 0 )->point();
+		      Point mid = 
+			TH.intersect( T().triangle( strip.f( 1 ) ).supporting_plane(),
+				      Line( v0, v1 ) );
+		      VertexHandle nv = _T.insert_in_edge( mid, e );
+		      // _vMarked[ nv ] = rmark;
+		      DGtal::trace.info() << "- Added point " << mid 
+					  << " (" << nv->point() << ")" << std::endl;
+		      _vLabeling[ nv ] = l;
+		      changes = true; ++nb_new;
+		      inQueue.erase( inQueue.begin() );
+		    }
+		  else
+		    { // This is a concave piece.
+		      for ( unsigned int i = 1; i < strip.size() - 1; ++i ) 
+			{
+			  if ( TH.isConcaveFacet( strip.pivot( i ), strip.f( i ),
+						  strip.v0(), strip.vn() ) 
+			       && TH.isConcaveFacet( strip.pivot( i ), strip.f( i ),
+						     strip.v( i - 1 ), strip.v( i + 1 ) ) )
+			    {
+			      Facet facet = strip.f( i - 1 );
+			      if ( ! isCellExtended( facet.first ) )
+				_cellsExt[ facet.first ] = Extension( facet.first );
+			      facet = strip.f( i );
+			      if ( ! isCellExtended( facet.first ) )
+				_cellsExt[ facet.first ] = Extension( facet.first );
+			      if ( predNotL( strip.v( i ) ) )
+				_vMarked[ strip.v( i ) ] = rmark;
+			      changes = true; ++nb_concave;
+			    }
+			}
+		      inQueue.erase( inQueue.begin() );
+		    }
+		}
             }
           else
             inQueue.erase( inQueue.begin() );
         }
       ASSERT( inQueue.empty() );
-      DGtal::trace.info() << "- Flipped " << nb_flipped << "/" << nb_checked << " edges in a concavity." << std::endl;
+      DGtal::trace.info() << "- Flipped 2->3=" << nb_flipped2_3
+			  << ", 3->2=" << nb_flipped3_2
+			  << ", ccv=" << nb_concave
+			  << ", simple=" << nb_simple
+			  << ", new=" << nb_new
+			  << " / " << nb_checked << " concave facets." << std::endl;
       //if ( nb_flipped == 1 && nb_checked == 2 ) changes = false;
       // DGtal::trace.endBlock();
       return changes;
@@ -500,6 +588,8 @@ namespace DGtal
 
     // ------------------------- Protected Datas ------------------------------
   private:
+    /// The initial Delaunauy triangulation.
+    DelaunayTriangulation3 _DT;
     /// The current triangulation.
     Triangulation3 _T;
     /// A mapping VertexHandle -> Label that stores for each vertex to which set it belongs.

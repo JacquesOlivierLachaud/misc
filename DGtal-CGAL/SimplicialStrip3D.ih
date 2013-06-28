@@ -32,7 +32,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 template <typename TTriangulation3, typename TKernel3>
-const double DGtal::SimplicialStrip3D<TTriangulation3, TKernel3>::EPSILON = 0.000001;
+const double DGtal::SimplicialStrip3D<TTriangulation3, TKernel3>::EPSILON = 0.0001;
 
 ///////////////////////////////////////////////////////////////////////////////
 // IMPLEMENTATION of inline methods.
@@ -62,7 +62,7 @@ inline
 void
 DGtal::SimplicialStrip3D<TTriangulation3, TKernel3>::selfDisplay ( std::ostream & out ) const
 {
-  out << "[SimplicialStrip3D] s=" << size() << " a=" << angle() << std::endl;
+  out << "[SimplicialStrip3D] L=" << isLoop() << " s=" << size() << " a=" << angle() << std::endl;
 }
 
 
