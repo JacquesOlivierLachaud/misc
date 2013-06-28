@@ -41,6 +41,7 @@
 //////////////////////////////////////////////////////////////////////////////
 // Inclusions
 #include <iostream>
+#include <CGAL/intersections.h>
 #include "DGtal/base/Common.h"
 #include "DGtal/base/ConstAlias.h"
 //////////////////////////////////////////////////////////////////////////////
@@ -73,6 +74,7 @@ namespace DGtal
     typedef typename Triangulation3::Point                   Point;
     typedef typename Triangulation3::Triangle                Triangle;
     typedef typename Kernel3::Plane_3                        Plane;
+    typedef typename Kernel3::Line_3                         Line;
     typedef typename Kernel3::Vector_3                       Vector;
     typedef typename Kernel3::FT                             Coordinate;
     typedef typename Kernel3::FT                             Component;
@@ -123,7 +125,9 @@ namespace DGtal
       ASSERT( (0 <= i) && (i <= 3) );
       ASSERT( (0 <= j) && (j <= 3) );
       ASSERT( (0 <= k) && (k <= 3) );
-      return 6 - (i+j+k);
+      int l = 6 - (i+j+k);
+      ASSERT( ( l != i ) && ( l != j ) && ( l != k ) );
+      return l;
     }
 
     std::pair<int,int> complementIn0123( int i, int j ) const
@@ -133,27 +137,28 @@ namespace DGtal
 	case 1: return std::make_pair( 2, 3 );
 	case 2: return std::make_pair( 1, 3 );
 	case 3: return std::make_pair( 1, 2 );
-	default: return std::make_pair( -1, -1 );
+	default: ASSERT( false ); return std::make_pair( -1, -1 );
 	}
       case 1: switch( j ) {
 	case 0: return std::make_pair( 2, 3 );
 	case 2: return std::make_pair( 0, 3 );
 	case 3: return std::make_pair( 0, 2 );
-	default: return std::make_pair( -1, -1 );
+	default: ASSERT( false ); return std::make_pair( -1, -1 );
 	}
       case 2: switch( j ) {
 	case 0: return std::make_pair( 1, 3 );
 	case 1: return std::make_pair( 0, 3 );
 	case 3: return std::make_pair( 0, 1 );
-	default: return std::make_pair( -1, -1 );
+	default: ASSERT( false ); return std::make_pair( -1, -1 );
 	}
       case 3: switch( j ) {
 	case 0: return std::make_pair( 1, 2 );
 	case 1: return std::make_pair( 0, 2 );
 	case 2: return std::make_pair( 0, 1 );
-	default: return std::make_pair( -1, -1 );
+	default: ASSERT( false ); return std::make_pair( -1, -1 );
 	}
       }
+      ASSERT( false ); 
       return std::make_pair( -1, -1 ); 
     }
 
@@ -212,11 +217,12 @@ namespace DGtal
     void previousAroundEdge( Edge & e, Facet & f ) const
     {
       ASSERT( e.first == f.first );
+      VertexHandle v3 = thirdVertex( e, f );
       int l = f.second;
       CellHandle c = e.first;
       CellHandle pc = c->neighbor( l ); // previous cell
       f.first = pc;
-      f.second = T().mirror_index( c, l );
+      f.second = pc->index( v3 ); // T().mirror_index( c, l );
       int i = pc->index( c->vertex( e.second ) );
       int j = pc->index( c->vertex( e.third ) );
       e.first = pc;
@@ -234,8 +240,8 @@ namespace DGtal
       Triangle t2 = T().triangle( Facet( e.first, p.second ) );
       Vector n1 = t1.supporting_plane().orthogonal_vector();
       Vector n2 = t2.supporting_plane().orthogonal_vector();
-      Component s = ( n1 * n2 ) / sqrt( n1.squared_length() * n2.squared_length() );
-      s = ( s < 0.0 ) ? -s : s;
+      Component s = -( n1 * n2 ) / sqrt( n1.squared_length() * n2.squared_length() );
+      // s = ( s < 0.0 ) ? -s : s;
       return acos( s );
     }
 
@@ -252,14 +258,75 @@ namespace DGtal
       Point f1 = f.first->vertex( (f.second+2)%4 )->point(); // facet q
       Point f2 = f.first->vertex( (f.second+3)%4 )->point(); // facet r, (p,q,r) ccw from apex
       Point e1 = T().mirror_vertex( f.first, f.second )->point();           // bottom
-      ASSERT( Plane( f0, f1, f2 ).has_on_positive_side( e0 ) );
-      ASSERT( Plane( f0, f1, f2 ).has_on_negative_side( e1 ) );
+      ASSERT( Plane( f0, f1, f2 ).oriented_side( e0 ) != CGAL::ON_ORIENTED_BOUNDARY );
+      ASSERT( Plane( f0, f1, f2 ).oriented_side( e1 ) != CGAL::ON_ORIENTED_BOUNDARY );
+      if ( Plane( f0, f1, f2 ).has_on_positive_side( e0 ) )
+	{
+	  ASSERT( Plane( f0, f1, f2 ).has_on_negative_side( e1 ) );
+	}
+      else 
+	{  
+	  ASSERT( Plane( f0, f1, f2 ).has_on_negative_side( e0 ) );
+	  ASSERT( Plane( f0, f1, f2 ).has_on_positive_side( e1 ) );
+	  std::swap( e0, e1 );
+	}
       return Plane( f0, f1, e1 ).has_on_positive_side( e0 )
-	&& Plane( f1, f2, e1 ).has_on_positive_side( e0 )
-	&& Plane( f2, f0, e1 ).has_on_positive_side( e0 )
-	&& Plane( f1, f0, e0 ).has_on_positive_side( e1 )
-	&& Plane( f2, f1, e0 ).has_on_positive_side( e1 )
-	&& Plane( f0, f2, e0 ).has_on_positive_side( e1 );
+      	&& Plane( f1, f2, e1 ).has_on_positive_side( e0 )
+      	&& Plane( f2, f0, e1 ).has_on_positive_side( e0 )
+      	&& Plane( f1, f0, e0 ).has_on_positive_side( e1 )
+      	&& Plane( f2, f1, e0 ).has_on_positive_side( e1 )
+      	&& Plane( f0, f2, e0 ).has_on_positive_side( e1 );
+    } 
+
+    /**
+       @return 'true' iff the pentahedron formed by the two tetrahedra
+       sharing facet \a f is convex.
+    */
+    bool isFlatConvexFacet( const Facet & f, Edge & flat_edge ) const
+    {
+      ASSERT( ! T().is_infinite( f.first ) );
+      ASSERT( ! T().is_infinite( T().mirror_facet( f ).first ) );
+      Point e0 = f.first->vertex( f.second )->point();       // top
+      Point f0 = f.first->vertex( (f.second+1)%4 )->point(); // facet p
+      Point f1 = f.first->vertex( (f.second+2)%4 )->point(); // facet q
+      Point f2 = f.first->vertex( (f.second+3)%4 )->point(); // facet r, (p,q,r) ccw from apex
+      Point e1 = T().mirror_vertex( f.first, f.second )->point();           // bottom
+      ASSERT( Plane( f0, f1, f2 ).oriented_side( e0 ) != CGAL::ON_ORIENTED_BOUNDARY );
+      ASSERT( Plane( f0, f1, f2 ).oriented_side( e1 ) != CGAL::ON_ORIENTED_BOUNDARY );
+      if ( Plane( f0, f1, f2 ).has_on_positive_side( e0 ) )
+	{
+	  ASSERT( Plane( f0, f1, f2 ).has_on_negative_side( e1 ) );
+	}
+      else 
+	{  
+	  ASSERT( Plane( f0, f1, f2 ).has_on_positive_side( e1 ) );
+	  std::swap( e0, e1 );
+	}
+      if ( Plane( f0, f1, e1 ).oriented_side( e0 ) == CGAL::ON_ORIENTED_BOUNDARY )
+	{
+	  flat_edge = Edge( f.first, (f.second+1)%4, (f.second+2)%4 );
+	  return  Plane( f1, f2, e1 ).has_on_positive_side( e0 )
+	    && Plane( f2, f1, e0 ).has_on_positive_side( e1 )
+	    && Plane( f2, f0, e1 ).has_on_positive_side( e0 )
+	    && Plane( f0, f2, e0 ).has_on_positive_side( e1 );
+	}
+      else if ( Plane( f1, f2, e1 ).oriented_side( e0 ) == CGAL::ON_ORIENTED_BOUNDARY )
+	{
+	  flat_edge = Edge( f.first, (f.second+2)%4, (f.second+3)%4 );
+	  return Plane( f0, f1, e1 ).has_on_positive_side( e0 )
+	    && Plane( f1, f0, e0 ).has_on_positive_side( e1 )
+	    && Plane( f2, f0, e1 ).has_on_positive_side( e0 )
+	    && Plane( f0, f2, e0 ).has_on_positive_side( e1 );
+	}
+      else if ( Plane( f2, f0, e1 ).oriented_side( e0 ) == CGAL::ON_ORIENTED_BOUNDARY )
+	{
+	  flat_edge = Edge( f.first, (f.second+3)%4, (f.second+1)%4 );
+	  return Plane( f0, f1, e1 ).has_on_positive_side( e0 )
+	    && Plane( f1, f0, e0 ).has_on_positive_side( e1 )
+	    && Plane( f1, f2, e1 ).has_on_positive_side( e0 )
+	    && Plane( f2, f1, e0 ).has_on_positive_side( e1 );
+	}
+      return false;
     } 
 
     /**
@@ -278,6 +345,53 @@ namespace DGtal
       Point e1 = e.first->vertex( e.third )->point();
       return ( P.has_on_positive_side( e0 ) && P.has_on_negative_side( e1 ) )
 	|| ( P.has_on_positive_side( e1 ) && P.has_on_negative_side( e0 ) );
+    }
+
+    /**
+       @return 'true' iff the pentahedron formed by the two tetrahedra
+       sharing facet \a f is convex.
+    */
+    bool isConcaveFacet( const Edge & pivot, const Facet & f, 
+			 VertexHandle v0, VertexHandle v1 ) const
+    {
+      ASSERT( ! T().is_infinite( f.first ) );
+      ASSERT( ! T().is_infinite( T().mirror_facet( f ).first ) );
+      Point e0 = v0->point();       // top
+      Point f0 = pivot.first->vertex( pivot.second )->point(); // pivot i = p
+      Point f1 = pivot.first->vertex( pivot.third  )->point(); // pivot j = q
+      Point f2 = thirdVertex( pivot, f )->point();             // other   = r (p,q,r) ccw from apex
+      Point e1 = v1->point();           // bottom
+      ASSERT( Plane( f0, f1, f2 ).oriented_side( e0 ) != CGAL::ON_ORIENTED_BOUNDARY );
+      ASSERT( Plane( f0, f1, f2 ).oriented_side( e1 ) != CGAL::ON_ORIENTED_BOUNDARY );
+      if ( Plane( f0, f1, f2 ).has_on_positive_side( e0 ) )
+	{
+	  ASSERT( Plane( f0, f1, f2 ).has_on_negative_side( e1 ) );
+	}
+      else 
+	{  
+	  ASSERT( Plane( f0, f1, f2 ).has_on_negative_side( e0 ) );
+	  ASSERT( Plane( f0, f1, f2 ).has_on_positive_side( e1 ) );
+	  std::swap( e0, e1 );
+	}
+      return Plane( f0, f1, e1 ).has_on_positive_side( e0 )
+      	&& Plane( f1, f0, e0 ).has_on_positive_side( e1 )
+      	&& Plane( f1, f2, e1 ).has_on_negative_side( e0 )
+      	&& Plane( f2, f1, e0 ).has_on_negative_side( e1 )
+      	&& Plane( f2, f0, e1 ).has_on_negative_side( e0 )
+      	&& Plane( f0, f2, e0 ).has_on_negative_side( e1 );
+    } 
+
+
+    /**
+       @return the intersection of plane \a p with line \a l.
+    */
+    Point intersect( const Plane & p, const Line & l )
+    {
+      CGAL::Object result = CGAL::intersection( p, l );
+      if ( const Point *ipoint = CGAL::object_cast<Point>(&result) )
+	return Point( *ipoint );
+      ASSERT( false && "Bad intersection." );
+      return Point();
     }
 
     // ----------------------- Interface --------------------------------------

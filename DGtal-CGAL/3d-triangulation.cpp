@@ -61,6 +61,28 @@ PointZ3 operator^( const PointZ3 & a, const PointZ3 & b )
 }
 
 
+template <typename Viewer, typename ToDGtal, typename Facet>
+void displayFacet( Viewer & viewer, const ToDGtal & toDGtal,
+		   const Facet & f, const DGtal::Color & col )
+{
+  typedef typename ToDGtal::Point3 Point;
+  Point a( f.first->vertex( (f.second+1)%4 )->point() );
+  Point b( f.first->vertex( (f.second+2)%4 )->point() );
+  Point c( f.first->vertex( (f.second+3)%4 )->point() );
+  viewer.addTriangle( a.x(), a.y(), a.z(),
+		      c.x(), c.y(), c.z(),
+		      b.x(), b.y(), b.z(),
+		      col );
+}
+
+template <typename Viewer, typename ToDGtal, typename Cell>
+void displayCell( Viewer & viewer, const ToDGtal & toDGtal,
+		  const Cell & c, const DGtal::Color & col )
+{
+  for ( int i = 0; i < 4; ++i )
+    displayFacet( viewer, toDGtal, std::make_pair( c, i ), col );
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 namespace po = boost::program_options;
 
@@ -96,14 +118,15 @@ int main (int argc, char** argv )
   typedef RealPoint::Coordinate Ring;
 
   typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
-  typedef CGAL::Delaunay_triangulation_3<K>  Delaunay;
-  typedef RelativeConvexHull<Delaunay,K>     RCH;
-  typedef RCH::CellHandle                    CellHandle;
-  typedef RCH::Facet                         Facet;
-  typedef RCH::Triangle                      Triangle;
-  typedef RCH::FiniteFacetsIterator          FiniteFacetsIterator;
-  typedef toCGALFunctor<K> ToCGAL;
-  typedef toDGtalFunctor<K> ToDGtal;
+  typedef CGAL::Triangulation_3<K>            Triangulation;
+  typedef CGAL::Delaunay_triangulation_3<K>   Delaunay;
+  typedef RelativeConvexHull<Triangulation,K> RCH;
+  typedef RCH::CellHandle                     CellHandle;
+  typedef RCH::Facet                          Facet;
+  typedef RCH::Triangle                       Triangle;
+  typedef RCH::FiniteFacetsIterator           FiniteFacetsIterator;
+  typedef toCGALFunctor<K>                    ToCGAL;
+  typedef toDGtalFunctor<K>                   ToDGtal;
 
   QApplication application(argc,argv); // remove Qt arguments.
 
@@ -198,13 +221,54 @@ int main (int argc, char** argv )
   double setsize2 = (double) digital_outside_points.size()-1;
   trace.info() << "Vertices to process: " << setsize2 << std::endl;
   rch.add( toCGAL, digital_outside_points.begin(), digital_outside_points.end(), 0, 1 );
+  rch.terminate();
+  std::cout << "number of vertices :  " ;
+  std::cout << rch.T().number_of_vertices() << std::endl;
+  std::cout << "number of edges :  " ;
+  std::cout << rch.T().number_of_edges() << std::endl;
+  std::cout << "number of facets :  " ;
+  std::cout << rch.T().number_of_facets() << std::endl;
+  std::cout << "number of cells :  " ;
+  std::cout << rch.T().number_of_cells() << std::endl;
+
   trace.endBlock();
 
+  Color colBasicFacet3( 255, 255, 0, 255 );
+  Color colBasicFacet2( 0, 255, 255, 255 );
+  Color colBasicFacet1( 0, 255, 0, 255 );
+  Color colSpuriousTetrahedra( 255, 0, 0, 100 );
   trace.beginBlock("Computing the relative convex hull.");
   unsigned int i = 0;
   do 
     {
       trace.info() << "--------- step " << i << " ----------" << std::endl;
+      Viewer3D viewerRCH;
+      viewerRCH.show();
+      for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 
+      	      itend = rch.T().finite_facets_end(); it != itend; ++it )
+      	{
+      	  // we display it.
+      	  Facet f = *it;
+      	  if ( rch.isCellExtended( f.first ) )
+      	    displayCell( viewerRCH, toDGtal, f.first, colSpuriousTetrahedra );
+      	  if ( rch.isFacetOnBoundary( f, 0 ) ) 
+      	    displayFacet( viewerRCH, toDGtal, f, colBasicFacet1 );
+      	  else if ( rch.isFacetOnRelativeBoundary( f, 0 ) ) 
+      	    displayFacet( viewerRCH, toDGtal, f, colBasicFacet2 );
+      	  else if ( rch.isFacetSubdivided( f, 0 ) ) 
+      	    displayFacet( viewerRCH, toDGtal, f, colBasicFacet3 );
+      	  else {
+      	    f = rch.T().mirror_facet( f );
+      	    if ( rch.isFacetOnBoundary( f, 0 ) ) 
+      	      displayFacet( viewerRCH, toDGtal, f, colBasicFacet1 );
+      	    else if ( rch.isFacetOnRelativeBoundary( f, 0 ) ) 
+      	      displayFacet( viewerRCH, toDGtal, f, colBasicFacet2 );
+      	    else if ( rch.isFacetSubdivided( f, 0 ) ) 
+      	      displayFacet( viewerRCH, toDGtal, f, colBasicFacet3 );
+      	  }
+      	}
+      viewerRCH << Viewer3D::updateDisplay;
+      application.exec();
       ++i;
     }
   while ( rch.relativeHull( 0 ) );
@@ -214,29 +278,29 @@ int main (int argc, char** argv )
   int view = vm["view"].as<int>();
   Viewer3D viewerRCH;
   viewerRCH.show();
-  Color colBasicFacet2( 0, 255, 255, 255 );
-  Color colBasicFacet1( 0, 255, 0, 255 );
-  Color colSpuriousTetrahedra( 255, 0, 0, 100 );
   if ( view & 0x1 ) { // View digital core.
     for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 
             itend = rch.T().finite_facets_end(); it != itend; ++it )
       {
         // we display it.
         Facet f = *it;
-        if ( ! rch.isFacetOnBoundary( f, 0 ) ) 
-          {
-            f = rch.T().mirror_facet( f );
-            if ( ! rch.isFacetOnBoundary( f, 0 ) ) 
-              continue;
-          }
-        Triangle triangle = rch.T().triangle( f );
-        PointZ3 a( toDGtal( triangle.vertex( 0 ) ) );
-        PointZ3 b( toDGtal( triangle.vertex( 1 ) ) );
-        PointZ3 c( toDGtal( triangle.vertex( 2 ) ) );
-        viewerRCH.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-                               c[ 0 ], c[ 1 ], c[ 2 ],
-                               b[ 0 ], b[ 1 ], b[ 2 ],
-                               colBasicFacet1 );
+	  if ( rch.isCellExtended( f.first ) )
+	    displayCell( viewerRCH, toDGtal, f.first, colSpuriousTetrahedra );
+	  if ( rch.isFacetOnBoundary( f, 0 ) ) 
+	    displayFacet( viewerRCH, toDGtal, f, colBasicFacet1 );
+	  else if ( rch.isFacetOnRelativeBoundary( f, 0 ) ) 
+	    displayFacet( viewerRCH, toDGtal, f, colBasicFacet2 );
+	  else if ( rch.isFacetSubdivided( f, 0 ) ) 
+	    displayFacet( viewerRCH, toDGtal, f, colBasicFacet3 );
+	  else {
+	    f = rch.T().mirror_facet( f );
+	    if ( rch.isFacetOnBoundary( f, 0 ) ) 
+	      displayFacet( viewerRCH, toDGtal, f, colBasicFacet1 );
+	    else if ( rch.isFacetOnRelativeBoundary( f, 0 ) ) 
+	      displayFacet( viewerRCH, toDGtal, f, colBasicFacet2 );
+	    else if ( rch.isFacetSubdivided( f, 0 ) ) 
+	      displayFacet( viewerRCH, toDGtal, f, colBasicFacet3 );
+	  }
       }
   }
   viewerRCH << Viewer3D::updateDisplay;

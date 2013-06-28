@@ -159,8 +159,8 @@ namespace DGtal
       }
     bool ok = inputfile.eof();
     trace.endBlock();
-    lower -= Point::diagonal( 1 );
-    upper += Point::diagonal( 1 );
+    lower -= Point::diagonal( 2 );
+    upper += Point::diagonal( 2 );
     if ( ! ks.init( lower, upper, true ) )
       return 2;
     for ( typename std::vector<Point>::const_iterator it = points.begin(), itend = points.end();
@@ -172,6 +172,20 @@ namespace DGtal
             boundary.insert( ks.sIncident( v, i, true ) );
             boundary.insert( ks.sIncident( v, i, false ) );
           }
+      }
+    std::vector<typename SCellSet::iterator> inside_cells;
+    for ( typename SCellSet::iterator it = boundary.begin(), ite = boundary.end();
+	  it != ite; ++it )
+      {
+	typename SCellSet::iterator it2 = boundary.find( ks.sOpp( *it ) );
+	if ( it2 != boundary.end() ) // both cells belong to the boundary
+	  inside_cells.push_back( it ); // the other will be pushed also afterwards
+      }
+    for ( typename std::vector<typename SCellSet::iterator>::const_iterator 
+	    it = inside_cells.begin(), ite = inside_cells.end();
+	  it != ite; ++it )
+      {
+	boundary.erase( *it );
       }
     return 0;
   }
