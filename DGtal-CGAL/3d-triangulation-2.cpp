@@ -26,9 +26,9 @@
 #include <CGAL/Triangulation_3.h>
 
 #include "Auxiliary.h"
-#include "Triangulation3DHelper.h"
-#include "SimplicialStrip3D.h"
-#include "RelativeConvexHull.h"
+// #include "Triangulation3DHelper.h"
+// #include "SimplicialStrip3D.h"
+// #include "RelativeConvexHull.h"
 
 typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
 typedef Z3::Point PointZ3;
@@ -344,8 +344,11 @@ namespace DGtal {
           // cells containing integer points in the interior are not processed.
           if ( nbLatticePoints( cell_h ) != 4 )         continue;
           // checking cell faces for extension.
-	  extendCell( priorityQ, isMarked, cell_h );
-	  ++nb;
+          if ( checkCellExtension( isMarked, cell_h ) )
+            {
+              extendCell( priorityQ, isMarked, cell_h );
+              ++nb;
+            }
         }
       trace.info() << "- cells flipped = " << nb << std::endl;
       trace.info() << "- boundary has " << myBoundary.size() << " facets." << std::endl;
@@ -356,32 +359,19 @@ namespace DGtal {
     //--------------------------------------------------------------------------
   protected:
 
-    // bool checkCellExtension( bool isBoundary[ 4 ], const CellHandle & cell ) const
-    // {
-    //   unsigned int n = 0;
-    //   for ( int i = 0; i < 4; ++i )
-    //     {
-    //       isBoundary[ i ] = isFacetBoundary( Facet( cell, i ) );
-    //       if ( isBoundary[ i ] ) ++n;
-    //     }
-    //   // At least 2 are marked, by convexity, we can close the gap
-    //   // to the further faces of the cell.
-    //   bool propagate = n >= 3;
-    //   if ( n == 2 )
-    //     { // 2 are marked. We check their area.
-    //       double area_boundary = 0.0;
-    //       double area_exterior = 0.0;
-    //       for ( int i = 0; i < 4; ++i ) {
-    //         if ( isBoundary[ i ] ) 
-    //           area_boundary += area( Facet( cell, i ) );
-    //         else
-    //           area_exterior += area( Facet( cell, i ) );
-    //       }
-    //       if ( area_exterior < myAreaFactorExtend * area_boundary )
-    //         propagate = true;
-    //     }
-    //   return propagate;
-    // }
+    bool checkCellExtension( bool isBoundary[ 4 ], const CellHandle & cell ) const
+    {
+      unsigned int n = 0;
+      for ( int i = 0; i < 4; ++i )
+        {
+          isBoundary[ i ] = isFacetBoundary( Facet( cell, i ) );
+          if ( isBoundary[ i ] ) ++n;
+        }
+      // At least 2 are marked, by convexity, we can close the gap
+      // to the further faces of the cell.
+      bool propagate = n >= 2;
+      return propagate;
+    }
     
     void extendCell( CellSet & priorityQ, bool isBoundary[ 4 ], const CellHandle & cell )
     { // Switch cell to interior
@@ -606,8 +596,7 @@ int main( int argc, char ** argv ) {
   trace.endBlock();
 
   DigCore core( T );
-  for ( unsigned int i = 0; i < 10; ++i )
-    core.extend();
+  core.extend();
 
 
   // start viewer
