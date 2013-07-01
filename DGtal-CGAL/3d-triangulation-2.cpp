@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -24,6 +25,9 @@
 #include <CGAL/Delaunay_triangulation_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Triangulation_3.h>
+#include <CGAL/IO/Geomview_stream.h>
+#include <CGAL/IO/Polyhedron_geomview_ostream.h>
+#include <CGAL/IO/Polyhedron_iostream.h>
 
 #include "Auxiliary.h"
 // #include "Triangulation3DHelper.h"
@@ -38,6 +42,7 @@ typedef Domain::ConstIterator DomainConstIterator;
 template <typename TKernel3>
 struct toCGALFunctor {
   typedef typename TKernel3::Point_3 Point3;
+  typedef typename TKernel3::Vector_3 Vector3;
   inline Point3 operator()( const PointZ3 & p ) const
   {
     return Point3( p[0], p[1], p[2] );
@@ -47,6 +52,7 @@ struct toCGALFunctor {
 template <typename TKernel3>
 struct toDGtalFunctor {
   typedef typename TKernel3::Point_3 Point3;
+  typedef typename TKernel3::Vector_3 Vector3;
   inline PointZ3 operator()( const Point3 & p ) const
   {
     return PointZ3( p.x(), p.y(), p.z() );
@@ -66,12 +72,39 @@ PointZ3 operator^( const PointZ3 & a, const PointZ3 & b )
 
 template <typename Viewer, typename ToDGtal, typename Facet>
 void displayFacet( Viewer & viewer, const ToDGtal & toDGtal,
-		   const Facet & f, const DGtal::Color & col )
+		   const Facet & f, const DGtal::Color & col, 
+                   double retract )
 {
   typedef typename ToDGtal::Point3 Point;
+  typedef typename ToDGtal::Vector3 Vector;
   Point a( f.first->vertex( (f.second+1)%4 )->point() );
   Point b( f.first->vertex( (f.second+2)%4 )->point() );
   Point c( f.first->vertex( (f.second+3)%4 )->point() );
+  Point mid = ( Vector( a ) + Vector( b ) + Vector( c ) ) / 3.0;
+  a = a + ( mid-a )*retract;
+  b = b + ( mid-b )*retract;
+  c = c + ( mid-c )*retract;
+  viewer.addTriangle( a.x(), a.y(), a.z(),
+		      c.x(), c.y(), c.z(),
+		      b.x(), b.y(), b.z(),
+		      col );
+}
+
+template <typename Viewer, typename ToDGtal>
+void displayTriangle( Viewer & viewer, const ToDGtal & toDGtal,
+                      typename ToDGtal::Point3 a,
+                      typename ToDGtal::Point3 b,
+                      typename ToDGtal::Point3 c,
+                      const DGtal::Color & col, 
+                      double retract )
+{
+  typedef typename ToDGtal::Point3 Point;
+  typedef typename ToDGtal::Vector3 Vector;
+  Vector vmid = ( Vector( a.x(), a.y(), a.z() ) + Vector( b.x(), b.y(), b.z() ) + Vector( c.x(), c.y(), c.z() ) ) / 3.0;
+  Point mid( vmid.x(), vmid.y(), vmid.z() );
+  a = a + ( mid-a )*retract;
+  b = b + ( mid-b )*retract;
+  c = c + ( mid-c )*retract;
   viewer.addTriangle( a.x(), a.y(), a.z(),
 		      c.x(), c.y(), c.z(),
 		      b.x(), b.y(), b.z(),
@@ -80,10 +113,11 @@ void displayFacet( Viewer & viewer, const ToDGtal & toDGtal,
 
 template <typename Viewer, typename ToDGtal, typename Cell>
 void displayCell( Viewer & viewer, const ToDGtal & toDGtal,
-		  const Cell & c, const DGtal::Color & col )
+		  const Cell & c, const DGtal::Color & col,
+                  double retract )
 {
   for ( int i = 0; i < 4; ++i )
-    displayFacet( viewer, toDGtal, std::make_pair( c, i ), col );
+    displayFacet( viewer, toDGtal, std::make_pair( c, i ), col, retract );
 }
 
 
@@ -192,23 +226,29 @@ countLatticePointsInTetrahedraIf4( const PointZ3 & a, const PointZ3 & b, const P
 
 
 namespace DGtal {
-  template <typename Kernel>
-  class DigitalCore {
+  template <typename Kernel, typename HDS>
+  class DigitalCore : public CGAL::Modifier_base<HDS> {
+
   public:
     typedef typename CGAL::Delaunay_triangulation_3<Kernel> Delaunay;
     typedef typename Delaunay::Cell_iterator  CellIterator;
     typedef typename Delaunay::Cell_handle    CellHandle;
+    typedef typename Delaunay::Point          Point;
     typedef typename Delaunay::Facet          Facet;
     typedef typename Delaunay::Facet_iterator FacetIterator;
+    typedef typename Delaunay::Finite_facets_iterator FiniteFacetsIterator;
+    typedef typename Delaunay::Finite_vertices_iterator FiniteVerticesIterator;
     typedef typename Delaunay::Vertex_handle  VertexHandle;
-    typedef DGtal::uint64_t               Size;
+    typedef DGtal::uint64_t                   Size;
     typedef typename std::map< CellHandle, Size >  MapCell2Size;
     typedef typename std::set< Facet >             FacetSet;
     typedef typename std::set< CellHandle >        CellSet;
-    
+    typedef typename Kernel::Vector_3         Vector;
+    typedef typename Kernel::Plane_3          Plane;
+
   private:
     /// The Delaunay triangulation that carries the digital core.
-    const Delaunay* myDelaunay;
+    Delaunay* myDelaunay;
     /// Stores the number of lattice of points within each triangulation Cell.
     MapCell2Size myNbLatticePoints;
     /// Current boundary as a set of facets.
@@ -216,8 +256,46 @@ namespace DGtal {
     /// Current interior cells.
     CellSet myInterior;
 
+    /// For converting CGAL points to DGtal points.
     toDGtalFunctor<Kernel> toDGtal;
-   
+    
+    struct DuplicateVertex {
+      Facet main;
+      int idx_main;
+      int idx_mirror;
+      Vector n_main;
+    };
+
+    typedef typename std::pair<VertexHandle,VertexHandle> HalfEdge;
+
+    struct HalfEdgeComparator {
+      bool operator()( const HalfEdge & he1, const HalfEdge & he2 ) const
+      {
+        return ( he1.first < he2.first )
+          || ( ( he1.first == he2.first ) && ( he1.second < he2.second ) );
+      }
+    };
+
+    struct HalfEdgeInfo {
+      Facet facet;
+      int idx_vertex;
+    };
+
+    struct HalfEdgeDuplicates {
+      HalfEdge he;
+      std::vector<HalfEdgeInfo> infos;
+    };
+
+    typedef typename std::map<HalfEdge, HalfEdgeDuplicates, HalfEdgeComparator> MapHalfEdge2Duplicates;
+    typedef typename std::map<VertexHandle,DuplicateVertex> MapVertex2Duplicate;
+    int myVertexIdx;
+    MapHalfEdge2Duplicates myHED;
+    MapVertex2Duplicate myDuplicates;
+    std::map<VertexHandle,int> myIndices;
+    std::map<VertexHandle, HalfEdge > myDuplicateVertices;
+    std::vector<Point> myPoints;
+    FacetSet myDuplicateFacets;
+    int myNbFacets;
     //--------------------------------------------------------------------------
   public:
 
@@ -226,7 +304,7 @@ namespace DGtal {
     {}
     
     inline 
-    DigitalCore( ConstAlias<Delaunay> t ) 
+    DigitalCore( Alias<Delaunay> t ) 
       : myDelaunay( t )
     {
       countLatticePoints();
@@ -236,6 +314,105 @@ namespace DGtal {
     //--------------------------------------------------------------------------
   public:
 
+    Vector normal( const Facet & f ) const
+    {
+      Plane plane = myDelaunay->triangle( f ).supporting_plane();
+      if ( plane.has_on_positive_side( f.first->vertex( f.second )->point() ) )
+        return plane.orthogonal_vector();
+      else
+        {
+          ASSERT( plane.has_on_negative_side( f.first->vertex( f.second )->point() ) );
+          return -plane.orthogonal_vector();
+        }
+    }
+
+    void getCCWVertices( VertexHandle & v0, VertexHandle & v1, VertexHandle & v2, 
+                         const Facet & f ) const
+    {
+      v0 = f.first->vertex( (f.second+1)%4 );
+      v1 = f.first->vertex( (f.second+2)%4 );
+      v2 = f.first->vertex( (f.second+3)%4 );
+      if ( myDelaunay->is_infinite( f.first->vertex( f.second ) ) )
+        {
+          Facet f2 = myDelaunay->mirror_facet( f );
+          getCCWVertices( v0, v1, v2, f2 );
+          std::swap( v1, v2 );
+          // std::cout << "(Infinite)" << std::flush;
+        }
+      else
+        {
+          Plane plane( v0->point(), v1->point(), v2->point() );
+          if ( ! plane.has_on_positive_side( f.first->vertex( f.second )->point() ) )
+            {
+              ASSERT( plane.has_on_negative_side( f.first->vertex( f.second )->point() ) );
+              // std::cout << "(Inverted)" << std::flush;
+              std::swap( v1, v2 );
+            }
+          // else 
+          //   std::cout << "(Positive)" << std::flush;
+        }
+    }
+
+    void addFacetToHalfEdges( const Facet & f )
+    {
+      VertexHandle v[ 3 ];
+      getCCWVertices( v[ 0 ], v[ 1 ], v[ 2 ], f );
+      for ( unsigned int j = 0; j < 3; ++j )
+        {
+          HalfEdge he = std::make_pair( v[ j ], v[ (j+1)%3 ] );
+          typename MapHalfEdge2Duplicates::iterator it = myHED.find( he );
+          if ( it == myHED.end() )
+            { // Vertex is new.
+              HalfEdgeInfo info;
+              info.facet = f;
+              info.idx_vertex = myIndices[ v[ j ] ];
+              HalfEdgeDuplicates dup;
+              dup.he = he;
+              dup.infos.push_back( info );
+              myHED[ he ] = dup;
+            }
+          else
+            { // Vertex must be duplicated.
+              // Check if it is already duplicated.
+              std::cout << "Duplicating vertex: " << v[ j ]->point() << std::endl;
+              if ( myDuplicateVertices.find( v[ j ] ) == myDuplicateVertices.end() )
+                {
+                  HalfEdgeInfo info;
+                  info.facet = f;
+                  info.idx_vertex = myVertexIdx++;       // new vertex
+                  myPoints.push_back( v[ j ]->point() );
+                  it->second.infos.push_back( info );
+                  myDuplicateVertices[ v[ j ] ] = he;    // this vertex has a list of half edges.
+                  std::cout << " -> new index is " << info.idx_vertex << std::endl;
+                }
+              // else already duplicated. Nothing to do.
+              else
+                {
+                  std::cout << " -> already done." << std::endl;
+                }
+            }
+        }
+    }
+
+    int getVertexIndex( const VertexHandle & v, const Facet & f )
+    {
+      typename std::map<VertexHandle, HalfEdge >::const_iterator 
+        it = myDuplicateVertices.find( v );
+      if ( it == myDuplicateVertices.end() )
+        return myIndices[ v ];
+      HalfEdge e = it->second;
+      HalfEdgeDuplicates & hed = myHED[ e ];
+      unsigned int j = 0;
+      double best_sim = normal( f ) * normal( hed.infos[ j ].facet );
+      for ( unsigned int i = 1; i < hed.infos.size(); ++i )
+        {
+          double sim = normal( f ) * normal( hed.infos[ i ].facet );
+          if ( sim > best_sim ) 
+            { j = i; best_sim = sim; }
+        }
+      return hed.infos[ j ].idx_vertex;
+    }
+    
     inline
     const FacetSet & boundary() const
     { return myBoundary; }
@@ -355,6 +532,60 @@ namespace DGtal {
       trace.endBlock();
     }
 
+    /**
+       Creates factice vertices to thicken the core where it is reduced to a surface.
+       extend() should be called afterward.
+    */
+    void duplicateBoundary()
+    {
+      myDuplicates.clear();
+      myIndices.clear();
+      myPoints.clear();
+      myDuplicateFacets.clear();
+      myVertexIdx = 0;
+      myNbFacets = 0;
+      // Index vertices.
+      for ( FiniteVerticesIterator it = myDelaunay->finite_vertices_begin(), itend = myDelaunay->finite_vertices_end();
+            it != itend; ++it )
+        {
+          myIndices[ it ] = myVertexIdx++;
+          myPoints.push_back( it->point() );
+        }
+      // Find duplicate facets
+      for ( typename FacetSet::const_iterator it = boundary().begin(), itend = boundary().end();
+            it != itend; ++it )
+        {
+          addFacetToHalfEdges( *it );
+          ++myNbFacets;
+        }
+    }
+
+    void operator()( HDS& hds) {
+      // Postcondition: hds is a valid polyhedral surface.
+      CGAL::Polyhedron_incremental_builder_3<HDS> B( hds, true);
+      B.begin_surface( myPoints.size(), myNbFacets );
+      for ( typename std::vector<Point>::const_iterator it = myPoints.begin(), ite = myPoints.end();
+            it != ite; ++it )
+        B.add_vertex( *it );
+      // Find duplicate facets
+      VertexHandle v[ 3 ];
+      int idx[ 3 ];
+      for ( typename FacetSet::const_iterator it = boundary().begin(), itend = boundary().end();
+            it != itend; ++it )
+        {
+          Facet f = *it;
+          getCCWVertices( v[ 0 ], v[ 1 ], v[ 2 ], f );
+          for ( unsigned int j = 0; j < 3; ++j )
+            idx[ j ] = getVertexIndex( v[ j ], f );
+          B.begin_facet();
+          // std::cout << "F(" << idx[0] << "," << idx[1] << "," << idx[2] << ")" << std::flush;
+          B.add_vertex_to_facet( idx[ 0 ] );
+          B.add_vertex_to_facet( idx[ 1 ] );
+          B.add_vertex_to_facet( idx[ 2 ] );
+          B.end_facet();
+        }
+      B.end_surface();
+    }
         
     //--------------------------------------------------------------------------
   protected:
@@ -468,6 +699,7 @@ namespace po = boost::program_options;
 int main( int argc, char ** argv ) {
 
   typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
+  typedef K::Point_3                          Point3;
   // typedef CGAL::Simple_cartesian<double>     Kernel;
   typedef CGAL::Polyhedron_3<K>               Polyhedron;
   typedef CGAL::Triangulation_3<K>            Triangulation;
@@ -487,7 +719,7 @@ int main( int argc, char ** argv ) {
   typedef RealPoint::Coordinate Ring;
   typedef toCGALFunctor<K>                    ToCGAL;
   typedef toDGtalFunctor<K>                   ToDGtal;
-  typedef DigitalCore<K>                      DigCore;
+  typedef DigitalCore<K,HalfedgeDS>           DigCore;
   typedef DigCore::FacetSet                   FacetSet;
   typedef DigCore::Facet                      Facet;
 
@@ -503,10 +735,8 @@ int main( int argc, char ** argv ) {
     ("gridstep,g", po::value<double>()->default_value( 1.0 ), "specifies the digitization grid step ([arg] is a double) when the shape is given as a polynomial." )
     ("bounds,b", po::value<int>()->default_value( 20 ), "specifies the diagonal integral bounds [-arg,-arg,-arg]x[arg,arg,arg] for the digitization of the polynomial surface." )
     ("point-list,l", po::value<std::string>(), "specifies the shape as a list of digital points given in the filename [arg], x y z per line." )
-    ("prune,P", po::value<double>(), "prunes the resulting the complex of the tetrahedra were the length of the dubious edge is [arg] times the length of the opposite edge." )
+    ("retract,r", po::value<double>()->default_value( 0.0 ), "retracts facets with factor [arg] at display time." )
     ("geometry,G", po::value<int>()->default_value( 0 ), "specifies how digital points are defined from the digital surface: arg=0: inner voxels, arg=1: inner and outer voxels, arg=2: pointels" )
-    ("area-factor-extend,A", po::value<double>()->default_value( sqrt(3.0) ), "specifies the convexity/concavity area ratio when extending the core." )
-    ("area-factor-retract,a", po::value<double>()->default_value( 1.0/sqrt(3.0) ), "specifies the convexity/concavity area ratio when retracting the core." )
     ("view,V", po::value<int>()->default_value( 1 ), "specifies what is displayed. The bits of [arg] indicates what is displayed:  0: digital core, 1: empty unreachable tetrahedra, 2: retracted tetrahedra, 3: digital points" )
     ; 
   
@@ -596,11 +826,13 @@ int main( int argc, char ** argv ) {
   trace.endBlock();
 
   DigCore core( T );
+  // core.duplicateBoundary();
   core.extend();
-
 
   // start viewer
   int view = vm["view"].as<int>();
+  double retract = vm["retract"].as<double>();
+
   Viewer3D viewerCore;
   viewerCore.show();
   Color colBasicFacet2( 0, 255, 255, 255 );
@@ -624,16 +856,18 @@ int main( int argc, char ** argv ) {
             double dx[ 3 ];
             for ( unsigned int j = 0; j < 3; ++j )
               dx[ j ] = 0.001*((double) n[j])/norm;
-            viewerCore.addTriangle( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ],
-                                    (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ],
-                                    (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ],
-                                    colBasicFacet2 );
+            Point3 pa( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ] );
+            Point3 pb( (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ] );
+            Point3 pc( (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ] );
+            displayTriangle( viewerCore, toDGtal, pa, pc, pb, colBasicFacet2, retract );
           }
         else
-          viewerCore.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-                                  c[ 0 ], c[ 1 ], c[ 2 ],
-                                  b[ 0 ], b[ 1 ], b[ 2 ],
-                                  colBasicFacet1 );
+          {
+            Point3 pa( (double) a[ 0 ], (double) a[ 1 ], (double) a[ 2 ] );
+            Point3 pb( (double) b[ 0 ], (double) b[ 1 ], (double) b[ 2 ] );
+            Point3 pc( (double) c[ 0 ], (double) c[ 1 ], (double) c[ 2 ] );
+            displayTriangle( viewerCore, toDGtal, pa, pb, pc, colBasicFacet1, retract );
+          }
       }
   } //  if ( view & 0x1 ) {
 
@@ -667,11 +901,25 @@ int main( int argc, char ** argv ) {
   std::cout << "number of cells :  " ;
   std::cout << T.number_of_cells() << std::endl;
 
-  
-  
   Polyhedron P;
-  Build_triangle<HalfedgeDS> triangle;
-  P.delegate( triangle);
-  CGAL_assertion( P.is_triangle( P.halfedges_begin()));
+  core.duplicateBoundary();
+  P.delegate( core );
+  std::cout << "Polyhedron number of vertices :  " ;
+  std::cout << P.size_of_vertices() << std::endl;
+
+  Point3 low = toCGAL( ks.lowerBound() );
+  Point3 high = toCGAL( ks.upperBound() );
+  std::ofstream file_off( "bdry.off" );
+  // CGAL::Geomview_stream gv( CGAL::Bbox_3( low.x(), low.y(), low.z(), high.x(), high.y(), high.z() ) );
+  // gv << P;
+  // std::cout << "Enter a key to finish" << std::endl;
+  // char ch;
+  // std::cin >> ch;
+  file_off << P;
+  file_off.close();
+
+  // Build_triangle<HalfedgeDS> triangle;
+  // P.delegate( triangle);
+  // CGAL_assertion( P.is_triangle( P.halfedges_begin()));
   return 0;
 }
