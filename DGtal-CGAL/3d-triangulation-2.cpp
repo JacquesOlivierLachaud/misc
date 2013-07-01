@@ -883,6 +883,7 @@ public:
 			<< "                 / " << nb_edges << std::endl;
     bool changes = false;
     // Process holes.
+    DGtal::trace.info() << "Processing holes..." << std::endl;
     while ( ! toErase.empty() )
       {
 	HalfEdgeHandle st = *( toErase.begin() );
@@ -890,11 +891,11 @@ public:
 	removeFacet( toErase, st );
 	removeFacet( toErase, st->opposite() );
 	removeFacet( toErase, st->next()->opposite() );
-	removeFacet( toErase, st->opposite()->next()->opposite() );
+	// removeFacet( toErase, st->opposite()->next()->opposite() );
 	removeFacet( toFlip, st );
 	removeFacet( toFlip, st->opposite() );
 	removeFacet( toFlip, st->next()->opposite() );
-	removeFacet( toFlip, st->opposite()->next()->opposite() );
+	// removeFacet( toFlip, st->opposite()->next()->opposite() );
 	HalfEdgeHandle ut = st->next()->opposite();
 	HalfEdgeHandle vt = st->opposite()->next()->next();
 	bool tetra_st = st->opposite()->next()->opposite()->next() 
@@ -948,6 +949,7 @@ public:
 	  }
 	changes = true;
       }
+    DGtal::trace.info() << "Processing flips..." << std::endl;
     while ( ! toFlip.empty() )
       {
 	HalfEdgeHandle he = *( toFlip.begin() );
