@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -254,10 +255,10 @@ countLatticePointsInTetrahedra( const PointZ3 & a, const PointZ3 & b,
   if ( bcd.dot( a ) < bcd_shift )  { bcd = -bcd; bcd_shift = -bcd_shift; }
   if ( cda.dot( b ) < cda_shift )  { cda = -cda; cda_shift = -cda_shift; }
   if ( dab.dot( c ) < dab_shift )  { dab = -dab; dab_shift = -dab_shift; }
-  if ( ! abc_closed ) ++abc_shift;
-  if ( ! bcd_closed ) ++bcd_shift;
-  if ( ! cda_closed ) ++cda_shift;
-  if ( ! dab_closed ) ++dab_shift;
+  // if ( ! abc_closed ) ++abc_shift;
+  // if ( ! bcd_closed ) ++bcd_shift;
+  // if ( ! cda_closed ) ++cda_shift;
+  // if ( ! dab_closed ) ++dab_shift;
   PointZ3 inf = a.inf( b ).inf( c ).inf( d );
   PointZ3 sup = a.sup( b ).sup( c ).sup( d );
   Domain domain( inf, sup );
@@ -791,6 +792,24 @@ public:
     return signAngle( zs, zt, zu, zv, he );
   }
 
+  double angleFlippedEdge( HalfEdgeHandle he ) const
+  {
+    VertexHandle t = he->vertex();
+    VertexHandle s = he->opposite()->vertex();
+    VertexHandle u = he->next()->vertex();
+    VertexHandle v = he->opposite()->next()->vertex();
+    Point ps = s->point(); 
+    Point pt = t->point(); 
+    Point pu = u->point(); 
+    Point pv = v->point(); 
+    // Compute dihedral angle at (s,t)
+    Plane svu( ps, pv, pu );
+    Plane tuv( pt, pu, pv );
+    double sa = sinAngle( pu - pv, svu, tuv );
+    return asin( sa );
+  }
+
+
   /**
      e is an oriented edge (a vector) separating two faces of
      supporting plane p1 (left of vector) and p2 (right of vector).
@@ -847,7 +866,8 @@ public:
 	  it != ite; ++it, ++nb_edges )
       {
 	HalfEdgeHandle he = it;
-	if ( signAngle( zs, zt, zu, zv, he ) >= 0.0 ) continue; // positive is convex
+        double sa = signAngle( zs, zt, zu, zv, he );
+	if ( sa >= 0.0 ) continue; // positive is convex
 	// Checks it it a simple hole
 	if ( he->next()->opposite()->next() == he->opposite()->prev()->opposite() )
 	  { // hole at t
@@ -873,7 +893,13 @@ public:
 	    // 	 && ( signAngle( he->opposite()->next() ) >= 0.0 )
 	    // 	 && ( signAngle( he->opposite()->prev() ) >= 0.0 ) )
 	    if ( checkFlipGeometry( he ) && checkFlipGeometry( he->opposite() ) )
-	      toFlip.insert( he );
+              {
+                double a = angleFlippedEdge( he );
+                if ( ( a <= 0.0 ) || ( a >= M_PI ) )
+                  DGtal::trace.warning() << "Invalid flipped edge angle: " << a << std::endl;
+                else // if ( a > 0.0 && a < (M_PI / 2.0 ) )
+                  toFlip.insert( he );
+              }
 	  }
 	++nb_ccv;
       }
@@ -914,9 +940,9 @@ public:
 	    ASSERT( (! tetra_ut) && (! tetra_vt) );
 	    std::cout << "tetra to erase (st): " << st->vertex()->point() << std::endl;
 	    HalfEdgeHandle uv = st->next()->opposite()->prev();
+	    removeFacet( toErase, uv );
+	    removeFacet( toFlip, uv );
 	    HalfEdgeHandle nuv = P().join_facet( uv );
-	    removeFacet( toErase, nuv );
-	    removeFacet( toFlip, nuv );
 	    st = P().erase_center_vertex( st );
 	    P().erase_center_vertex( st );
 	  }
@@ -925,9 +951,9 @@ public:
 	    ASSERT( (! tetra_vt) && (! tetra_st) );
 	    std::cout << "tetra to erase (ut): " << ut->vertex()->point() << std::endl;
 	    HalfEdgeHandle vs = ut->next()->opposite()->prev();
+	    removeFacet( toErase, vs );
+	    removeFacet( toFlip, vs );
 	    HalfEdgeHandle nvs = P().join_facet( vs );
-	    removeFacet( toErase, nvs );
-	    removeFacet( toFlip, nvs );
 	    ut = P().erase_center_vertex( ut );
 	    P().erase_center_vertex( ut );
 	  }
@@ -936,9 +962,9 @@ public:
 	    ASSERT( (! tetra_st) && (! tetra_ut) );
 	    std::cout << "tetra to erase (vt): " << vt->vertex()->point() << std::endl;
 	    HalfEdgeHandle su = vt->next()->opposite()->prev();
+	    removeFacet( toErase, su );
+	    removeFacet( toFlip, su );
 	    HalfEdgeHandle nsu = P().join_facet( su );
-	    removeFacet( toErase, nsu );
-	    removeFacet( toFlip, nsu );
 	    vt = P().erase_center_vertex( vt );
 	    P().erase_center_vertex( vt );
 	  }
@@ -948,20 +974,35 @@ public:
 	    P().erase_center_vertex( st );
 	  }
 	changes = true;
+        toErase.clear();
+        toFlip.clear();
       }
     DGtal::trace.info() << "Processing flips..." << std::endl;
     while ( ! toFlip.empty() )
       {
-	HalfEdgeHandle he = *( toFlip.begin() );
-	toFlip.erase( toFlip.begin() );
+        typename MarkHE::iterator itbest = toFlip.begin();
+        double a = angleFlippedEdge( *itbest );
+        for ( typename MarkHE::iterator it = itbest, ite = toFlip.end();
+              it != ite; ++it )
+          {
+            double b = angleFlippedEdge( *it );
+            if ( b < a ) 
+              { a = b; itbest = it; }
+          }
+	HalfEdgeHandle he = *itbest;
+	toFlip.erase( itbest );
+	// HalfEdgeHandle he = *( toFlip.begin() );
+	// toFlip.erase( toFlip.begin() );
     	if ( checkFlipGeometry( he ) && checkFlipGeometry( he->opposite() ) )
     	  {
     	    removeFacet( toFlip, he );
     	    removeFacet( toFlip, he->opposite() );
     	    std::cout << "Flipping edge: " << he->vertex()->point() 
-    		      << " -> " << he->opposite()->vertex()->point() << std::endl;
+    		      << " -> " << he->opposite()->vertex()->point() 
+                      << " a=" << a << std::endl;
     	    P().flip_edge( he );
     	    changes = true;
+            toFlip.clear();
     	  }
     	else
     	  std::cout << "Edge has changed: " << he->vertex()->point() 
@@ -1242,13 +1283,22 @@ int main( int argc, char ** argv ) {
   PolyhedronFiller<K> PF;
   Polyhedron & P = PF.P();
   P.delegate( core );
+  i = 0;
   while ( PF.expand() )
     {
-      Viewer3D viewer3d;
-      viewer3d.show();
-      PF.view( viewer3d, retract );
-      viewer3d << Viewer3D::updateDisplay;
-      application.exec();
+      if ( i++ % 1000 == 0 )
+        {
+          Viewer3D viewer3d;
+          viewer3d.show();
+          PF.view( viewer3d, retract );
+          viewer3d << Viewer3D::updateDisplay;
+          application.exec();
+          std::ostringstream sname;
+          sname << "tmp/bdry-" << std::setfill( '0' ) << std::setw( 2 ) << (i/1000) << ".off";
+          std::ofstream file_off( sname.str().c_str() );
+          file_off << P;
+          file_off.close();
+        }
     }
   std::cout << "Polyhedron number of vertices :  " ;
   std::cout << P.size_of_vertices() << std::endl;
