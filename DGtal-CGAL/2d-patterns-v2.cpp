@@ -20,6 +20,7 @@
 #include <CGAL/Delaunay_triangulation_2.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Triangulation_2.h>
+#include "Auxiliary.h"
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
 typedef CGAL::Delaunay_triangulation_2<K> Delaunay;
@@ -869,6 +870,7 @@ int main ( int argc, char** argv )
   general_opt.add_options()
     ("help,h", "display this message")
     ("point-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points, 'x y' per line.")
+    ("voronoi,v",  po::value<double>(), "Displays also the Voronoi diagram with factor [arg] for infinite rays." )
     ;
   bool parseOK = true;
   po::variables_map vm;
@@ -899,14 +901,29 @@ int main ( int argc, char** argv )
   Delaunay t;
   
   trace.beginBlock("Construction the shape");
-  typedef Ellipse2D<Z2i::Space> Ellipse; 
-  int a = 5, b = 3;
-  Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), a, b, 0.3 );
-  double h = 0.25; //06125; 
-  GaussDigitizer<Z2i::Space,Ellipse> dig;  
-  dig.attach( ellipse );
-  dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
-            ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
+  if ( vm.count( "point-list" ) )
+    {
+      Z2i::Point lo, hi;
+      std::vector<Z2i::Point> pts;
+      if ( readPointList<Z2i::Point>( pts, lo, hi, vm["point-list"].as<std::string>() ) != 0 )
+        {
+          trace.error() << "Error reading file <" << vm["point-list"].as<std::string>() << ">." << std::endl;
+          return 1;
+        }
+      // ks.init( lo, hi, true );
+      for ( std::vector<Z2i::Point>::const_iterator it = pts.begin(), ite = pts.end();
+            it != ite; ++it )
+        t.insert( Point( (*it)[ 0 ], (*it)[ 1 ] ) );
+    }
+  
+  // typedef Ellipse2D<Z2i::Space> Ellipse; 
+  // int a = 5, b = 3;
+  // Ellipse2D<Z2i::Space> ellipse(Z2i::Point(0,0), a, b, 0.3 );
+  // double h = 0.25; //06125; 
+  // GaussDigitizer<Z2i::Space,Ellipse> dig;  
+  // dig.attach( ellipse );
+  // dig.init( ellipse.getLowerBound()+Z2i::Vector(-1,-1),
+  //           ellipse.getUpperBound()+Z2i::Vector(1,1), h ); 
   // typedef Flower2D<Z2i::Space> Flower; 
   // int a = 19, b = 9;
   // Flower2D<Z2i::Space> flower(Z2i::Point(0,0), 15, 2, 5, 0);
@@ -915,31 +932,31 @@ int main ( int argc, char** argv )
   // dig.attach( flower );
   // dig.init( flower.getLowerBound()+Z2i::Vector(-1,-1),
   //           flower.getUpperBound()+Z2i::Vector(1,1), h ); 
-  Z2i::KSpace ks;
-  ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
-  SurfelAdjacency<2> sAdj( true );
-  Z2i::SCell bel = Surfaces<Z2i::KSpace>::findABel( ks, dig, 1000 );
-  std::vector<Z2i::Point> boundaryPoints;
-  Surfaces<Z2i::KSpace>
-    ::track2DBoundaryPoints( boundaryPoints, ks, sAdj, dig, bel );
-  Z2i::Curve c;
-  c.initFromVector( boundaryPoints );  
-  typedef Z2i::Curve::PointsRange Range; 
-  Range r = c.getPointsRange(); 
+  // Z2i::KSpace ks;
+  // ks.init( dig.getLowerBound(), dig.getUpperBound(), true );
+  // SurfelAdjacency<2> sAdj( true );
+  // Z2i::SCell bel = Surfaces<Z2i::KSpace>::findABel( ks, dig, 1000 );
+  // std::vector<Z2i::Point> boundaryPoints;
+  // Surfaces<Z2i::KSpace>
+  //   ::track2DBoundaryPoints( boundaryPoints, ks, sAdj, dig, bel );
+  // Z2i::Curve c;
+  // c.initFromVector( boundaryPoints );  
+  // typedef Z2i::Curve::PointsRange Range; 
+  // Range r = c.getPointsRange(); 
   trace.endBlock();
 
 
-  trace.beginBlock("Delaunay");
-  for(Range::ConstIterator it=r.begin(), itend=r.end(); it != itend;
-      ++it)
-    { 
-      t.insert( Point( (*it)[0], (*it)[1]));
-      t.insert( Point( (*it)[0] + 3 + (int) ceil( ((double)b)/h ),
-		       (*it)[1] - 3 - (int) ceil( ((double)a)/h ) ));
-      t.insert( Point( (*it)[0] + 3 + (int) ceil( ((double)a)/h ),
-		       (*it)[1] + 3 + (int) ceil( ((double)b)/h ) ));
-    }
-  trace.endBlock();
+  // trace.beginBlock("Delaunay");
+  // for(Range::ConstIterator it=r.begin(), itend=r.end(); it != itend;
+  //     ++it)
+  //   { 
+  //     t.insert( Point( (*it)[0], (*it)[1]));
+  //     t.insert( Point( (*it)[0] + 3 + (int) ceil( ((double)b)/h ),
+  // 		       (*it)[1] - 3 - (int) ceil( ((double)a)/h ) ));
+  //     t.insert( Point( (*it)[0] + 3 + (int) ceil( ((double)a)/h ),
+  // 		       (*it)[1] + 3 + (int) ceil( ((double)b)/h ) ));
+  //   }
+  // trace.endBlock();
 
   std::cout << "number of vertices :  " ;
   std::cout << t.number_of_vertices() << std::endl;
@@ -974,9 +991,9 @@ int main ( int argc, char** argv )
                                          Board2D::Shape::SolidStyle,
                                          Board2D::Shape::RoundCap,
                                          Board2D::Shape::RoundJoin ));
-    for( Range::ConstIterator it=r.begin(), itend=r.end(); it != itend;
-         ++it)
-      board << *it;
+    // for( Range::ConstIterator it=r.begin(), itend=r.end(); it != itend;
+    //      ++it)
+    //   board << *it;
     board << CustomStyle( dP.className(), 
                           new CustomPen( Color(0,0,0), Color(255,0,255), 1, 
                                          Board2D::Shape::SolidStyle,
@@ -1026,28 +1043,28 @@ int main ( int argc, char** argv )
 
 
   // GridCurve
-  Z2i::Curve gc;
-  gc.initFromPointsRange( r.begin(), r.end() );
-  typedef Z2i::Curve::PointsRange::ConstIterator ConstIterator;
-  typedef ArithmeticalDSS<ConstIterator,int,4> DSS4;
-  typedef SaturatedSegmentation<DSS4> Segmentation;
-  //Segmentation
-  Z2i::Curve::PointsRange range = gc.getPointsRange();
-  DSS4 dss4RecognitionAlgorithm;
-  Segmentation theSegmentation( range.begin(), range.end(), dss4RecognitionAlgorithm );
+  // Z2i::Curve gc;
+  // gc.initFromPointsRange( r.begin(), r.end() );
+  // typedef Z2i::Curve::PointsRange::ConstIterator ConstIterator;
+  // typedef ArithmeticalDSS<ConstIterator,int,4> DSS4;
+  // typedef SaturatedSegmentation<DSS4> Segmentation;
+  // //Segmentation
+  // Z2i::Curve::PointsRange range = gc.getPointsRange();
+  // DSS4 dss4RecognitionAlgorithm;
+  // Segmentation theSegmentation( range.begin(), range.end(), dss4RecognitionAlgorithm );
          
 
   DGtal::Board2D board;
 
-  Z2i::Point dP;
-  board << CustomStyle( dP.className(), 
-                        new CustomPen( Color(0,0,0), Color(230,230,230), 1, 
-                                       Board2D::Shape::SolidStyle,
-                                       Board2D::Shape::RoundCap,
-                                       Board2D::Shape::RoundJoin ));
-  for(Range::ConstIterator it=r.begin(), itend=r.end(); it != itend;
-      ++it)
-    board << *it;
+  // Z2i::Point dP;
+  // board << CustomStyle( dP.className(), 
+  //                       new CustomPen( Color(0,0,0), Color(230,230,230), 1, 
+  //                                      Board2D::Shape::SolidStyle,
+  //                                      Board2D::Shape::RoundCap,
+  //                                      Board2D::Shape::RoundJoin ));
+  // for(Range::ConstIterator it=r.begin(), itend=r.end(); it != itend;
+  //     ++it)
+  //   board << *it;
 
   // // Implements flips on Delaunay on the sole criteria to minimize edge lengths !
   // // Interesting.
@@ -1148,44 +1165,48 @@ int main ( int argc, char** argv )
   // } 
 
   // Display Voronoi.
-  // for(Edge_iterator it = t.edges_begin(), itend=t.edges_end();
-  //     it != itend; ++it)
-  //   {
-  //     // vertex(cw(i)) and vertex(ccw(i)) of f.
-  //     Face_handle itf = it->first;
-  //     int i = it->second;
-  //     Z2i::Point a( toDGtal(itf->vertex( t.cw( i ) )->point()));
-  //     Z2i::Point b( toDGtal(itf->vertex( t.ccw( i ) )->point()));
-
-  //     CGAL::Object o = t.dual( it );
-  //     if (CGAL::object_cast<K::Segment_2>(&o)) 
-  //       {
-  //         const K::Segment_2* ptrSegment = CGAL::object_cast<K::Segment_2>(&o);
-  //         board.setPenColor(DGtal::Color::Black);
-  //         board.setFillColor( DGtal::Color::None );
-  //         board.setLineWidth( 2.0 );
-  //         board.drawLine( ptrSegment->source().x(),
-  //                         ptrSegment->source().y(),
-  //                         ptrSegment->target().x(),
-  //                         ptrSegment->target().y() );
-  //       }
-  //     else if (CGAL::object_cast<K::Ray_2>(&o)) 
-  //       {
-  //         const K::Ray_2* ptrRay = CGAL::object_cast<K::Ray_2>(&o);
-  //         board.setPenColor(DGtal::Color::Black);
-  //         board.setFillColor( DGtal::Color::None );
-  //         board.setLineWidth( 2.0 );
-  //         double dx = ptrRay->to_vector().x();
-  //         double dy = ptrRay->to_vector().y();
-  //         double norm = sqrt( dx*dx+dy*dy );
-  //         dx = 5.0 * dx / norm;
-  //         dy = 5.0 * dy / norm;
-  //         board.drawArrow( ptrRay->source().x(),
-  //                          ptrRay->source().y(),
-  //                          ptrRay->source().x() + dx, //1*ptrRay->to_vector().x(),
-  //                          ptrRay->source().y() + dy ); //1*ptrRay->to_vector().y() );
-  //       }
-  //   }
+  if ( vm.count( "voronoi" ) )
+    {
+      double f = vm["voronoi"].as<double>();
+      for(Edge_iterator it = t.edges_begin(), itend=t.edges_end();
+	  it != itend; ++it)
+	{
+	  // vertex(cw(i)) and vertex(ccw(i)) of f.
+	  Face_handle itf = it->first;
+	  int i = it->second;
+	  Z2i::Point a( toDGtal(itf->vertex( t.cw( i ) )->point()));
+	  Z2i::Point b( toDGtal(itf->vertex( t.ccw( i ) )->point()));
+	  
+	  CGAL::Object o = t.dual( it );
+	  if (CGAL::object_cast<K::Segment_2>(&o)) 
+	    {
+	      const K::Segment_2* ptrSegment = CGAL::object_cast<K::Segment_2>(&o);
+	      board.setPenColor(DGtal::Color::Black);
+	      board.setFillColor( DGtal::Color::None );
+	      board.setLineWidth( 2.0 );
+	      board.drawLine( ptrSegment->source().x(),
+			      ptrSegment->source().y(),
+			      ptrSegment->target().x(),
+			      ptrSegment->target().y() );
+	    }
+	  else if (CGAL::object_cast<K::Ray_2>(&o)) 
+	    {
+	      const K::Ray_2* ptrRay = CGAL::object_cast<K::Ray_2>(&o);
+	      board.setPenColor(DGtal::Color::Black);
+	      board.setFillColor( DGtal::Color::None );
+	      board.setLineWidth( 2.0 );
+	      double dx = ptrRay->to_vector().x();
+	      double dy = ptrRay->to_vector().y();
+	      double norm = sqrt( dx*dx+dy*dy );
+	      dx = f * dx / norm;
+	      dy = f * dy / norm;
+	      board.drawArrow( ptrRay->source().x(),
+			       ptrRay->source().y(),
+			       ptrRay->source().x() + dx, //1*ptrRay->to_vector().x(),
+			       ptrRay->source().y() + dy ); //1*ptrRay->to_vector().y() );
+	    }
+	}
+    }
 
   
   board.saveSVG("delaunay.svg");

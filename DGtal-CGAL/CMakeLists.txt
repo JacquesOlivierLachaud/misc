@@ -40,6 +40,7 @@ SET(SRCs
   2d-triangulation
   3d-triangulation
   3d-triangulation-2
+  3d-triangulation-3
   2d-patterns-v2
   3d-patterns
   3d-patterns-v2)
