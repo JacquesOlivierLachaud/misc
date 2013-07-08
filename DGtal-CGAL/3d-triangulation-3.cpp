@@ -948,7 +948,11 @@ public:
 	if ( ! ok ) continue;
 	removeFacet( toJoin, he_face1 );
 	removeFacet( toJoin, he_face2 );
-	info1.plane = planeTester;
+        HalfEdgeHandle nhe = myP.join_facet( he );
+        HalfEdgeHandle nhe_face = smallestHalfEdge( nhe );
+	FacetInformation & info = myPlaneMap.find( nhe_face )->second;
+        std::swap( info.plane, planeTester );
+	info1.plane.clear();
 	info2.plane.clear();
 	++nb_join;
       }
