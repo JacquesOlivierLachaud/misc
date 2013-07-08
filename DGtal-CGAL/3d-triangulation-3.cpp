@@ -17,6 +17,7 @@
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
+#include <boost/pending/disjoint_sets.hpp>
 
 #include <QtGui/qapplication.h>
 
@@ -33,6 +34,7 @@
 #include "DGtal/io/viewers/Viewer3D.h"
 #include "DGtal/io/DrawWithDisplay3DModifier.h"
 #include "DGtal/geometry/surfaces/COBAGenericNaivePlane.h"
+#include "DGtal/geometry/surfaces/ChordGenericNaivePlane.h"
 
 #include <CGAL/Delaunay_triangulation_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -827,6 +829,7 @@ class PolyhedronHull
   typedef typename Polyhedron::Halfedge_const_handle HalfEdgeConstHandle;
   typedef typename Polyhedron::Facet_handle    FacetHandle;
   typedef typename Polyhedron::Facet_const_handle FacetConstHandle;
+  typedef typename Polyhedron::Vertex_iterator VertexIterator;
   typedef typename Polyhedron::Edge_iterator   EdgeIterator;
   typedef typename Polyhedron::Facet_iterator  FacetIterator;
   typedef typename Polyhedron::Facet_const_iterator FacetConstIterator;
@@ -841,23 +844,59 @@ class PolyhedronHull
 
   typedef typename DGtal::SpaceND<3,int>       DSpace;
   typedef typename DSpace::Point               DPoint;
-  typedef typename DGtal::COBAGenericNaivePlane<DSpace,DGtal::int64_t> DigitalPlane;
+  typedef typename DGtal::ChordGenericNaivePlane<DPoint,DGtal::int64_t> DigitalPlane;
   struct FacetInformation {
     DigitalPlane plane;
   };
 
+  typedef std::map< HalfEdgeHandle, unsigned int> RankMap;
+  typedef std::map< HalfEdgeHandle, HalfEdgeHandle> ParentMap;
+  
+  // Adapter to map: Vertex -> unsigned int, used by disjoint_sets.
+  // Adapter to map: Vertex -> Vertex, used by disjoint_sets.
+  typedef boost::associative_property_map<RankMap> RankAssociativePropertyMap;
+  typedef boost::associative_property_map<ParentMap> ParentAssociativePropertyMap;
+  typedef boost::disjoint_sets< RankAssociativePropertyMap, ParentAssociativePropertyMap > DisjointSets;
+
+
   /// The mapping from a facet (defined by its smallest half-edge) to plane information.
-  typedef typename std::map<HalfEdgeConstHandle, FacetInformation> HE2Info;
-  HE2Info myPlaneMap;
+  typedef typename std::map<HalfEdgeHandle, FacetInformation> HE2Info;
+  typedef typename HE2Info::iterator HE2InfoIterator;
 
 private:
   Polyhedron myP;
   ToDGtal toDGtal;
-
+  HE2Info myPlaneMap;
+  RankMap myRankMap;
+  RankAssociativePropertyMap myRankAssociativePropertyMap;
+  ParentMap myParentMap;
+  ParentAssociativePropertyMap myParentAssociativePropertyMap;
+  DisjointSets myDisjointSets;
+  
 public:
-  inline PolyhedronHull() {}
+  inline PolyhedronHull() 
+    : myRankMap(), myRankAssociativePropertyMap( myRankMap ),
+      myParentMap(), myParentAssociativePropertyMap( myParentMap ),
+      myDisjointSets( myRankAssociativePropertyMap, myParentAssociativePropertyMap )
+  {}
+
   inline Polyhedron & P() { return myP; }
   inline const Polyhedron & P() const { return myP; }
+
+  inline HalfEdgeHandle nextCWAroundVertex( HalfEdgeHandle he ) const
+  { return he->opposite()->next(); }
+  inline HalfEdgeConstHandle nextCWAroundVertex( HalfEdgeConstHandle he ) const
+  { return he->opposite()->next(); }
+  inline unsigned int degreeBase( HalfEdgeConstHandle e ) const
+  { 
+    HalfEdgeConstHandle s = e;
+    unsigned int j = 0;
+    do {
+      ++j;
+      s = nextCWAroundVertex( s );
+    } while ( s != e );
+    return j;
+  }
 
   inline HalfEdgeConstHandle smallestHalfEdge( HalfEdgeConstHandle e ) const
   {
@@ -906,34 +945,41 @@ public:
       {
 	typename Core::Facet f = *it;
 	FacetHandle fh = core.polyhedronFacet( f );
-	HalfEdgeConstHandle facet_he = smallestHalfEdge( fh );
+	HalfEdgeHandle facet_he = smallestHalfEdge( fh );
+	myDisjointSets.make_set( facet_he );
 	typename Core::IndexList l = core.getPointIndices( f );
 	FacetInformation & info = myPlaneMap[ facet_he ];
-	info.plane.init( 300, 2, 1 );
+	// info.plane.init( 200, 3, 1 );
+	info.plane.init( 2, 1 );
 	std::vector<DPoint> dpoints( l.size() );
 	for ( unsigned int i = 0; i < l.size(); ++i )
 	  dpoints[ i ] = toDGtal( core.getPoint( l[ i ] ) );
 	// std::cout << "Facet " << j << " (" << dpoints.size() << ") " << std::flush;
 	info.plane.extend( dpoints[ 0 ] );
 	bool ok = info.plane.extend( dpoints.begin()+1, dpoints.end() );
-	ASSERT( ok && "[PolyhedronHull::initFromCore] Invalid plane." );
+	if ( ! ok ) 
+	  DGtal::trace.warning() << "[PolyhedronHull::initFromCore] Invalid plane." << std::endl;
 	// std::cout << info.plane << std::endl;
       }
+
   }
 
+  // Still may have errors.
   bool expand()
   {
     unsigned int nb_join = 0;
     unsigned int nb_edges = 0;
     MarkHE toJoin;
+    std::cout << "Searching concavities: " << std::flush;
     for ( EdgeIterator it = myP.edges_begin(), ite = myP.edges_end();
 	  it != ite; ++it, ++nb_edges )
       {
 	HalfEdgeHandle he = it;
 	// Get two neighboring facets
-	if ( signAngle( he ) > 0.0 ) continue; // do not touch convex pieces.
+	// if ( signAngle( he ) > 0.0 ) continue; // do not touch convex pieces.
 	toJoin.insert( he );
       }
+    std::cout << toJoin.size() << " found." << std::endl;
     while ( ! toJoin.empty() )
       {
 	HalfEdgeHandle he = *( toJoin.begin() );
@@ -941,24 +987,235 @@ public:
 	// Check fusion
 	HalfEdgeHandle he_face1 = smallestHalfEdge( he );
 	HalfEdgeHandle he_face2 = smallestHalfEdge( he->opposite() );
+	ASSERT( myPlaneMap.find( he_face1 ) != myPlaneMap.end() );
+	ASSERT( myPlaneMap.find( he_face2 ) != myPlaneMap.end() );
 	FacetInformation & info1 = myPlaneMap.find( he_face1 )->second;
 	FacetInformation & info2 = myPlaneMap.find( he_face2 )->second;
+	ASSERT( ! info1.plane.empty() );
+	ASSERT( ! info2.plane.empty() );
+	if ( info1.plane.size() == 1 ) continue; // invalid initial plane
+	if ( info2.plane.size() == 1 ) continue; // invalid initial plane
+	// std::cout << "---------------------------------------------------" << std::endl;
+	// std::cout << "Plane 1: " << info1.plane << std::endl;
+	// std::cout << "Plane 2: " << info2.plane << std::endl;
+	DigitalPlane planeTester = info1.plane;
+	bool ok = planeTester.extend( info2.plane.begin(), info2.plane.end() );
+	if ( ! ok ) continue;
+	if ( ( CGAL::circulator_size( he->vertex_begin() ) <= 3 )
+	     || ( CGAL::circulator_size( he->opposite()->vertex_begin() ) <= 3 ) )
+	  {
+	    // std::cout << "Join_facet would create a non-manifold." << std::endl;
+	    continue;
+	  }
+	removeFacet( toJoin, he_face1 );
+	removeFacet( toJoin, he_face2 );
+        HalfEdgeHandle nhe = myP.join_facet( he );
+        HalfEdgeHandle nhe_face = smallestHalfEdge( nhe );
+	myPlaneMap.erase( he_face1 );
+	myPlaneMap.erase( he_face2 );
+	typename HE2Info::iterator itnew = myPlaneMap.find( nhe_face );
+	if ( itnew == myPlaneMap.end() )
+	  {
+	    FacetInformation info;
+	    info.plane = planeTester;
+	    myPlaneMap[ nhe_face ] = info;
+	  }
+	else
+	  {
+	    ASSERT( false );
+	    itnew->second.plane = planeTester;
+	  }
+	++nb_join;
+      }
+    std::cout << "**********************************************************************"
+	      << std::endl;
+    std::cout << "Joining facets: " << nb_join << " / " << nb_edges << std::endl;
+    return nb_join != 0;
+  }  
+
+  // Does not seg. fault anymore. However some natural merges are
+  // blocked by the fact that all degrees stay >= 4.
+  bool expandByVertices()
+  {
+    unsigned int nb_join = 0;
+    unsigned int nb_vertices = 0;
+    MarkHE toErase;
+    std::cout << "Searching concavities: " << std::flush;
+    for ( VertexIterator it = myP.vertices_begin(), ite = myP.vertices_end();
+	  it != ite; ++it, ++nb_vertices )
+      {
+	HalfEdgeHandle he = it->halfedge();
+	HalfEdgeHandle he_around_vtx = he;
+	bool convex = true;
+	do {
+	  if ( signAngle( he_around_vtx ) < 0.0 ) convex = false;
+	  he_around_vtx = nextCWAroundVertex( he_around_vtx );
+	} while ( ( he_around_vtx != he ) );
+	// Get two neighboring facets
+	// if ( ! convex )
+	  toErase.insert( he );
+      }
+    std::cout << toErase.size() << " found." << std::endl;
+    while ( ! toErase.empty() )
+      {
+	HalfEdgeHandle he = *( toErase.begin() );
+	toErase.erase( toErase.begin() );
+	if ( degreeBase( he ) <= 2 ) continue;
+	// Check fusion
+	std::list<HalfEdgeHandle> faces;
+	std::list<DigitalPlane*>  planes;
+	std::vector<unsigned int> degrees;
+	unsigned int degree = 0;
+	HalfEdgeHandle he_around_vtx = he;
+	do {
+	  HalfEdgeHandle he_face = smallestHalfEdge( he_around_vtx );
+	  ASSERT( myPlaneMap.find( he_face ) != myPlaneMap.end() );
+	  faces.push_back( he_face );
+	  planes.push_back( &( myPlaneMap.find( he_face )->second.plane ) );
+	  degrees.push_back( degreeBase( he_around_vtx->opposite() ) );
+	  he_around_vtx = nextCWAroundVertex( he_around_vtx );
+	  ++degree;
+	} while ( he_around_vtx != he );
+
+	typename std::list<DigitalPlane*>::const_iterator itplanes = planes.begin();
+	DigitalPlane planeTester = *( *itplanes++ );
+	ASSERT( ! planeTester.empty() );
+	if ( planeTester.size() == 1 ) continue; // invalid initial plane
+	bool ok = true;
+	for ( ; ok && ( itplanes != planes.end() ); ++itplanes )
+	  {
+	    const DigitalPlane & otherPlane = *( *itplanes );
+	    ASSERT( ! otherPlane.empty() );
+	    if ( otherPlane.size() == 1 ) // invalid initial plane
+	      { ok = false; continue; } 
+	    ok = planeTester.extend( otherPlane.begin(), otherPlane.end() );
+	  }
+	
+	if ( ! ok ) continue;
+	std::cout << "--- Erasing vertex " << he->opposite()->vertex()->point() 
+		  << " of degree " << degree << ".";
+	for ( unsigned int i = 0; i < degrees.size(); ++i )
+	  std::cout << " " << degrees[ i ];
+	bool bad_degree = false;
+	for ( unsigned int i = 0; i < degrees.size(); ++i )
+	  if ( degrees[ i ] <= 3 )
+	    { bad_degree = true; break; }
+	if ( bad_degree )
+	  {
+	    std::cout << " Cancelled." << std::endl;
+	    continue;
+	  }
+	std::cout << std::endl;
+	for ( typename std::list<HalfEdgeHandle>::const_iterator itf = faces.begin(),
+		itfend = faces.end(); itf != itfend; ++itf )
+	  {
+	    removeFacet( toErase, *itf );
+	    myPlaneMap.erase( *itf );
+	  }
+	// Look for polyhedron case.
+	if ( P().is_tetrahedron( he ) )
+	  {
+	    DGtal::trace.warning() << "--- Erasing tetrahedron: " 
+				   << he->vertex()->point() << std::endl;
+	    P().erase_connected_component( he );
+	    ++nb_join;
+	    continue;
+	  }
+	// Look for almost-polyhedron case.
+	HalfEdgeHandle nhe = P().erase_center_vertex( he->opposite() );
+	HalfEdgeHandle nhe_face = smallestHalfEdge( nhe );
+	typename HE2Info::iterator itnew = myPlaneMap.find( nhe_face );
+	if ( itnew == myPlaneMap.end() )
+	  {
+	    FacetInformation info;
+	    info.plane = planeTester;
+	    myPlaneMap[ nhe_face ] = info;
+	  }
+	else
+	  {
+	    DGtal::trace.warning() << "--- Weird: faces has already a plane." 
+				   << std::endl;
+	    // ASSERT( false );
+	    itnew->second.plane = planeTester;
+	  }
+	++nb_join;
+      }
+    std::cout << "**********************************************************************"
+	      << std::endl;
+    std::cout << "Erase vertices: " << nb_join << " / " << nb_vertices << std::endl;
+    return nb_join != 0;
+  }  
+
+
+  bool expandByUnionFind()
+  {
+   
+    unsigned int nb_join = 0;
+    unsigned int nb_edges = 0;
+    MarkHE toJoin;
+    std::cout << "Searching concavities: " << std::flush;
+    for ( EdgeIterator it = myP.edges_begin(), ite = myP.edges_end();
+	  it != ite; ++it, ++nb_edges )
+      {
+	HalfEdgeHandle he = it;
+	HalfEdgeHandle rep1 = myDisjointSets.find_set( smallestHalfEdge( he ) );
+	HalfEdgeHandle rep2 = myDisjointSets.find_set( smallestHalfEdge( he->opposite() ) );
+	if ( rep1 != rep2 ) toJoin.insert( he );
+      }
+    std::cout << toJoin.size() << " found." << std::endl;
+    while ( ! toJoin.empty() )
+      {
+	HalfEdgeHandle he = *( toJoin.begin() );
+	toJoin.erase( toJoin.begin() );
+	HalfEdgeHandle rep1 = myDisjointSets.find_set( smallestHalfEdge( he ) );
+	HalfEdgeHandle rep2 = myDisjointSets.find_set( smallestHalfEdge( he->opposite() ) );
+	if ( rep1 == rep2 ) continue;
+	// Check fusion
+	HalfEdgeHandle he_face1 = smallestHalfEdge( rep1 );
+	HalfEdgeHandle he_face2 = smallestHalfEdge( rep2 );
+	ASSERT( myPlaneMap.find( he_face1 ) != myPlaneMap.end() );
+	ASSERT( myPlaneMap.find( he_face2 ) != myPlaneMap.end() );
+	FacetInformation & info1 = myPlaneMap.find( he_face1 )->second;
+	FacetInformation & info2 = myPlaneMap.find( he_face2 )->second;
+	ASSERT( ! info1.plane.empty() );
+	ASSERT( ! info2.plane.empty() );
+	if ( info1.plane.size() == 1 ) continue; // invalid initial plane
+	if ( info2.plane.size() == 1 ) continue; // invalid initial plane
+	// std::cout << "---------------------------------------------------" << std::endl;
+	// std::cout << "Plane 1: " << info1.plane << std::endl;
+	// std::cout << "Plane 2: " << info2.plane << std::endl;
 	DigitalPlane planeTester = info1.plane;
 	bool ok = planeTester.extend( info2.plane.begin(), info2.plane.end() );
 	if ( ! ok ) continue;
 	removeFacet( toJoin, he_face1 );
 	removeFacet( toJoin, he_face2 );
-        HalfEdgeHandle nhe = myP.join_facet( he );
-        HalfEdgeHandle nhe_face = smallestHalfEdge( nhe );
-	FacetInformation & info = myPlaneMap.find( nhe_face )->second;
-        std::swap( info.plane, planeTester );
-	info1.plane.clear();
-	info2.plane.clear();
+	myPlaneMap.erase( he_face1 );
+	myPlaneMap.erase( he_face2 );
+	myDisjointSets.link( rep1, rep2 );
+	HalfEdgeHandle nrep = myDisjointSets.find_set( rep1 );
+	HalfEdgeHandle nhe_face = smallestHalfEdge( nrep );
+	typename HE2Info::iterator itnew = myPlaneMap.find( nhe_face );
+	if ( itnew == myPlaneMap.end() )
+	  {
+	    FacetInformation info;
+	    info.plane = planeTester;
+	    myPlaneMap[ nhe_face ] = info;
+	  }
+	else
+	  {
+	    DGtal::trace.warning() << "--- Weird: faces has already a plane." 
+				   << std::endl;
+	    itnew->second.plane = planeTester;
+	  }
 	++nb_join;
       }
+    std::cout << "**********************************************************************"
+	      << std::endl;
     std::cout << "Joining facets: " << nb_join << " / " << nb_edges << std::endl;
     return nb_join != 0;
   }  
+
+
 
   double signAngle( HalfEdgeConstHandle he ) const
   {
@@ -994,319 +1251,6 @@ public:
     } while ( e != he );
   }
 
-};
-
-
-
-
-template <typename TKernel>
-class PolyhedronFiller
-{
-  typedef TKernel                              Kernel;
-  typedef typename CGAL::Polyhedron_3<Kernel>  Polyhedron;
-  typedef toCGALFunctor<Kernel>       ToCGAL;
-  typedef toDGtalFunctor<Kernel>      ToDGtal;
-  typedef typename Polyhedron::Vertex          Vertex;
-  typedef typename Polyhedron::Halfedge        HalfEdge;
-  typedef typename Polyhedron::Facet           Facet;
-  typedef typename Polyhedron::Vertex_handle   VertexHandle;
-  typedef typename Polyhedron::Halfedge_handle HalfEdgeHandle;
-  typedef typename Polyhedron::Facet_handle    FacetHandle;
-  typedef typename Polyhedron::Edge_iterator   EdgeIterator;
-  typedef typename Polyhedron::Facet_iterator  FacetIterator;
-  typedef typename Polyhedron::Facet_const_iterator FacetConstIterator;
-  typedef typename Polyhedron::Halfedge_around_facet_const_circulator 
-  HalfedgeFacetConstCirculator;
-  typedef typename Kernel::Point_3             Point;
-  typedef typename Kernel::Vector_3            Vector;
-  typedef typename Kernel::Plane_3             Plane;
-  typedef typename Kernel::FT                  Component;
-
-
-private:
-  Polyhedron myP;
-  ToDGtal toDGtal;
-
-public:
-  inline PolyhedronFiller() {}
-  inline Polyhedron & P() { return myP; }
-  inline const Polyhedron & P() const { return myP; }
-
-  inline Vector cross( const Vector & a, const Vector & b ) const
-  {
-    return Vector( a.y() * b.z() - a.z() * b.y(),
-		   a.z() * b.x() - a.x() * b.z(),
-		   a.x() * b.y() - a.y() * b.x() );
-  }
-  
-  /**
-     @return the angle at half-edge \a he (positive is convex, zero is
-     flat, negative is concave).
-  */
-  double signAngle( PointZ3 & zs, PointZ3 & zt, PointZ3 & zu, PointZ3 & zv,
-		    HalfEdgeHandle he ) const
-  {
-    VertexHandle t = he->vertex();
-    VertexHandle s = he->opposite()->vertex();
-    VertexHandle u = he->next()->vertex();
-    VertexHandle v = he->opposite()->next()->vertex();
-    Point ps = s->point(); zs = toDGtal( ps );
-    Point pt = t->point(); zt = toDGtal( pt );
-    Point pu = u->point(); zu = toDGtal( pu );
-    Point pv = v->point(); zv = toDGtal( pv );
-    // Compute dihedral angle at (s,t)
-    Plane stu( ps, pt, pu );
-    Plane tsv( pt, ps, pv );
-    Vector n1 = stu.orthogonal_vector(); //n1 = n1 / n1.squared_length();
-    Vector n2 = tsv.orthogonal_vector(); //n2 = n2 / n2.squared_length();
-    Vector c = cross( n1, n2 );
-    return c * (pt -ps); // positive is convex
-  }
-
-  double signAngle( HalfEdgeHandle he ) const
-  {
-    PointZ3 zs, zt, zu, zv;
-    return signAngle( zs, zt, zu, zv, he );
-  }
-
-  double angleFlippedEdge( HalfEdgeHandle he ) const
-  {
-    VertexHandle t = he->vertex();
-    VertexHandle s = he->opposite()->vertex();
-    VertexHandle u = he->next()->vertex();
-    VertexHandle v = he->opposite()->next()->vertex();
-    Point ps = s->point(); 
-    Point pt = t->point(); 
-    Point pu = u->point(); 
-    Point pv = v->point(); 
-    // Compute dihedral angle at (s,t)
-    Plane svu( ps, pv, pu );
-    Plane tuv( pt, pu, pv );
-    double sa = sinAngle( pu - pv, svu, tuv );
-    return asin( sa );
-  }
-
-
-  /**
-     e is an oriented edge (a vector) separating two faces of
-     supporting plane p1 (left of vector) and p2 (right of vector).
-  */
-  double sinAngle( const Vector & e, const Plane & p1, const Plane & p2 ) const
-  {
-    Vector n1 = p1.orthogonal_vector(); 
-    Vector n2 = p2.orthogonal_vector(); 
-    Vector c = cross( n1, n2 );
-    return c * e 
-      / sqrt( n1.squared_length() * n2.squared_length() * e.squared_length() ); 
-    // sin(angle) positive is convex
-  }
-
-  bool checkFlipGeometry( HalfEdgeHandle he ) const
-  {
-    VertexHandle t = he->vertex();
-    VertexHandle s = he->opposite()->vertex();
-    VertexHandle u = he->next()->vertex();
-    VertexHandle v = he->opposite()->next()->vertex();
-    Point ps = s->point(); 
-    Point pt = t->point(); 
-    Point pu = u->point(); 
-    Point pv = v->point(); 
-    // Check angle at (u,s) 
-    Plane stu( ps, pt, pu );
-    Plane osu( he->prev()->opposite()->next()->vertex()->point(), ps, pu );
-    double us_sa1 = sinAngle( ps - pu, stu, osu );
-    Plane vsu( pv, ps, pu );
-    double us_sa2 = sinAngle( ps - pu, stu, vsu );
-    if ( us_sa2 >= us_sa1 ) 
-      return false; // facet (o,s,u) would be inside tetrahedron (s,t,u,v)
-    // Check angle at (s,v)
-    Plane tsv( pt, ps, pv );
-    Plane ovs( he->opposite()->next()->opposite()->next()->vertex()->point(), pv, ps );
-    double sv_sa1 = sinAngle( pv - ps, tsv, ovs );
-    double sv_sa2 = sinAngle( pv - ps, tsv, vsu );
-    if ( sv_sa2 >= sv_sa1 ) 
-      return false; // facet (o',v,s) would be inside tetrahedron (s,t,u,v)
-    return true;
-  }
-
-
-  typedef typename std::set<HalfEdgeHandle> MarkHE;
-
-  bool expand()
-  {
-    unsigned int nb_ccv = 0;
-    unsigned int nb_edges = 0;
-    PointZ3 zs, zt, zu, zv;
-    MarkHE toFlip;
-    MarkHE toErase;
-    for ( EdgeIterator it = myP.edges_begin(), ite = myP.edges_end();
-	  it != ite; ++it, ++nb_edges )
-      {
-	HalfEdgeHandle he = it;
-        double sa = signAngle( zs, zt, zu, zv, he );
-	if ( sa >= 0.0 ) continue; // positive is convex
-	// Checks it it a simple hole
-	if ( he->next()->opposite()->next() == he->opposite()->prev()->opposite() )
-	  { // hole at t
-	    int64_t nb = countLatticePointsInTetrahedra
-	      ( zs, zt, zu, zv, true, true, false, true );
-	    // bool stu_closed, bool tuv_closed, bool uvs_closed, bool vst_closed
-	    if ( nb <= 4 ) toErase.insert( he );
-	  }
-	else if ( he->prev()->opposite()->prev() == he->opposite()->next()->opposite() )
-	  { // hole at s
-	    int64_t nb = countLatticePointsInTetrahedra
-	      ( zs, zt, zu, zv, true, false, true, true );
-	    // bool stu_closed, bool tuv_closed, bool uvs_closed, bool vst_closed
-	    if ( nb <= 4 ) toErase.insert( he->opposite() );
-	  }
-	// normal concavities.
-	int64_t nb = countLatticePointsInTetrahedra
-	  ( zs, zt, zu, zv, true, false, false, true );
-	if ( nb <= 4 )
-	  {
-	    // if ( ( signAngle( he->next() ) >= 0.0 )
-	    // 	 && ( signAngle( he->prev() ) >= 0.0 )
-	    // 	 && ( signAngle( he->opposite()->next() ) >= 0.0 )
-	    // 	 && ( signAngle( he->opposite()->prev() ) >= 0.0 ) )
-	    if ( checkFlipGeometry( he ) && checkFlipGeometry( he->opposite() ) )
-              {
-                double a = angleFlippedEdge( he );
-                if ( ( a <= 0.0 ) || ( a >= M_PI ) )
-                  DGtal::trace.warning() << "Invalid flipped edge angle: " << a << std::endl;
-                else // if ( a > 0.0 && a < (M_PI / 2.0 ) )
-                  toFlip.insert( he );
-              }
-	  }
-	++nb_ccv;
-      }
-    DGtal::trace.info() << "Found concavities: " << nb_ccv  << std::endl
-			<< "         to erase: " << toErase.size() << std::endl
-			<< "          to flip: " << toFlip.size() << std::endl
-			<< "                 / " << nb_edges << std::endl;
-    bool changes = false;
-    // Process holes.
-    DGtal::trace.info() << "Processing holes..." << std::endl;
-    while ( ! toErase.empty() )
-      {
-	HalfEdgeHandle st = *( toErase.begin() );
-	toErase.erase( toErase.begin() );
-	removeFacet( toErase, st );
-	removeFacet( toErase, st->opposite() );
-	removeFacet( toErase, st->next()->opposite() );
-	// removeFacet( toErase, st->opposite()->next()->opposite() );
-	removeFacet( toFlip, st );
-	removeFacet( toFlip, st->opposite() );
-	removeFacet( toFlip, st->next()->opposite() );
-	// removeFacet( toFlip, st->opposite()->next()->opposite() );
-	HalfEdgeHandle ut = st->next()->opposite();
-	HalfEdgeHandle vt = st->opposite()->next()->next();
-	bool tetra_st = st->opposite()->next()->opposite()->next() 
-	  == st->next()->next()->opposite();
-	bool tetra_ut = ut->opposite()->next()->opposite()->next() 
-	  == ut->next()->next()->opposite();
-	bool tetra_vt = vt->opposite()->next()->opposite()->next() 
-	  == vt->next()->next()->opposite();
-	if ( P().is_tetrahedron( st ) )
-	  {
-	    std::cout << "tetra to erase (stuv): " << st->vertex()->point() << std::endl;
-	    P().erase_connected_component( st );
-	  }
-	else if ( tetra_st )
-	  {
-	    ASSERT( (! tetra_ut) && (! tetra_vt) );
-	    std::cout << "tetra to erase (st): " << st->vertex()->point() << std::endl;
-	    HalfEdgeHandle uv = st->next()->opposite()->prev();
-	    removeFacet( toErase, uv );
-	    removeFacet( toFlip, uv );
-	    HalfEdgeHandle nuv = P().join_facet( uv );
-	    st = P().erase_center_vertex( st );
-	    P().erase_center_vertex( st );
-	  }
-	else if ( tetra_ut )
-	  {
-	    ASSERT( (! tetra_vt) && (! tetra_st) );
-	    std::cout << "tetra to erase (ut): " << ut->vertex()->point() << std::endl;
-	    HalfEdgeHandle vs = ut->next()->opposite()->prev();
-	    removeFacet( toErase, vs );
-	    removeFacet( toFlip, vs );
-	    HalfEdgeHandle nvs = P().join_facet( vs );
-	    ut = P().erase_center_vertex( ut );
-	    P().erase_center_vertex( ut );
-	  }
-	else if ( tetra_vt )
-	  {
-	    ASSERT( (! tetra_st) && (! tetra_ut) );
-	    std::cout << "tetra to erase (vt): " << vt->vertex()->point() << std::endl;
-	    HalfEdgeHandle su = vt->next()->opposite()->prev();
-	    removeFacet( toErase, su );
-	    removeFacet( toFlip, su );
-	    HalfEdgeHandle nsu = P().join_facet( su );
-	    vt = P().erase_center_vertex( vt );
-	    P().erase_center_vertex( vt );
-	  }
-	else
-	  {
-	    std::cout << "Erasing vertex: " << st->vertex()->point() << std::endl;
-	    P().erase_center_vertex( st );
-	  }
-	changes = true;
-        toErase.clear();
-        toFlip.clear();
-      }
-    DGtal::trace.info() << "Processing flips..." << std::endl;
-    while ( ! toFlip.empty() )
-      {
-        typename MarkHE::iterator itbest = toFlip.begin();
-        double a = angleFlippedEdge( *itbest );
-        for ( typename MarkHE::iterator it = itbest, ite = toFlip.end();
-              it != ite; ++it )
-          {
-            double b = angleFlippedEdge( *it );
-            if ( b < a ) 
-              { a = b; itbest = it; }
-          }
-	HalfEdgeHandle he = *itbest;
-	toFlip.erase( itbest );
-	// HalfEdgeHandle he = *( toFlip.begin() );
-	// toFlip.erase( toFlip.begin() );
-    	if ( checkFlipGeometry( he ) && checkFlipGeometry( he->opposite() ) )
-    	  {
-    	    removeFacet( toFlip, he );
-    	    removeFacet( toFlip, he->opposite() );
-    	    std::cout << "Flipping edge: " << he->vertex()->point() 
-    		      << " -> " << he->opposite()->vertex()->point() 
-                      << " a=" << a << std::endl;
-    	    P().flip_edge( he );
-    	    changes = true;
-            toFlip.clear();
-    	  }
-    	else
-    	  std::cout << "Edge has changed: " << he->vertex()->point() 
-    		    << " -> " << he->opposite()->vertex()->point() << std::endl;
-      }
-    // Process concavities.
-    return changes;
-  }
-
-  void markFacet( MarkHE & markedHE, HalfEdgeHandle he )
-  {
-    HalfEdgeHandle e = he;
-    do {
-      markedHE.insert( e );
-      e = e->next();
-    } while ( e != he );
-  }
-  void removeFacet( MarkHE & markedHE, HalfEdgeHandle he )
-  {
-    HalfEdgeHandle e = he;
-    do {
-      typename MarkHE::iterator it = markedHE.find( e );
-      if ( it != markedHE.end() ) markedHE.erase( it );
-      e = e->next();
-    } while ( e != he );
-  }
-
   template <typename Viewer>
   void view( Viewer & viewer, double retract ) const
   {
@@ -1315,17 +1259,49 @@ public:
 	  it != ite; ++it )
       {
 	Facet f = *it;
+	DGtal::Color col( random() % 256, random() % 256, random() % 256, 255 );
+
 	// HalfedgeFacetConstCirculator ci = it->facet_begin();
 	HalfEdgeHandle he = f.halfedge(); // *ci; //->halfedge();
+	Point a( he->vertex()->point() );
+	for ( HalfEdgeHandle he2 = he->next(); he2->next() != he; he2 = he2->next() )
+	  {
+	    Point b( he2->vertex()->point() );
+	    Point c( he2->next()->vertex()->point() );
+	    displayTriangle( viewer, toDGtal, a, b, c,
+			     col, retract );
+	  }
+      }
+  }
+
+  template <typename Viewer>
+  void viewUnionFind( Viewer & viewer, double retract )
+  {
+    DGtal::Color colBasicFacet1( 0, 255, 0, 255 );
+    std::map<HalfEdgeHandle,DGtal::Color> colormap;
+    for ( FacetConstIterator it = P().facets_begin(), ite = P().facets_end();
+	  it != ite; ++it )
+      {
+	Facet f = *it;
+	HalfEdgeHandle he = f.halfedge();
+	DGtal::Color col( random() % 256, random() % 256, random() % 256, 255 );
+	colormap[ myDisjointSets.find_set( smallestHalfEdge( he ) ) ] = col;
+      }
+    for ( FacetConstIterator it = P().facets_begin(), ite = P().facets_end();
+	  it != ite; ++it )
+      {
+	Facet f = *it;
+	HalfEdgeHandle he = f.halfedge();
+	DGtal::Color col = colormap[ myDisjointSets.find_set( smallestHalfEdge( he ) ) ];
 	Point a( he->vertex()->point() );
 	Point b( he->next()->vertex()->point() );
 	Point c( he->next()->next()->vertex()->point() );
 	displayTriangle( viewer, toDGtal, a, b, c,
-			 colBasicFacet1, retract );
+			 col, retract );
       }
   }
-  
 };
+
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1526,6 +1502,9 @@ int main( int argc, char ** argv ) {
       }
   } //  if ( view & 0x1 ) {
 
+  viewerCore << Viewer3D::updateDisplay;
+  application.exec();
+
   // start viewer
   // int view = vm["view"].as<int>();
   // Viewer3D viewerRCH;
@@ -1545,26 +1524,44 @@ int main( int argc, char ** argv ) {
   //     }
   // }
 
-  i = 0;
-  for ( FacetSet::const_iterator it = core.boundary().begin(), 
-	  itend = core.boundary().end(); it != itend; ++it, ++i )
-    {
-      std::cout << "Facet " << i << ":";
-      IndexList l = core.getPointIndices( *it );
-      for ( unsigned int j = 0; j < l.size(); ++j )
-	std::cout << " " << l[ j ];
-      std::cout << std::endl;
-    }
+  // // Display facet points
+  // i = 0;
+  // for ( FacetSet::const_iterator it = core.boundary().begin(), 
+  // 	  itend = core.boundary().end(); it != itend; ++it, ++i )
+  //   {
+  //     std::cout << "Facet " << i << ":";
+  //     IndexList l = core.getPointIndices( *it );
+  //     for ( unsigned int j = 0; j < l.size(); ++j )
+  // 	std::cout << " " << l[ j ];
+  //     std::cout << std::endl;
+  //   }
+
+  
+  while ( core.pruneBoundary() ) 
+    ;
 
   // Init polyhedron hull.
   PolyhedronHull<K> PH;
   PH.initFromCore( core );
-  while ( PH.expand() )
+  // PH.expand();
+  while ( PH.expandByUnionFind() ) // ( PH.expandByVertices() )
     {
+      Viewer3D viewer3d;
+      viewer3d.show();
+      // PH.view( viewer3d, retract );
+      PH.viewUnionFind( viewer3d, retract );
+      viewer3d << Viewer3D::updateDisplay;
+      application.exec();
+      // PH.expand();
     }
-
-  viewerCore << Viewer3D::updateDisplay;
-  application.exec();
+  
+  {
+    Viewer3D viewer3d;
+    viewer3d.show();
+    PH.viewUnionFind( viewer3d, retract );
+    viewer3d << Viewer3D::updateDisplay;
+    application.exec();
+  }
 
   std::cout << "number of vertices :  " ;
   std::cout << T.number_of_vertices() << std::endl;
@@ -1575,31 +1572,6 @@ int main( int argc, char ** argv ) {
   std::cout << "number of cells :  " ;
   std::cout << T.number_of_cells() << std::endl;
 
-  while ( core.pruneBoundary() ) 
-    ;
-
-  PolyhedronFiller<K> PF;
-  Polyhedron & P = PF.P();
-  P.delegate( core );
-  i = 0;
-  while ( PF.expand() )
-    {
-      if ( i++ % 1000 == 0 )
-        {
-          Viewer3D viewer3d;
-          viewer3d.show();
-          PF.view( viewer3d, retract );
-          viewer3d << Viewer3D::updateDisplay;
-          application.exec();
-          std::ostringstream sname;
-          sname << "tmp/bdry-" << std::setfill( '0' ) << std::setw( 2 ) << (i/1000) << ".off";
-          std::ofstream file_off( sname.str().c_str() );
-          file_off << P;
-          file_off.close();
-        }
-    }
-  std::cout << "Polyhedron number of vertices :  " ;
-  std::cout << P.size_of_vertices() << std::endl;
 
   Point3 low = toCGAL( ks.lowerBound() );
   Point3 high = toCGAL( ks.upperBound() );
@@ -1609,7 +1581,7 @@ int main( int argc, char ** argv ) {
   // std::cout << "Enter a key to finish" << std::endl;
   // char ch;
   // std::cin >> ch;
-  file_off << P;
+  file_off << PH.P();
   file_off.close();
 
   // Build_triangle<HalfedgeDS> triangle;
@@ -1617,3 +1589,13 @@ int main( int argc, char ** argv ) {
   // CGAL_assertion( P.is_triangle( P.halfedges_begin()));
   return 0;
 }
+
+/*
+  A few nice examples:
+
+  ./3d-triangulation-3 -p "(15*x+21*y+37*z-6)*(31*x-18*y-28*z-5)" -b 10 -g 0.25 -G 2
+  ./3d-triangulation-3 -p "x^2+y^2+2*z^2-x*y*z+z^3-100" -b 20 -g 0.5 -G 1
+  ./3d-triangulation-3 -p "0.5*(z^2-4*4)^2+(x^2-7*7)^2+(y^2-7*7)^2-7.2*7.2*7.2*7.2" -b 15 -g 0.5 -G 1
+  ./3d-triangulation-3 -p "(1-(x^2+y^2))^2*(1+(x^2+y^2))^2-z" -b 2 -g 0.05 -G 1
+
+ */
