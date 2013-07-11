@@ -134,6 +134,15 @@ void displayCell( Viewer & viewer, const ToDGtal & toDGtal,
     displayFacet( viewer, toDGtal, std::make_pair( c, i ), col, retract );
 }
 
+template <typename Viewer, typename ToDGtal>
+void displayPoint( Viewer & viewer, const ToDGtal & toDGtal,
+		   typename ToDGtal::Point3 a,
+		   const DGtal::Color & col, 
+		   double retract )
+{
+  PointZ3 p = toDGtal( a );
+  viewer << DGtal::CustomColors3D( col, col ) << p;
+}
 
 
 // A modifier creating a triangle with the incremental builder.
@@ -866,12 +875,14 @@ class PolyhedronHull
 private:
   Polyhedron myP;
   ToDGtal toDGtal;
+  ToCGAL toCGAL;
   HE2Info myPlaneMap;
   RankMap myRankMap;
   RankAssociativePropertyMap myRankAssociativePropertyMap;
   ParentMap myParentMap;
   ParentAssociativePropertyMap myParentAssociativePropertyMap;
   DisjointSets myDisjointSets;
+  std::map<HalfEdgeHandle,DGtal::Color> myColormap;
   
 public:
   inline PolyhedronHull() 
@@ -950,7 +961,7 @@ public:
 	typename Core::IndexList l = core.getPointIndices( f );
 	FacetInformation & info = myPlaneMap[ facet_he ];
 	// info.plane.init( 200, 3, 1 );
-	info.plane.init( 2, 1 );
+	info.plane.init( 3, 1 );
 	std::vector<DPoint> dpoints( l.size() );
 	for ( unsigned int i = 0; i < l.size(); ++i )
 	  dpoints[ i ] = toDGtal( core.getPoint( l[ i ] ) );
@@ -1278,27 +1289,74 @@ public:
   void viewUnionFind( Viewer & viewer, double retract )
   {
     DGtal::Color colBasicFacet1( 0, 255, 0, 255 );
-    std::map<HalfEdgeHandle,DGtal::Color> colormap;
     for ( FacetConstIterator it = P().facets_begin(), ite = P().facets_end();
 	  it != ite; ++it )
       {
 	Facet f = *it;
 	HalfEdgeHandle he = f.halfedge();
 	DGtal::Color col( random() % 256, random() % 256, random() % 256, 255 );
-	colormap[ myDisjointSets.find_set( smallestHalfEdge( he ) ) ] = col;
+	myColormap[ myDisjointSets.find_set( smallestHalfEdge( he ) ) ] = col;
       }
     for ( FacetConstIterator it = P().facets_begin(), ite = P().facets_end();
 	  it != ite; ++it )
       {
 	Facet f = *it;
 	HalfEdgeHandle he = f.halfedge();
-	DGtal::Color col = colormap[ myDisjointSets.find_set( smallestHalfEdge( he ) ) ];
+	DGtal::Color col = myColormap[ myDisjointSets.find_set( smallestHalfEdge( he ) ) ];
 	Point a( he->vertex()->point() );
 	Point b( he->next()->vertex()->point() );
 	Point c( he->next()->next()->vertex()->point() );
 	displayTriangle( viewer, toDGtal, a, b, c,
 			 col, retract );
       }
+  }
+
+  typedef typename std::set<HalfEdgeHandle> Representatives;
+  typedef typename std::map<Point,Representatives> MapPoint2Planes;
+
+  template <typename Viewer>
+  void viewUnionFindPoints( Viewer & viewer, double retract )
+  {
+    MapPoint2Planes p2p;
+    for ( FacetConstIterator it = P().facets_begin(), ite = P().facets_end();
+	  it != ite; ++it )
+      {
+	Facet f = *it;
+	HalfEdgeHandle he = f.halfedge();
+	HalfEdgeHandle rep1 = myDisjointSets.find_set( smallestHalfEdge( he ) );
+	HalfEdgeHandle he_face1 = smallestHalfEdge( rep1 );
+	ASSERT( myPlaneMap.find( he_face1 ) != myPlaneMap.end() );
+	FacetInformation & info1 = myPlaneMap.find( he_face1 )->second;
+	for ( typename DigitalPlane::ConstIterator itp = info1.plane.begin(),
+		itpend = info1.plane.end(); itp != itpend; ++itp )
+	  {
+	    Point p = toCGAL( *itp );
+	    p2p[ p ].insert( rep1 );
+	  }
+      }
+    for ( typename MapPoint2Planes::const_iterator it = p2p.begin(), ite = p2p.end();
+	  it != ite; ++it )
+      {
+	Point p = it->first; 
+	const Representatives & reps = it->second;
+	DGtal::Color c = pointColor( reps.begin(), reps.end() );
+	displayPoint( viewer, toDGtal, p, c, retract );
+      }
+  }
+
+  template <typename HalfEdgeHandleIterator>
+  DGtal::Color pointColor( HalfEdgeHandleIterator itb, HalfEdgeHandleIterator ite )
+  {
+    int r = 0, g = 0, b = 0;
+    int n = 0;
+    for ( ; itb != ite; ++itb, ++n )
+      {
+	DGtal::Color c = myColormap[ *itb ];
+	r += c.red();
+	g += c.green();
+	b += c.blue();
+      }
+    return DGtal::Color( r / n, g / n, b / n );
   }
 };
 
@@ -1560,6 +1618,10 @@ int main( int argc, char ** argv ) {
     viewer3d.show();
     PH.viewUnionFind( viewer3d, retract );
     viewer3d << Viewer3D::updateDisplay;
+    Viewer3D viewer3d_2;
+    viewer3d_2.show();
+    PH.viewUnionFindPoints( viewer3d_2, retract );
+    viewer3d_2 << Viewer3D::updateDisplay;
     application.exec();
   }
 
