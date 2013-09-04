@@ -426,3 +426,4 @@ namespace DGtal
 
 #undef SimplicialStrip3D_RECURSES
 #endif // else defined(SimplicialStrip3D_RECURSES)
+

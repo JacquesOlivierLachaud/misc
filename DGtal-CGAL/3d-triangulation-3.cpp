@@ -826,6 +826,7 @@ namespace DGtal {
 template <typename TKernel>
 class PolyhedronHull
 {
+  typedef PolyhedronHull<TKernel>              Self;
   typedef TKernel                              Kernel;
   typedef typename CGAL::Polyhedron_3<Kernel>  Polyhedron;
   typedef toCGALFunctor<Kernel>       ToCGAL;
@@ -1157,13 +1158,60 @@ public:
     return nb_join != 0;
   }  
 
+  struct HalfEdgeHandleComparator {
 
+    Self & PH;
+    
+    HalfEdgeHandleComparator( Self & polyhedron_hull )
+      : PH( polyhedron_hull )
+    {}
+    
+    bool operator()( const HalfEdgeHandle he1, const HalfEdgeHandle he2 ) const
+    {
+	HalfEdgeHandle rep11 = PH.myDisjointSets.find_set( PH.smallestHalfEdge( he1 ) );
+	HalfEdgeHandle rep12 = PH.myDisjointSets.find_set( PH.smallestHalfEdge( he1->opposite() ) );
+	if ( rep11 == rep12 ) return true;
+	HalfEdgeHandle rep21 = PH.myDisjointSets.find_set( PH.smallestHalfEdge( he2 ) );
+	HalfEdgeHandle rep22 = PH.myDisjointSets.find_set( PH.smallestHalfEdge( he2->opposite() ) );
+	if ( rep21 == rep22 ) return false;
+	// Check size
+	HalfEdgeHandle he_face11 = PH.smallestHalfEdge( rep11 );
+	HalfEdgeHandle he_face12 = PH.smallestHalfEdge( rep12 );
+	HalfEdgeHandle he_face21 = PH.smallestHalfEdge( rep21 );
+	HalfEdgeHandle he_face22 = PH.smallestHalfEdge( rep22 );
+	ASSERT( PH.myPlaneMap.find( he_face11 ) != PH.myPlaneMap.end() );
+	ASSERT( PH.myPlaneMap.find( he_face12 ) != PH.myPlaneMap.end() );
+	ASSERT( PH.myPlaneMap.find( he_face21 ) != PH.myPlaneMap.end() );
+	ASSERT( PH.myPlaneMap.find( he_face22 ) != PH.myPlaneMap.end() );
+	FacetInformation & info11 = PH.myPlaneMap.find( he_face11 )->second;
+	FacetInformation & info12 = PH.myPlaneMap.find( he_face12 )->second;
+	FacetInformation & info21 = PH.myPlaneMap.find( he_face21 )->second;
+	FacetInformation & info22 = PH.myPlaneMap.find( he_face22 )->second;
+	ASSERT( ! info11.plane.empty() );
+	ASSERT( ! info12.plane.empty() );
+	ASSERT( ! info21.plane.empty() );
+	ASSERT( ! info22.plane.empty() );
+        typename DigitalPlane::Size s1 = info11.plane.size() + info12.plane.size();
+        typename DigitalPlane::Size s2 = info21.plane.size() + info22.plane.size();
+        bool convex1 = PH.signAngle( he_face11, he_face12 ) > 0.0;
+        bool convex2 = PH.signAngle( he_face21, he_face22 ) > 0.0;
+        if ( convex1 ) 
+          return convex2 ? s1 < s2 : false;
+        else 
+          return convex2 ? true : s2 > s1;
+    }
+  };
+
+  typedef std::priority_queue< HalfEdgeHandle,
+                               std::vector<HalfEdgeHandle>,
+                               HalfEdgeHandleComparator > HEPriorityQueue;
   bool expandByUnionFind()
   {
    
     unsigned int nb_join = 0;
     unsigned int nb_edges = 0;
     MarkHE toJoin;
+    HEPriorityQueue toJoinPQ( HalfEdgeHandleComparator( *this ) );
     std::cout << "Searching concavities: " << std::flush;
     for ( EdgeIterator it = myP.edges_begin(), ite = myP.edges_end();
 	  it != ite; ++it, ++nb_edges )
@@ -1171,13 +1219,21 @@ public:
 	HalfEdgeHandle he = it;
 	HalfEdgeHandle rep1 = myDisjointSets.find_set( smallestHalfEdge( he ) );
 	HalfEdgeHandle rep2 = myDisjointSets.find_set( smallestHalfEdge( he->opposite() ) );
-	if ( rep1 != rep2 ) toJoin.insert( he );
+	if ( rep1 != rep2 ) 
+          {
+            toJoin.insert( he );
+            toJoinPQ.push( he ); 
+          }
       }
-    std::cout << toJoin.size() << " found." << std::endl;
-    while ( ! toJoin.empty() )
+    std::cout << toJoinPQ.size() << " found." << std::endl;
+    while ( ! toJoinPQ.empty() )
       {
-	HalfEdgeHandle he = *( toJoin.begin() );
-	toJoin.erase( toJoin.begin() );
+	HalfEdgeHandle he = toJoinPQ.top(); 
+	toJoinPQ.pop(); 
+        typename MarkHE::iterator it_he = toJoin.find( he );
+        if ( it_he == toJoin.end() ) // if not found, invalid half edge.
+          continue;
+        toJoin.erase( it_he );
 	HalfEdgeHandle rep1 = myDisjointSets.find_set( smallestHalfEdge( he ) );
 	HalfEdgeHandle rep2 = myDisjointSets.find_set( smallestHalfEdge( he->opposite() ) );
 	if ( rep1 == rep2 ) continue;
@@ -1242,6 +1298,31 @@ public:
     Vector n2( vn2[ 0 ], vn2[ 1 ], vn2[ 2 ] );
     Vector c = cross( n1, n2 );
     return c * ( he->vertex()->point() - he->opposite()->vertex()->point() ); 
+    // positive is convex
+  }
+
+  double signAngle( HalfEdgeHandle he1, HalfEdgeHandle he2 )
+  {
+    double vn1[ 3 ];
+    double vn2[ 3 ];
+    HalfEdgeHandle he_face1 = smallestHalfEdge( he1 );
+    HalfEdgeHandle he_face2 = smallestHalfEdge( he2 );
+    const FacetInformation & info1 = myPlaneMap.find( he_face1 )->second;
+    const FacetInformation & info2 = myPlaneMap.find( he_face2 )->second;
+    info1.plane.getUnitNormal( vn1 );
+    info2.plane.getUnitNormal( vn2 );
+    Vector n1( vn1[ 0 ], vn1[ 1 ], vn1[ 2 ] );
+    Vector n2( vn2[ 0 ], vn2[ 1 ], vn2[ 2 ] );
+    Vector c = cross( n1, n2 );
+    double sign1 = c * ( he1->vertex()->point() - he1->opposite()->vertex()->point() ); 
+    double sign2 = c * ( he2->vertex()->point() - he2->opposite()->vertex()->point() ); 
+    if ( ( ( sign1 >= 0.0 ) && ( sign2 > 0.0 ) ) 
+         || ( ( sign1 > 0.0 ) && ( sign2 >= 0.0 ) ) 
+         || ( ( sign1 <= 0.0 ) && ( sign2 < 0.0 ) ) 
+         || ( ( sign1 < 0.0 ) && ( sign2 <= 0.0 ) ) )
+      return sign1+sign2;
+    else
+      return 0.0;
     // positive is convex
   }
 

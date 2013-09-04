@@ -38,6 +38,7 @@ LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
 SET(SRCs
   simpleExample
   2d-triangulation
+  2d-triangulation-f
   3d-triangulation
   3d-triangulation-2
   3d-triangulation-3
