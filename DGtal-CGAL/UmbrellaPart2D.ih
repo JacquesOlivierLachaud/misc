@@ -1,0 +1,89 @@
+/**
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as
+ *  published by the Free Software Foundation, either version 3 of the
+ *  License, or  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **/
+
+/**
+ * @file UmbrellaPart2D.ih
+ * @author Jacques-Olivier Lachaud (\c jacques-olivier.lachaud@univ-savoie.fr )
+ * Laboratory of Mathematics (CNRS, UMR 5127), University of Savoie, France
+ *
+ * @date 2013/06/27
+ *
+ * Implementation of inline methods defined in UmbrellaPart2D.h
+ *
+ * This file is part of the DGtal library.
+ */
+
+
+//////////////////////////////////////////////////////////////////////////////
+#include <cstdlib>
+//////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////
+// IMPLEMENTATION of inline methods.
+///////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////
+// ----------------------- Standard services ------------------------------
+
+/**
+ * Destructor.
+ */
+template <typename TTriangulation2, typename TKernel2>
+inline
+DGtal::UmbrellaPart2D<TTriangulation2, TKernel2>::~UmbrellaPart2D()
+{
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Interface - public :
+
+/**
+ * Writes/Displays the object on an output stream.
+ * @param out the output stream where the object is written.
+ */
+template <typename TTriangulation2, typename TKernel2>
+inline
+void
+DGtal::UmbrellaPart2D<TTriangulation2, TKernel2>::selfDisplay ( std::ostream & out ) const
+{
+  out << "[UmbrellaPart2D"
+      << " v=" << pivot()->point()
+      << " a=" << (angle()*360/M_PI) << "°"
+      << " #=" << size() 
+      << "]";
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Implementation of inline functions                                        //
+
+template <typename TTriangulation2, typename TKernel2>
+inline
+std::ostream&
+DGtal::operator<< ( std::ostream & out, 
+		  const UmbrellaPart2D<TTriangulation2, TKernel2> & object )
+{
+  object.selfDisplay( out );
+  return out;
+}
+
+template <typename TTriangulation2, typename TKernel2>
+const double DGtal::UmbrellaPart2D<TTriangulation2, TKernel2>::EPSILON = 0.0000001;
+
+//                                                                           //
+///////////////////////////////////////////////////////////////////////////////
+
+
