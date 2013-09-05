@@ -517,13 +517,13 @@ public:
 /**
    This class is intended for visualizing Affine Valued triangulation.
 */
-template <typename TAVT>
+template <typename TAVT, typename TValue>
 class ViewerAVT
 {
 public:
   typedef TAVT                                 AVT;
+  typedef TValue                               Value;
   typedef typename AVT::Triangulation2         Triangulation2;
-  typedef typename AVT::Value                  Value;
   typedef typename AVT::VertexHandle           VertexHandle;
   typedef typename AVT::FiniteVerticesIterator FiniteVerticesIterator;
   typedef typename AVT::Edge                   Edge;
@@ -562,7 +562,7 @@ public:
 
   inline Color color( Value val ) const
   {
-    if ( val == _avt.invalid() )
+    if ( val == (Value) _avt.invalid() )
       return _other_colors[ 0 ];
     else
       return _label_colors[ std::min( _max, std::max( _min, val ) ) - _min ];
@@ -580,7 +580,7 @@ public:
           it != itend; ++it )
       {
         VertexHandle vh = it;
-        Value l1 = _avt.value( vh );
+        Value l1 = (Value) _avt.value( vh );
         Color c = color( l1 );
         PointZ2 a = toDGtal( it->point() );
         _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( c, c ) );
@@ -597,7 +597,7 @@ public:
           it != itend; ++it )
       {
         Edge e = *it;
-        Value l1 = _avt.value( e );
+        Value l1 = (Value) _avt.value( e );
         Color col = color( l1 );
         _board.setPenColor( col );
         _board.setFillColor( col );
@@ -620,7 +620,7 @@ public:
           it != itend; ++it )
       {
         Edge e = *it;
-        Value l1 = _avt.value( e );
+        Value l1 = (Value) _avt.value( e );
         PointZ2 a = toDGtal( _avt.TH.source( e )->point() );
         PointZ2 b = toDGtal( _avt.TH.target( e )->point() );
         _board.drawLine( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ] );
@@ -636,7 +636,7 @@ public:
           it != itend; ++it )
       {
         FaceHandle fh = it;
-        Value l1 = _avt.value( fh );
+        Value l1 = (Value) _avt.value( fh );
         Color col = color( l1 );
         _board.setPenColor( col );
         _board.setFillColor( col );
@@ -651,9 +651,41 @@ public:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-namespace po = boost::program_options;
+double randomUniform()
+{
+  return (double) random() / (double) RAND_MAX;
+}
+///////////////////////////////////////////////////////////////////////////////
+template <typename Int>
+struct Reverse {
+  typedef Reverse<Int> Self;
+  Int _i;
+  inline Reverse() {}
+  inline Reverse( Int i ) : _i( i ) {}
+  inline Reverse( const Self & other ) : _i( other._i ) {}
+  inline Self & operator=( const Self & other ) 
+  { _i = other._i; return *this; }
+  inline operator Int() const { return _i; }
+  inline bool operator==( const Self & other ) const
+  { return _i == other._i; }
+  inline bool operator<( const Self & other ) const
+  { return _i > other._i; }
+  inline bool operator<=( const Self & other ) const
+  { return _i >= other._i; }
+  inline bool operator>( const Self & other ) const
+  { return _i < other._i; }
+  inline bool operator>=( const Self & other ) const
+  { return _i <= other._i; }
+  inline bool operator!=( const Self & other ) const
+  { return _i != other._i; }
+};
 
-int main( int argc, char** argv )
+///////////////////////////////////////////////////////////////////////////////
+namespace po = boost::program_options;
+///////////////////////////////////////////////////////////////////////////////
+
+template <typename Value>
+int affineValuedTriangulation( po::variables_map & vm )
 {
   typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel2;
   typedef CGAL::Delaunay_triangulation_2<Kernel2>             Triangulation2;
@@ -665,42 +697,17 @@ int main( int argc, char** argv )
   typedef DGtal::Z2i::Integer Integer;
   typedef KSpace::SCell SCell;
   typedef DGtal::Z3i::Point                                   PointZ3;
-  typedef AVT<Triangulation2, Kernel2, int>                   AVTriangulation2;
+  typedef AVT<Triangulation2, Kernel2, Value>                 AVTriangulation2;
 
   using namespace DGtal;
-
-  // parse command line ----------------------------------------------
-  po::options_description general_opt("Allowed options are: ");
-  general_opt.add_options()
-    ("help,h", "display this message")
-    ("point-fct-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points + value, 'x y f(x,y)' per line.")
-    ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image filename.")
-    ("view,v", po::value<int>()->default_value( 4 ), "Specifies what is outputed as a mask: 0x8: red edges, 0x4: faces, 0x2: edges, 0x1: vertices.")  
-    ("debug,d", "Outputs the intermediate triangulation in tmp/avt-*.eps.")  
-    ;
-
-  bool parseOK = true;
-  po::variables_map vm;
-  try {
-    po::store( po::parse_command_line(argc, argv, general_opt), vm );  
-  } catch ( const std::exception& ex ) {
-    parseOK = false;
-    trace.info() << "Error checking program options: " << ex.what() << std::endl;
-  }
-    
-  po::notify(vm);    
-  if( ! parseOK || vm.count("help") || argc <= 1 )
-    {
-      trace.info()<< "Generate a 2D triangulation from an arbitrary set of points. The triangulation provides a kind of piecewise linear approximation of the digitized set. The digitized set has label 0, the exterior points have label 1." <<std::endl << "Basic usage: " << std::endl
-		  << "\t2d-triangulation-f [options] -l <point-list>"<<std::endl
-		  << general_opt << "\n";
-      return 0;
-    }
 
   trace.beginBlock("Construction of the triangulation");
   AVTriangulation2 avt( -1 );
   int min_value = -1;
   int max_value = -1;
+  int q = vm[ "quantify" ].as<int>(); 
+  q = q < 1 ? 1 : q;
+  double ratio = vm[ "random" ].as<double>();
   if ( vm.count( "point-fct-list" ) )
     {
       PointZ3 lo, hi;
@@ -719,7 +726,8 @@ int main( int argc, char** argv )
           int val = (*it)[ 2 ];
           if ( ( min_value == -1 ) || ( min_value > val ) ) min_value = val;
           if ( ( max_value == -1 ) || ( max_value < val ) ) max_value = val;
-          avt.add( pt2, val );
+          if ( randomUniform() <= ratio )
+            avt.add( pt2, q * ( val / q ) + ( q / 2 ) );
         }
     }
   if ( vm.count( "image" ) )
@@ -736,7 +744,8 @@ int main( int argc, char** argv )
           int val = (int) image( *it );
           if ( ( min_value == -1 ) || ( min_value > val ) ) min_value = val;
           if ( ( max_value == -1 ) || ( max_value < val ) ) max_value = val;
-          avt.add( pt2, val );
+          if ( randomUniform() <= ratio )
+            avt.add( pt2, q * ( val / q ) + ( q / 2 ) );
         }
     }
   trace.endBlock();
@@ -744,7 +753,7 @@ int main( int argc, char** argv )
   int view = vm[ "view" ].as<int>();
   trace.beginBlock("View initial triangulation");
   Board2D board;
-  ViewerAVT< AVTriangulation2 > viewer( board, avt, min_value, max_value );
+  ViewerAVT< AVTriangulation2, int > viewer( board, avt, min_value, max_value );
   if ( view & 0x4 ) viewer.viewFaces();
   if ( view & 0x2 ) viewer.viewEdges();
   if ( view & 0x1 ) viewer.viewVertices();
@@ -772,6 +781,7 @@ int main( int argc, char** argv )
         board.clear();
       }
     ++pass;
+    if ( pass >= vm[ "limit" ].as<int>() ) break;
   } while ( changes );
   trace.endBlock();
 
@@ -786,4 +796,48 @@ int main( int argc, char** argv )
   trace.endBlock();
 
   return 0;
+}
+
+int main( int argc, char** argv )
+{
+
+  using namespace DGtal;
+
+  // parse command line ----------------------------------------------
+  po::options_description general_opt("Allowed options are: ");
+  general_opt.add_options()
+    ("help,h", "display this message")
+    ("point-fct-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points + value, 'x y f(x,y)' per line.")
+    ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image filename.")
+    ("view,v", po::value<int>()->default_value( 4 ), "Specifies what is outputed as a mask: 0x8: red edges, 0x4: faces, 0x2: edges, 0x1: vertices.")  
+    ("debug,d", "Outputs the intermediate triangulation in tmp/avt-*.eps.")  
+    ("quantify,q", po::value<int>()->default_value(1), "Quantifies the input data values by a factor [arg].")  
+    ("random,r", po::value<double>()->default_value(1.0), "Keep only a proportion [arg] (between 0 and 1) of the input data point.")  
+    ("limit,L", po::value<int>()->default_value(1000), "Gives the maximum number of passes (default is 10000).")  
+    ("reverse,R", "Reverses the topology of the image (black has more priority than white).")  
+    ;
+
+  bool parseOK = true;
+  po::variables_map vm;
+  try {
+    po::store( po::parse_command_line(argc, argv, general_opt), vm );  
+  } catch ( const std::exception& ex ) {
+    parseOK = false;
+    trace.info() << "Error checking program options: " << ex.what() << std::endl;
+  }
+    
+  po::notify(vm);    
+  if( ! parseOK || vm.count("help") || argc <= 1 )
+    {
+      trace.info()<< "Generate a 2D triangulation from an arbitrary set of points. The triangulation provides a kind of piecewise linear approximation of the digitized set. The digitized set has label 0, the exterior points have label 1." <<std::endl << "Basic usage: " << std::endl
+		  << "\t2d-triangulation-f [options] -l <point-list>"<<std::endl
+		  << general_opt << "\n";
+      return 0;
+    }
+
+  int result = vm.count( "reverse" ) 
+    ? affineValuedTriangulation< Reverse<int> >( vm )
+    : affineValuedTriangulation<int>( vm );
+
+  return result;
 }
