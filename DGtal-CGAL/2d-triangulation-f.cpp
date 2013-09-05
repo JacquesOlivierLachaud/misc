@@ -212,9 +212,21 @@ public:
     const Value val_v0 = value( v0 );
     const Value val_v1 = value( v1 );
     const Value val_e =  value( e );
-    ASSERT( std::min( val_v0, val_v1 ) <= val_e );
-    ASSERT( std::max( val_v0, val_v1 ) >= val_e );
-    if ( val_v1 < val_v0 )
+    if ( std::min( val_v0, val_v1 ) > val_e )
+      {
+        DGtal::trace.warning() << "[AVT::insertQueue] Weird low value for edge:"
+                               << " e=" << val_e << " v0=" << val_v0 << " v1=" << val_v1
+                               << std::endl;
+        return;
+      }
+    if ( std::max( val_v0, val_v1 ) < val_e )
+      {
+        DGtal::trace.warning() << "[AVT::insertQueue] Weird big value for edge:"
+                               << " e=" << val_e << " v0=" << val_v0 << " v1=" << val_v1
+                               << std::endl;
+        return;
+      }
+    if ( ( val_v1 < val_v0 ) && ( val_e < val_v0 ) )
       {
 	Strip strip( T() );
         NoGreaterThanValuePredicate predNoGreaterThanV1( *this, val_e );
@@ -222,7 +234,7 @@ public:
         if ( strip.isConcave() ) 
           inQueue.insert( std::make_pair( v0, v1 ) );
       }
-    else if ( val_v0 < val_v1 )
+    else if ( ( val_v0 < val_v1 ) && ( val_e < val_v1 ) )
       {
 	Strip strip( T() );
         NoGreaterThanValuePredicate predNoGreaterThanV1( *this, val_e );
@@ -284,19 +296,27 @@ public:
 	if ( TH.source( e ) != v0 ) 
 	  e = T().mirror_edge( e );
         Value val_V1 = value( e ); // value( TH.target( e ) );
-        NoGreaterThanValuePredicate predNoGreaterThanV1( *this, val_V1 );
-        if ( ! predNoGreaterThanV1( e ) ) 
+        if ( val_V1 >= value( v0 ) ) // edge has already the value of the source.
 	  {
 	    inQueue.erase( inQueue.begin() );
-	    continue; // Edge (v0,v1) has changed value.
+	    continue; 
 	  }
+        NoGreaterThanValuePredicate predNoGreaterThanV1( *this, val_V1 );
 	strip.init( predNoGreaterThanV1, predNoGreaterThanV1, e );
 	ASSERT( strip.isValid() );
         if ( strip.isConcave() ) 
           {
+            // Extract correct level/value for the concavity.
+            Value val0 = std::max( value( strip.e0() ), // first edge
+                                   value( T().mirror_edge( strip.e0() ).first ) ); // face just before.
+            Value val1 = std::max( value( strip.en() ), // last edge
+                                   value( strip.en().first ) ); // face just after.
+            Value val = std::min( std::min( val0, val1 ),
+                                  value( TH.source( e ) ) );
+            ASSERT( val >= val_V1 );
             // We may already update the value of border edges.
-            setValue( strip.e0(), std::max( value( strip.e0() ), val_V1+1 ) );
-            setValue( strip.en(), std::max( value( strip.en() ), val_V1+1 ) );
+            setValue( strip.e0(), std::max( value( strip.e0() ), val ) );
+            setValue( strip.en(), std::max( value( strip.en() ), val ) );
 	    unsigned int i = strip.getFlippableEdgeIndex();
 	    if ( i != strip.size() ) // at least one edge is flippable.
 	      {
@@ -310,8 +330,8 @@ public:
                 eraseValue( f2 );
                 eraseValue( fedge );
 		Edge mirror_first = T().mirror_edge( strip.e( 0 ) );
-                DGtal::trace.info() << "  - Flipping " << TH.source( fedge )->point() 
-                                    << " -> " <<  TH.target( fedge )->point() << std::endl;
+                // DGtal::trace.info() << "  - Flipping " << TH.source( fedge )->point() 
+                //                     << " -> " <<  TH.target( fedge )->point() << std::endl;
 		_T.flip( fedge.first, fedge.second );
                 fedge = T().mirror_edge( edge_quad );
                 Edge new_edge = TH.nextCCWAroundFace( fedge );
@@ -325,17 +345,19 @@ public:
                 // setValue( fedge2, std::max( value( fedge2 ), val_V1+1 ) );
 		if ( strip.size() == 3 ) 
 		  { // last flip made a triangle
+                    setValue( new_edge, std::max( value( new_edge ), val ) );
+                    setValue( new_edge.first, std::max( value( new_edge.first ), val ) );
 		    inQueue.erase( inQueue.begin() );
 		  }
 		changes = true; ++nb_flipped;
 	      }
 	    else // none are flippable. This is a concave/flat piece.
 	      { // All faces and edges are set to value V1+1
-                setValue( strip.f( 0 ), val_V1+1 );
+                setValue( strip.f( 0 ), std::max( value( strip.f( 0 ) ), val ) );
                 for ( unsigned int i = 1; i < strip.size() - 1; ++i )
                   {
-                    setValue( strip.e( i ), val_V1+1 );
-                    setValue( strip.f( i ), val_V1+1 );
+                    setValue( strip.e( i ), std::max( value( strip.e( i ) ), val ) );
+                    setValue( strip.f( i ), std::max( value( strip.f( i ) ), val ) );
                   }
                 changes = true; ++nb_concave;
 		inQueue.erase( inQueue.begin() );
@@ -647,7 +669,10 @@ int main( int argc, char** argv )
   po::options_description general_opt("Allowed options are: ");
   general_opt.add_options()
     ("help,h", "display this message")
-    ("point-fct-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points + value, 'x y f(x,y)' per line.");
+    ("point-fct-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points + value, 'x y f(x,y)' per line.")
+    ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image filename.")
+    ("view,v", po::value<int>()->default_value( 4 ), "Specifies what is outputed as a mask: 0x8: red edges, 0x4: faces, 0x2: edges, 0x1: vertices.")  
+    ;
 
   bool parseOK = true;
   po::variables_map vm;
@@ -662,7 +687,7 @@ int main( int argc, char** argv )
   if( ! parseOK || vm.count("help") || argc <= 1 )
     {
       trace.info()<< "Generate a 2D triangulation from an arbitrary set of points. The triangulation provides a kind of piecewise linear approximation of the digitized set. The digitized set has label 0, the exterior points have label 1." <<std::endl << "Basic usage: " << std::endl
-		  << "\t2d-triangulation-f [options] -l <point-list> -v -1"<<std::endl
+		  << "\t2d-triangulation-f [options] -l <point-list>"<<std::endl
 		  << general_opt << "\n";
       return 0;
     }
@@ -692,14 +717,33 @@ int main( int argc, char** argv )
           avt.add( pt2, val );
         }
     }
+  if ( vm.count( "image" ) )
+    {
+      typedef ImageSelector < Z2i::Domain, unsigned char>::Type Image;
+      typedef IntervalThresholder<Image::Value> Binarizer; 
+      typedef Image::Domain Domain;
+      std::string imageFileName = vm[ "image" ].as<std::string>();
+      Image image = GenericReader<Image>::import( imageFileName ); 
+      for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
+            it != ite; ++it )
+        {
+          Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
+          int val = (int) image( *it );
+          if ( ( min_value == -1 ) || ( min_value > val ) ) min_value = val;
+          if ( ( max_value == -1 ) || ( max_value < val ) ) max_value = val;
+          avt.add( pt2, val );
+        }
+    }
   trace.endBlock();
 
+  int view = vm[ "view" ].as<int>();
   trace.beginBlock("View initial triangulation");
   Board2D board;
   ViewerAVT< AVTriangulation2 > viewer( board, avt, min_value, max_value );
-  viewer.viewFaces();
-  viewer.viewEdges();
-  viewer.viewVertices();
+  if ( view & 0x4 ) viewer.viewFaces();
+  if ( view & 0x2 ) viewer.viewEdges();
+  if ( view & 0x1 ) viewer.viewVertices();
+  if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
   board.saveSVG("avt-before.svg");
   board.saveEPS("avt-before.eps");
   board.clear();
@@ -711,21 +755,23 @@ int main( int argc, char** argv )
   do {
     trace.info() << "- Pass " << pass << std::endl;
     changes = avt.fullRelativeHull();
-    viewer.viewFaces();
-    viewer.viewEdges();
-    viewer.viewVertices();
+    if ( view & 0x4 ) viewer.viewFaces();
+    if ( view & 0x2 ) viewer.viewEdges();
+    if ( view & 0x1 ) viewer.viewVertices();
+    if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
     std::ostringstream ostr;
     ostr << "tmp/avt-" << pass << ".eps";
     board.saveEPS( ostr.str().c_str() );
+    board.clear();
     ++pass;
   } while ( changes );
   trace.endBlock();
 
   trace.beginBlock("View affine valued triangulation");
-  viewer.viewFaces();
-  viewer.viewEdges();
-  viewer.viewVertices();
-  viewer.viewTriangulation( DGtal::Color::Red );
+  if ( view & 0x4 ) viewer.viewFaces();
+  if ( view & 0x2 ) viewer.viewEdges();
+  if ( view & 0x1 ) viewer.viewVertices();
+  if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
   board.saveSVG("avt-after.svg");
   board.saveEPS("avt-after.eps");
   board.clear();
