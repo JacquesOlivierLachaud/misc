@@ -79,7 +79,8 @@ public:
   typedef typename Kernel2::FT                              Coordinate;
   typedef typename Kernel2::FT                              Component;
   typedef typename std::map<VertexHandle,Value>             VertexHandle2ValueMap;
-  typedef typename std::map<Edge,Value>                     Edge2ValueMap;
+  typedef typename std::map< std::pair<VertexHandle,VertexHandle>,
+                             Value>                         Edge2ValueMap;
   typedef typename std::map<FaceHandle,Value>               FaceHandle2ValueMap;
   typedef DGtal::UmbrellaPart2D<Triangulation2,Kernel2>     Strip;
   typedef typename std::set<Edge>                           EdgeSet;
@@ -345,7 +346,7 @@ public:
                 // setValue( fedge2, std::max( value( fedge2 ), val_V1+1 ) );
 		if ( strip.size() == 3 ) 
 		  { // last flip made a triangle
-                    setValue( new_edge, std::max( value( new_edge ), val ) );
+                    // setValue( new_edge, std::max( value( new_edge ), val ) );
                     setValue( new_edge.first, std::max( value( new_edge.first ), val ) );
 		    inQueue.erase( inQueue.begin() );
 		  }
@@ -407,12 +408,13 @@ public:
     // Pick "smallest" edge to find value.
     Edge mirror_e = T().mirror_edge( e );
     if ( TH.source( mirror_e ) < TH.source( e ) ) e = mirror_e;
-    typename Edge2ValueMap::const_iterator it = _eFct.find( e );
+    std::pair<VertexHandle, VertexHandle> edge = std::make_pair( TH.source( e ), TH.target( e ) );
+    typename Edge2ValueMap::const_iterator it = _eFct.find( edge );
     if ( it == _eFct.end() ) 
       {
         Value v = std::min( value( TH.source( e ) ), 
                             value( TH.target( e ) ) );
-        _eFct[ e ] = v;
+        _eFct[ edge ] = v;
         return v;
       }
     return it->second;
@@ -456,7 +458,8 @@ public:
   {
     Edge mirror_e = T().mirror_edge( e );
     if ( TH.source( mirror_e ) < TH.source( e ) ) e = mirror_e;
-    _eFct[ e ] = val;
+    std::pair<VertexHandle, VertexHandle> edge = std::make_pair( TH.source( e ), TH.target( e ) );
+    _eFct[ edge ] = val;
   }
 
   /**
@@ -493,7 +496,8 @@ public:
     // Pick "smallest" edge to find value.
     Edge mirror_e = T().mirror_edge( e );
     if ( TH.source( mirror_e ) < TH.source( e ) ) e = mirror_e;
-    _eFct.erase( e );
+    std::pair<VertexHandle, VertexHandle> edge = std::make_pair( TH.source( e ), TH.target( e ) );
+    _eFct.erase( edge );
   }
 
   /**
@@ -561,7 +565,7 @@ public:
     if ( val == _avt.invalid() )
       return _other_colors[ 0 ];
     else
-      return _label_colors[ std::min( _max, std::max( _min, val ) ) ];
+      return _label_colors[ std::min( _max, std::max( _min, val ) ) - _min ];
   }
 
   /**
@@ -672,6 +676,7 @@ int main( int argc, char** argv )
     ("point-fct-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points + value, 'x y f(x,y)' per line.")
     ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image filename.")
     ("view,v", po::value<int>()->default_value( 4 ), "Specifies what is outputed as a mask: 0x8: red edges, 0x4: faces, 0x2: edges, 0x1: vertices.")  
+    ("debug,d", "Outputs the intermediate triangulation in tmp/avt-*.eps.")  
     ;
 
   bool parseOK = true;
@@ -755,14 +760,17 @@ int main( int argc, char** argv )
   do {
     trace.info() << "- Pass " << pass << std::endl;
     changes = avt.fullRelativeHull();
-    if ( view & 0x4 ) viewer.viewFaces();
-    if ( view & 0x2 ) viewer.viewEdges();
-    if ( view & 0x1 ) viewer.viewVertices();
-    if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
-    std::ostringstream ostr;
-    ostr << "tmp/avt-" << pass << ".eps";
-    board.saveEPS( ostr.str().c_str() );
-    board.clear();
+    if ( vm.count( "debug" ) )
+      {
+        if ( view & 0x4 ) viewer.viewFaces();
+        if ( view & 0x2 ) viewer.viewEdges();
+        if ( view & 0x1 ) viewer.viewVertices();
+        if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
+        std::ostringstream ostr;
+        ostr << "tmp/avt-" << pass << ".eps";
+        board.saveEPS( ostr.str().c_str() );
+        board.clear();
+      }
     ++pass;
   } while ( changes );
   trace.endBlock();
