@@ -540,6 +540,7 @@ private:
   Board & _board;
   AVT & _avt;
   Value _min, _max;
+  bool _gouraud;
   std::vector<Color> _label_colors;
   std::vector<Color> _other_colors;
 
@@ -550,9 +551,10 @@ public:
   */
   ViewerAVT( DGtal::Alias<Board> board, 
              DGtal::Alias<AVT> avt,
-             Value min, Value max )
+             Value min, Value max, 
+	     bool gouraud )
     : _board( board ), _avt( avt ),
-      _min( min ), _max( max )
+      _min( min ), _max( max ), _gouraud( gouraud )
   {
     DGtal::GrayscaleColorMap<double> grayShade( (double) min, (double) max );
     for ( Value i = min; i <= max; i++ )
@@ -635,16 +637,37 @@ public:
     for ( FiniteFacesIterator it = _avt.T().finite_faces_begin(), itend = _avt.T().finite_faces_end();
           it != itend; ++it )
       {
+	_board.setLineWidth( 0.0f );
         FaceHandle fh = it;
-        Value l1 = (Value) _avt.value( fh );
-        Color col = color( l1 );
-        _board.setPenColor( col );
-        _board.setFillColor( col );
-        _board.setLineWidth( 0.0f );
-        PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
-        PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
-        PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
-        _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
+	if ( _gouraud )
+	  {
+	    Value lf = (Value) _avt.value( fh );
+	    Value l0 = (Value) _avt.value( fh->vertex( 0 ) );
+	    Value l1 = (Value) _avt.value( fh->vertex( 1 ) );
+	    Value l2 = (Value) _avt.value( fh->vertex( 2 ) );
+	    PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
+	    PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
+	    PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
+	    _board.setPenColor( color( lf ) );
+	    _board.setFillColor( color( lf ) );
+	    _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
+	    _board.setPenColor( DGtal::Color( 0, 0, 0, 255 ) );
+	    _board.fillGouraudTriangle( a[ 0 ], a[ 1 ], lf <= l0 ? color( l0 ) : color( lf ),
+	     				b[ 0 ], b[ 1 ], lf <= l1 ? color( l1 ) : color( lf ),
+	     				c[ 0 ], c[ 1 ], lf <= l2 ? color( l2 ) : color( lf ),
+					2 );
+	  }
+	else
+	  {
+	    Value l1 = (Value) _avt.value( fh );
+	    Color col = color( l1 );
+	    _board.setPenColor( col );
+	    _board.setFillColor( col );
+	    PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
+	    PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
+	    PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
+	    _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
+	  }
       }
   }
 
@@ -751,9 +774,10 @@ int affineValuedTriangulation( po::variables_map & vm )
   trace.endBlock();
 
   int view = vm[ "view" ].as<int>();
+  bool gouraud = vm.count( "gouraud" );
   trace.beginBlock("View initial triangulation");
   Board2D board;
-  ViewerAVT< AVTriangulation2, int > viewer( board, avt, min_value, max_value );
+  ViewerAVT< AVTriangulation2, int > viewer( board, avt, min_value, max_value, gouraud );
   if ( view & 0x4 ) viewer.viewFaces();
   if ( view & 0x2 ) viewer.viewEdges();
   if ( view & 0x1 ) viewer.viewVertices();
@@ -815,6 +839,7 @@ int main( int argc, char** argv )
     ("random,r", po::value<double>()->default_value(1.0), "Keep only a proportion [arg] (between 0 and 1) of the input data point.")  
     ("limit,L", po::value<int>()->default_value(1000), "Gives the maximum number of passes (default is 10000).")  
     ("reverse,R", "Reverses the topology of the image (black has more priority than white).")  
+    ("gouraud,g", "Displays faces with Gouraud-like shading.")  
     ;
 
   bool parseOK = true;
