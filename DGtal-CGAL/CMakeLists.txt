@@ -10,7 +10,7 @@ if ( COMMAND cmake_policy )
 endif()
 
 
-SET( CMAKE_MODULE_PATH /opt/local/lib/cmake )
+SET( CMAKE_MODULE_PATH /opt/local/lib/cmake ${CMAKE_SOURCE_DIR})
 
 FIND_PACKAGE(Boost 1.46.0 REQUIRED COMPONENTS program_options)
 if ( Boost_FOUND )
@@ -26,13 +26,22 @@ endif( Boost_FOUND )
 
 find_package(CGAL COMPONENTS Core )
 include( ${CGAL_USE_FILE} )
-
-# find_package(DGtal REQUIRED)
 include_directories(${CGAL_INCLUDE_DIR})
 
+# DGtal
 FIND_PACKAGE(DGtal REQUIRED)
 INCLUDE_DIRECTORIES(${DGTAL_INCLUDE_DIRS})
 LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
+
+# Cairo
+FIND_PACKAGE(Cairo REQUIRED)
+IF(CAIRO_FOUND)
+    INCLUDE_DIRECTORIES(${CAIRO_INCLUDE_DIRS})
+    LINK_DIRECTORIES(${CAIRO_LIBRAIRIES})
+    message(STATUS "Cairo found")
+ELSE(CAIRO_FOUND)
+    message(FATAL_ERROR "cairo not found. Check the cmake variables associated to this package or disable it." )
+ENDIF(CAIRO_FOUND)
 
 
 SET(SRCs
@@ -50,7 +59,7 @@ if ( CGAL_FOUND )
   
   FOREACH(FILE ${SRCs})
     add_executable(${FILE} ${FILE})
-    target_link_libraries( ${FILE}  ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${DGTAL_LIBRARIES} ${Boost_LIBRAIRIES} ${Boost_PROGRAM_OPTIONS_LIBRARY})
+    target_link_libraries( ${FILE}  ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${CAIRO_LIBRAIRIES} ${DGTAL_LIBRARIES} ${Boost_LIBRAIRIES} ${Boost_PROGRAM_OPTIONS_LIBRARY})
   ENDFOREACH(FILE)
   
 else()

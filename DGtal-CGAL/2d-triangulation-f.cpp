@@ -4,7 +4,6 @@
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
-
 #include <DGtal/base/Common.h>
 #include <DGtal/base/ConstAlias.h>
 #include <DGtal/base/Alias.h>
@@ -21,11 +20,12 @@
 #include <DGtal/geometry/curves/ArithmeticalDSS.h>
 #include <DGtal/geometry/curves/SaturatedSegmentation.h>
 #include "DGtal/io/readers/PointListReader.h"
-#include "DGtal/geometry/curves/FreemanChain.h"
 
 #include <CGAL/Delaunay_triangulation_2.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Triangulation_2.h>
+
+#include "cairo.h"
 
 #include "Triangulation2DHelper.h"
 #include "UmbrellaPart2D.h"
@@ -650,6 +650,119 @@ public:
 
 };
 
+
+
+/**
+   This class is intended for visualizing Affine Valued triangulation with CAIRO.
+*/
+template <typename TAVT, typename TValue>
+class CairoViewerAVT
+{
+public:
+  typedef TAVT                                 AVT;
+  typedef TValue                               Value;
+  typedef typename AVT::Triangulation2         Triangulation2;
+  typedef typename AVT::VertexHandle           VertexHandle;
+  typedef typename AVT::FiniteVerticesIterator FiniteVerticesIterator;
+  typedef typename AVT::Edge                   Edge;
+  typedef typename AVT::EdgeIterator           EdgeIterator;
+  typedef typename AVT::FiniteEdgesIterator    FiniteEdgesIterator;
+  typedef typename AVT::FiniteFacesIterator    FiniteFacesIterator;
+  typedef typename AVT::FaceHandle             FaceHandle;
+  typedef typename AVT::Point2                 Point2;
+  typedef DGtal::Board2D                       Board;
+  typedef DGtal::Color                         Color;
+  typedef DGtal::Z2i::Point                    PointZ2;
+
+private:
+  int _x0, _y0;
+  int _width, _height;
+  double _xf, _yf;
+  cairo_surface_t* _surface;
+  cairo_t* _cr;
+
+public:
+
+  enum Mode { Gray, Red, Green, Blue };
+
+  /**
+     Constructor. Requires a board \a board for display and an affine
+     valued triangulation \a avt.
+  */
+  CairoViewerAVT( int x0, int y0, int width, int height, 
+                  double xfactor = 1.0, double yfactor = 1.0 )
+    : _x0( x0 ), _y0( y0 ), _width( width ), _height( height ),
+      _xf( xfactor ), _yf( yfactor )
+  {
+    _surface = cairo_image_surface_create( CAIRO_FORMAT_ARGB32, width, height );
+    _cr = cairo_create ( _surface );
+    // Fill the background with black
+    cairo_set_source_rgba( _cr, 0.0, 0.0, 0.0, 1.0 );
+    cairo_rectangle ( _cr, 0, 0, _width, _height );
+    cairo_fill( _cr );
+  }
+
+  ~CairoViewerAVT()
+  {
+    cairo_destroy( _cr );
+    cairo_surface_destroy( _surface );
+  }
+  
+  void save( const char* file_name ) const
+  {
+    cairo_surface_write_to_png( _surface, file_name );
+  }
+
+  void viewAVT( AVT & avt, Mode mode )
+  {
+    cairo_operator_t op;
+    switch ( mode ) {
+    case Red: 
+    case Green:
+    case Blue: 
+      op = CAIRO_OPERATOR_ADD; break;
+    case Gray:
+    default: op = CAIRO_OPERATOR_SOURCE; break;
+    };
+    op = CAIRO_OPERATOR_ADD;
+    cairo_set_operator( _cr, op );
+    double redf   = ( mode == Red )   || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    double greenf = ( mode == Green ) || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    double bluef  = ( mode == Blue )  || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    cairo_set_line_width( _cr, 0.0 ); 
+    cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+    cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+    for ( FiniteFacesIterator it = avt.T().finite_faces_begin(), itend = avt.T().finite_faces_end();
+          it != itend; ++it )
+      {
+        FaceHandle fh = it;
+        double val = (double) avt.value( fh );
+        cairo_set_source_rgb( _cr, val * redf, val * greenf, val * bluef );
+        Point2 a = fh->vertex( 0 )->point();
+        Point2 b = fh->vertex( 1 )->point();
+        Point2 c = fh->vertex( 2 )->point();
+        cairo_move_to( _cr, i( a.x() ), j( a.y() ) );
+        cairo_line_to( _cr, i( b.x() ), j( b.y() ) );
+        cairo_line_to( _cr, i( c.x() ), j( c.y() ) );
+        cairo_close_path( _cr );
+        cairo_fill( _cr );
+        //cairo_stroke( _cr );
+      }
+  }
+
+  inline int i( double x ) const
+  {
+    return round( x * _xf ) - _x0;
+  }
+
+  inline int j( double y ) const
+  {
+    return round( y * _yf ) - _y0;
+  }
+
+};
+
+
 ///////////////////////////////////////////////////////////////////////////////
 double randomUniform()
 {
@@ -701,6 +814,7 @@ int affineValuedTriangulation( po::variables_map & vm )
 
   using namespace DGtal;
 
+  double x0, y0, x1, y1;
   trace.beginBlock("Construction of the triangulation");
   AVTriangulation2 avt( -1 );
   int min_value = -1;
@@ -719,10 +833,16 @@ int affineValuedTriangulation( po::variables_map & vm )
           return 1;
         }
       // ks.init( lo, hi, true );
+      x0 = x1 = (* pts.begin() )[ 0 ];
+      y0 = y1 = (* pts.begin() )[ 1 ];
       for ( std::vector<PointZ3>::const_iterator it = pts.begin(), ite = pts.end();
             it != ite; ++it )
         {
           Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
+          x0 = pt2.x() < x0 ? pt2.x() : x0;
+          x1 = pt2.x() > x1 ? pt2.x() : x1;
+          y0 = pt2.y() < y0 ? pt2.y() : y0;
+          y1 = pt2.y() > y1 ? pt2.y() : y1;
           int val = (*it)[ 2 ];
           if ( ( min_value == -1 ) || ( min_value > val ) ) min_value = val;
           if ( ( max_value == -1 ) || ( max_value < val ) ) max_value = val;
@@ -737,6 +857,9 @@ int affineValuedTriangulation( po::variables_map & vm )
       typedef Image::Domain Domain;
       std::string imageFileName = vm[ "image" ].as<std::string>();
       Image image = GenericReader<Image>::import( imageFileName ); 
+      x0 = 0.0; y0 = 0.0;
+      x1 = (double) image.domain().upperBound()[ 0 ];
+      y1 = (double) image.domain().upperBound()[ 1 ];
       for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
             it != ite; ++it )
         {
@@ -795,6 +918,19 @@ int affineValuedTriangulation( po::variables_map & vm )
   board.clear();
   trace.endBlock();
 
+  {
+    trace.beginBlock("View affine valued triangulation");
+    double b = vm[ "bitmap" ].as<double>();
+    CairoViewerAVT< AVTriangulation2, int > cviewer
+      ( (int) round( x0 ), (int) round( y0 ), 
+        (int) round( (x1 - x0) * b + 1 ), (int) round( (y1 - y0) * b + 1 ), 
+        b, b );
+    cviewer.viewAVT( avt, CairoViewerAVT< AVTriangulation2, int>::Gray );
+    cviewer.save( "avt-after.png" );
+    trace.endBlock();
+  }
+
+
   return 0;
 }
 
@@ -814,7 +950,8 @@ int main( int argc, char** argv )
     ("quantify,q", po::value<int>()->default_value(1), "Quantifies the input data values by a factor [arg].")  
     ("random,r", po::value<double>()->default_value(1.0), "Keep only a proportion [arg] (between 0 and 1) of the input data point.")  
     ("limit,L", po::value<int>()->default_value(1000), "Gives the maximum number of passes (default is 10000).")  
-    ("reverse,R", "Reverses the topology of the image (black has more priority than white).")  
+    ("reverse,R", "Reverses the topology of the image (black has more priority than white).") 
+    ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ;
 
   bool parseOK = true;
