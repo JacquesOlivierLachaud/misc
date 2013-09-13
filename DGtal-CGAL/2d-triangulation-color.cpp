@@ -205,6 +205,66 @@ public:
       add( itb->first, itb->second );
   }
 
+  bool isQuadSaddle( const Edge & e ) const
+  {
+    VertexHandle v[ 4 ];
+    Value val[ 4 ];
+    v[ 0 ] = TH.target( e );
+    v[ 1 ] = e.first->vertex( e.second ); 
+    v[ 2 ] = TH.source( e );
+    Edge me = T().mirror_edge( e );
+    v[ 3 ] = me.first->vertex( me.second ); 
+    for ( int i = 0; i < 4; ++i ) 
+      val[ i ] = value( v[ i ] );
+    return ( std::min( val[ 0 ], val[ 2 ] ) > std::max( val[ 1 ], val[ 3 ] ) )
+      || ( std::max( val[ 0 ], val[ 2 ] ) < std::min( val[ 1 ], val[ 3 ] ) );
+  }
+
+  std::pair<Point,Value> middleQuad( const Edge & e ) const
+  {
+    VertexHandle v[ 4 ];
+    v[ 0 ] = TH.target( e );
+    v[ 1 ] = e.first->vertex( e.second ); 
+    v[ 2 ] = TH.source( e );
+    Edge me = T().mirror_edge( e );
+    v[ 3 ] = me.first->vertex( me.second ); 
+    Value mval = 0;
+    double x = 0.0;
+    double y = 0.0;
+    for ( int i = 0; i < 4; ++i ) 
+      {
+	x += v[ i ]->point().x();
+	y += v[ i ]->point().y();
+	mval = mval + value( v[ i ] );
+      }
+    return std::make_pair( Point( x / 4.0, y / 4.0 ), mval / 4 );
+  }
+
+  void processSaddlePoints()
+  {
+    Edge e;
+    std::vector< std::pair<VertexHandle, VertexHandle> > saddles;
+    for ( FiniteEdgesIterator it = T().finite_edges_begin(), itend = T().finite_edges_end();
+          it != itend; ++it )
+      {
+        e = *it; 
+	if ( isQuadSaddle( e ) )
+	  saddles.push_back( std::make_pair( TH.source( e ), TH.target( e ) ) );
+      }
+    for ( typename std::vector< std::pair<VertexHandle, VertexHandle> >::const_iterator 
+	    it = saddles.begin(), itend = saddles.end();
+	  it != itend; ++it )
+      {
+	VertexHandle v0 = it->first;
+	VertexHandle v1 = it->second;
+	if ( ! T().is_edge( v0, v1, e.first, e.second ) ) continue;
+	if ( ! isQuadSaddle( e ) )                        continue;
+	if ( TH.source( e ) != v0 )                       e = T().mirror_edge( e );
+	std::pair<Point,Value> res = middleQuad( e );
+	add( res.first, res.second );
+      }
+  }
+
   /**
      @param pt any point of the triangulation.
      @return the corresponding vertex.
@@ -1094,6 +1154,14 @@ int affineValuedTriangulation( po::variables_map & vm )
   trace.endBlock();
   
   bool gouraud = vm.count( "gouraud" );
+  if ( vm.count( "saddle" ) )
+    {
+      trace.beginBlock("Process saddle points");
+      avt_red.processSaddlePoints();
+      avt_green.processSaddlePoints();
+      avt_blue.processSaddlePoints();
+      trace.endBlock();
+    }
 
   {
     trace.beginBlock("View affine valued triangulation");
@@ -1180,6 +1248,7 @@ int main( int argc, char** argv )
     ("reverse,R", "Reverses the topology of the image (black has more priority than white).") 
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("gouraud,g", "Displays faces with Gouraud-like shading.")  
+    ("saddle,s", "Process saddle points.")  
     ;
 
   bool parseOK = true;
