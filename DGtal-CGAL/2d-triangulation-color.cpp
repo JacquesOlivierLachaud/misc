@@ -1001,12 +1001,12 @@ public:
 
   inline int i( double x ) const
   {
-    return (int)round( x * _xf ) - _x0;
+    return (int)round( (x+0.5) * _xf ) - _x0;
   }
 
   inline int j( double y ) const
   {
-    return _height - (int)(round( y * _yf ) - _y0) - 1;
+    return _height - (int)(round( (y+0.5) * _yf ) - _y0) - 1;
   }
 
 };
@@ -1065,44 +1065,13 @@ int affineValuedTriangulation( po::variables_map & vm )
 
   double x0, y0, x1, y1;
   trace.beginBlock("Construction of the triangulation");
-  AVTriangulation2 avt( -1 );
-  int min_value = -1;
-  int max_value = -1;
-  int q = vm[ "quantify" ].as<int>(); 
-  q = q < 1 ? 1 : q;
+  AVTriangulation2 avt_red( -1 );
+  AVTriangulation2 avt_green( -1 );
+  AVTriangulation2 avt_blue( -1 );
   double ratio = vm[ "random" ].as<double>();
-  if ( vm.count( "point-fct-list" ) )
-    {
-      PointZ3 lo, hi;
-      std::vector<PointZ3> pts;
-      if ( readPointList<PointZ3>( pts, lo, hi, vm["point-fct-list"].as<std::string>() ) != 0 )
-        {
-          trace.error() << "Error reading file <" << vm["point-fct-list"].as<std::string>() << ">." 
-                        << std::endl;
-          return 1;
-        }
-      // ks.init( lo, hi, true );
-      x0 = x1 = (* pts.begin() )[ 0 ];
-      y0 = y1 = (* pts.begin() )[ 1 ];
-      for ( std::vector<PointZ3>::const_iterator it = pts.begin(), ite = pts.end();
-            it != ite; ++it )
-        {
-          Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
-          x0 = pt2.x() < x0 ? pt2.x() : x0;
-          x1 = pt2.x() > x1 ? pt2.x() : x1;
-          y0 = pt2.y() < y0 ? pt2.y() : y0;
-          y1 = pt2.y() > y1 ? pt2.y() : y1;
-          int val = (*it)[ 2 ];
-          if ( ( min_value == -1 ) || ( min_value > val ) ) min_value = val;
-          if ( ( max_value == -1 ) || ( max_value < val ) ) max_value = val;
-          if ( randomUniform() <= ratio )
-            avt.add( pt2, q * ( val / q ) + ( q / 2 ) );
-        }
-    }
   if ( vm.count( "image" ) )
     {
-      typedef ImageSelector < Z2i::Domain, unsigned char>::Type Image;
-      typedef IntervalThresholder<Image::Value> Binarizer; 
+      typedef ImageSelector < Z2i::Domain, unsigned int>::Type Image;
       typedef Image::Domain Domain;
       std::string imageFileName = vm[ "image" ].as<std::string>();
       Image image = GenericReader<Image>::import( imageFileName ); 
@@ -1113,75 +1082,81 @@ int affineValuedTriangulation( po::variables_map & vm )
             it != ite; ++it )
         {
           Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
-          int val = (int) image( *it );
-          if ( ( min_value == -1 ) || ( min_value > val ) ) min_value = val;
-          if ( ( max_value == -1 ) || ( max_value < val ) ) max_value = val;
+          unsigned int val = image( *it );
           if ( randomUniform() <= ratio )
-            avt.add( pt2, q * ( val / q ) + ( q / 2 ) );
+	    {
+	      avt_red.add  ( pt2, (val >> 16) & 0xff );
+	      avt_green.add( pt2, (val >> 8) & 0xff );
+	      avt_blue.add ( pt2, val & 0xff );
+	    }
         }
     }
   trace.endBlock();
-
-  int view = vm[ "view" ].as<int>();
-  bool gouraud = vm.count( "gouraud" );
-  trace.beginBlock("View initial triangulation");
-  Board2D board;
-  ViewerAVT< AVTriangulation2, int > viewer( board, avt, min_value, max_value, false );
-  if ( view & 0x4 ) viewer.viewFaces();
-  if ( view & 0x2 ) viewer.viewEdges();
-  if ( view & 0x1 ) viewer.viewVertices();
-  if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
-  if ( vm.count( "contour" ) ) viewer.viewContour( vm[ "contour" ].as<int>() );
-  if ( vm.count( "corners" ) ) viewer.viewCorners( vm[ "corners" ].as<int>() );
-  board.saveSVG("avt-before.svg");
-  board.saveEPS("avt-before.eps");
-  board.clear();
-  trace.endBlock();
   
-  trace.beginBlock("Compute full relative hull");
-  unsigned int pass = 0;
-  bool changes = true;
-  do {
-    trace.info() << "- Pass " << pass << std::endl;
-    changes = avt.fullRelativeHull();
-    if ( vm.count( "debug" ) )
-      {
-        if ( view & 0x4 ) viewer.viewFaces();
-        if ( view & 0x2 ) viewer.viewEdges();
-        if ( view & 0x1 ) viewer.viewVertices();
-        if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
-	if ( vm.count( "contour" ) ) viewer.viewContour( vm[ "contour" ].as<int>() );
-	if ( vm.count( "corners" ) ) viewer.viewCorners( vm[ "corners" ].as<int>() );
-	std::ostringstream ostr;
-        ostr << "tmp/avt-" << pass << ".eps";
-        board.saveEPS( ostr.str().c_str() );
-        board.clear();
-      }
-    ++pass;
-    if ( pass >= vm[ "limit" ].as<int>() ) break;
-  } while ( changes );
-  trace.endBlock();
-
-  trace.beginBlock("View affine valued triangulation");
-  if ( view & 0x4 ) viewer.viewFaces();
-  if ( view & 0x2 ) viewer.viewEdges();
-  if ( view & 0x1 ) viewer.viewVertices();
-  if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
-  if ( vm.count( "contour" ) ) viewer.viewContour( vm[ "contour" ].as<int>() );
-  if ( vm.count( "corners" ) ) viewer.viewCorners( vm[ "corners" ].as<int>() );
-  board.saveSVG("avt-after.svg");
-  board.saveEPS("avt-after.eps");
-  board.clear();
-  trace.endBlock();
+  bool gouraud = vm.count( "gouraud" );
 
   {
     trace.beginBlock("View affine valued triangulation");
     double b = vm[ "bitmap" ].as<double>();
     CairoViewerAVT< AVTriangulation2, int > cviewer
       ( (int) round( x0 ), (int) round( y0 ), 
-        (int) round( (x1 - x0) * b + 1 ), (int) round( (y1 - y0) * b + 1 ), 
+        (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
         b, b, gouraud );
-    cviewer.viewAVT( avt, CairoViewerAVT< AVTriangulation2, int>::Gray );
+    cviewer.viewAVT( avt_red, CairoViewerAVT< AVTriangulation2, int>::Red );
+    cviewer.viewAVT( avt_green, CairoViewerAVT< AVTriangulation2, int>::Green );
+    cviewer.viewAVT( avt_blue, CairoViewerAVT< AVTriangulation2, int>::Blue );
+    cviewer.save( "avt-before.png" );
+    trace.endBlock();
+  }
+
+  
+  {
+    trace.beginBlock("Compute full relative hull -- RED");
+    unsigned int pass = 0;
+    bool changes = true;
+    do {
+      trace.info() << "- Pass " << pass << std::endl;
+      changes = avt_red.fullRelativeHull();
+      ++pass;
+      if ( pass >= vm[ "limit" ].as<int>() ) break;
+    } while ( changes );
+    trace.endBlock();
+  }
+  {
+    trace.beginBlock("Compute full relative hull -- GREEN");
+    unsigned int pass = 0;
+    bool changes = true;
+    do {
+      trace.info() << "- Pass " << pass << std::endl;
+      changes = avt_green.fullRelativeHull();
+      ++pass;
+      if ( pass >= vm[ "limit" ].as<int>() ) break;
+    } while ( changes );
+    trace.endBlock();
+  }
+  {
+    trace.beginBlock("Compute full relative hull -- BLUE");
+    unsigned int pass = 0;
+    bool changes = true;
+    do {
+      trace.info() << "- Pass " << pass << std::endl;
+      changes = avt_blue.fullRelativeHull();
+      ++pass;
+      if ( pass >= vm[ "limit" ].as<int>() ) break;
+    } while ( changes );
+    trace.endBlock();
+  }
+
+  {
+    trace.beginBlock("View affine valued triangulation");
+    double b = vm[ "bitmap" ].as<double>();
+    CairoViewerAVT< AVTriangulation2, int > cviewer
+      ( (int) round( x0 ), (int) round( y0 ), 
+        (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
+        b, b, gouraud );
+    cviewer.viewAVT( avt_red, CairoViewerAVT< AVTriangulation2, int>::Red );
+    cviewer.viewAVT( avt_green, CairoViewerAVT< AVTriangulation2, int>::Green );
+    cviewer.viewAVT( avt_blue, CairoViewerAVT< AVTriangulation2, int>::Blue );
     cviewer.save( "avt-after.png" );
     trace.endBlock();
   }
@@ -1199,18 +1174,12 @@ int main( int argc, char** argv )
   po::options_description general_opt("Allowed options are: ");
   general_opt.add_options()
     ("help,h", "display this message")
-    ("point-fct-list,l", po::value<std::string>(), "Specifies the input shape as a list of 2d integer points + value, 'x y f(x,y)' per line.")
-    ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image filename.")
-    ("view,v", po::value<int>()->default_value( 4 ), "Specifies what is outputed as a mask: 0x8: red edges, 0x4: faces, 0x2: edges, 0x1: vertices.")  
-    ("debug,d", "Outputs the intermediate triangulation in tmp/avt-*.eps.")  
-    ("quantify,q", po::value<int>()->default_value(1), "Quantifies the input data values by a factor [arg].")  
+    ("image,i", po::value<std::string>(), "Specifies the input shape as a 2D image PPM filename.")
     ("random,r", po::value<double>()->default_value(1.0), "Keep only a proportion [arg] (between 0 and 1) of the input data point.")  
     ("limit,L", po::value<int>()->default_value(1000), "Gives the maximum number of passes (default is 10000).")  
     ("reverse,R", "Reverses the topology of the image (black has more priority than white).") 
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("gouraud,g", "Displays faces with Gouraud-like shading.")  
-    ("contour,c", po::value<int>(), "Displays the contour of value [arg].")  
-    ("corners,C", po::value<int>(), "Displays the corners of contour of value [arg].")  
     ;
 
   bool parseOK = true;
@@ -1225,8 +1194,8 @@ int main( int argc, char** argv )
   po::notify(vm);    
   if( ! parseOK || vm.count("help") || argc <= 1 )
     {
-      trace.info()<< "Generate a 2D triangulation from an arbitrary set of points. The triangulation provides a kind of piecewise linear approximation of the digitized set. The digitized set has label 0, the exterior points have label 1." <<std::endl << "Basic usage: " << std::endl
-		  << "\t2d-triangulation-f [options] -l <point-list>"<<std::endl
+      trace.info()<< "Generate a 2D triangulation from an arbitrary set of points. The triangulation provides a kind of piecewise linear approximation of any arbitrary color image." <<std::endl << "Basic usage: " << std::endl
+		  << "\t2d-triangulation-color [options] -i <image.ppm> -b 4"<<std::endl
 		  << general_opt << "\n";
       return 0;
     }

@@ -38,7 +38,8 @@ FIND_PACKAGE(Cairo REQUIRED)
 IF(CAIRO_FOUND)
     INCLUDE_DIRECTORIES(${CAIRO_INCLUDE_DIRS})
     LINK_DIRECTORIES(${CAIRO_LIBRAIRIES})
-    message(STATUS "Cairo found")
+    message(STATUS "Cairo found in INCLUDE=" ${CAIRO_INCLUDE_DIRS})
+    message(STATUS "Cairo found in LIBRARY=" ${CAIRO_LIBRAIRIES})
 ELSE(CAIRO_FOUND)
     message(FATAL_ERROR "cairo not found. Check the cmake variables associated to this package or disable it." )
 ENDIF(CAIRO_FOUND)
@@ -48,6 +49,7 @@ SET(SRCs
   simpleExample
   2d-triangulation
   2d-triangulation-f
+  2d-triangulation-color
   3d-triangulation
   3d-triangulation-2
   3d-triangulation-3
