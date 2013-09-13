@@ -1,3 +1,4 @@
+#include <cfloat>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -84,6 +85,7 @@ public:
   typedef typename std::map<FaceHandle,Value>               FaceHandle2ValueMap;
   typedef DGtal::UmbrellaPart2D<Triangulation2,Kernel2>     Strip;
   typedef typename std::set<Edge>                           EdgeSet;
+  typedef typename std::map<Point,VertexHandle>             Point2VertexHandleMap;
 
   /**
      This structure is used as a predicate for vertex/edge/face, such
@@ -131,7 +133,9 @@ protected:
   Edge2ValueMap _eFct;
   /// A mapping FaceHandle -> Value that stores for each face its value.
   FaceHandle2ValueMap _fFct;
-
+  /// A mapping Point -> VertexHandle that stores for each point its corresponding vertex.
+  Point2VertexHandleMap _p2vhMap
+;
   DGtal::Board2D _debugBoard;
 
 public:
@@ -155,6 +159,7 @@ public:
     _vFct.clear();
     _eFct.clear();
     _fFct.clear();
+    _p2vhMap.clear();
     setInfiniteValue( invalid );
   }
 
@@ -170,6 +175,7 @@ public:
   inline void add( const Point & pt, Value val )
   {
     VertexHandle vh = _T.insert( pt );
+    _p2vhMap[ pt ] = vh;
     setValue( vh, val );
   }
 
@@ -197,6 +203,17 @@ public:
   {
     for ( ; itb != ite; ++itb )
       add( itb->first, itb->second );
+  }
+
+  /**
+     @param pt any point of the triangulation.
+     @return the corresponding vertex.
+  */
+  VertexHandle vertex( const Point & pt ) const
+  {
+    typename Point2VertexHandleMap::const_iterator it = _p2vhMap.find( pt );
+    ASSERT( it != _p2vhMap.end() );
+    return it->second;
   }
 
   /**
@@ -375,9 +392,115 @@ public:
     // DGtal::trace.endBlock();
     return changes;
   }
+  
+  // ---------------------- services --------------------------------
+public:
+  
+  /**
+     Given a vertex specified by \a v and a value \val, computes the
+     CCW oriented local contour for this value and returns 'true' if
+     there is an isocontour of such value at this place. The pairs of
+     consecutive edges are returned in \a in_edges and \a
+     out_edges. The edges of the form (v1,v) are in \a in_edges, the
+     edges of the form (v,v2) are in \a out_edges. Since the
+     isocontour is oriented CCW, each cell of any edge has value
+     greater or equal to \a val. There should be as many \a in_edges
+     as \a out_edges.
+     
+     @param[out] in_edges the edges forming the isocontour around vertex \a v.
+     @param[out] out_edges the edges forming the isocontour around vertex \a v.
+     @param[in] v the vertex handle specifying where we look for the isocontour.
+     @param[in] val the value of the isocontour (there may be several isocontours at this vertex).
+  */
 
+  bool localIsocontour( std::vector<Edge> & in_edges, 
+			std::vector<Edge> & out_edges, 
+			VertexHandle v, Value val )
+  {
+    bool first_edge_is_out = false;
+    in_edges.clear();
+    out_edges.clear();
+    Edge first = *( T().incident_edges( v ) );
+    if ( TH.source( first ) != v ) first = T().mirror_edge( first );
+    Edge e = first;
+    do {
+      ASSERT( TH.source( e ) == v );
+      Value val1 = value( e.first );
+      Value val2 = value( T().mirror_edge( e ).first );
+      if ( ( val1 >= val ) && ( val > val2 ) )
+	{
+	  if ( ! first_edge_is_out )
+	    {
+	      first_edge_is_out = true;
+	      first = e; // starts at this position.
+	    }
+	  out_edges.push_back( e );
+	}
+      else if ( ( val1 < val ) && ( val <= val2 ) )
+	{
+	  if ( first_edge_is_out )
+	    in_edges.push_back( T().mirror_edge( e ) );
+	}
+      e = TH.nextCCWAroundSourceVertex( e ); 
+    } while ( e != first );
+    if ( in_edges.size() != out_edges.size() )
+      DGtal::trace.warning() << "[AVT::localIsocontour] point=" << v->point() 
+			     << " #in=" << in_edges.size()
+			     << " #out=" << out_edges.size()
+			     << std::endl;
+    return ( in_edges.size() != 0 ) && ( out_edges.size() == in_edges.size() );
+  }
 
+  static Component radius( Component L0, Component L1, Component L01 )
+  {
+    if ( ( L1 + L01 <= L0 ) || ( L0 + L01 <= L1 ) || ( L0 + L1 <= L01 ) ) 
+      return DBL_MAX;
+    if ( ( L0 <= 0.0 )  || ( L1 <= 0.0 ) || ( L01 <= 0.0 ) ) return 0.0;
+    return ( L0 * L1 * L01 ) 
+      / sqrt( ( L0 + L1 + L01 ) * ( -L0 + L1 + L01 ) * ( L0 - L1 + L01 ) * ( L0 + L1 - L01 ) );
+  }
 
+  /**
+     @return 'true' iff the two edges form a corner.
+     @pre e1 and e2 should be consecutive edges, i.e. target( e1 ) = source( e2 )
+  */
+  bool isSmooth( const Edge & e1, const Edge & e2, Component dh ) const
+  {
+    ASSERT( TH.target( e1 ) == TH.source( e2 ) );
+    Point v0 = TH.source( e1 )->point();
+    Point v  = TH.target( e1 )->point();
+    Point v1 = TH.target( e2 )->point();
+    Component LL0 = ( v - v0 ).squared_length();
+    // bool aligned0 = ( ( v - v0 ).x() == 0 ) || ( ( v - v0 ).y() == 0 );
+    Component LL1 = ( v1 - v ).squared_length();
+    // bool aligned0 = ( ( v1 - v ).x() == 0 ) || ( ( v1 - v ).y() == 0 );
+    Component LL01 = ( v1 - v0 ).squared_length();
+    Component L0 = sqrt( LL0 ), L1 = sqrt( LL1 ), L01 = sqrt( LL01 );
+    Component R = radius( L0, L1, L01 );
+    Component eps1 = R - sqrt( R*R - LL0 / 4.0 );
+    Component eps2 = R - sqrt( R*R - LL1 / 4.0 );
+    return ( eps1 <= sqrt(2.0) * dh ) && ( eps2 <= sqrt(2.0) * dh );
+
+    // Component R0_min = ( LL0 / (4.0*dh) + dh ) / ( 2.0 * sqrt( 2.0 ) );
+    // Component R0_max = ( LL0 / (4.0*dh) + dh ) * sqrt( 2.0 ) / 2.0;
+    // Component R1_min = ( LL1 / (4.0*dh) + dh ) / ( 2.0 * sqrt( 2.0 ) );
+    // Component R1_max = ( LL1 / (4.0*dh) + dh ) * sqrt( 2.0 ) / 2.0;
+
+    
+    // Component R = radius( L0, L1, L01 ); 
+    // Component Rmin = std::min( R, radius( L0 - dh, L1, L01 ) );
+    // Rmin = std::min( Rmin, radius( L0, L1 - dh, L01 ) );
+    // Rmin = std::min( Rmin, radius( L0, L1, L01 - dh ) );
+    // Component Rmax = std::max( R, radius( L0 + dh, L1, L01 ) );
+    // Rmax = std::max( Rmin, radius( L0, L1 + dh, L01 ) );
+    // Rmax = std::max( Rmin, radius( L0, L1, L01 + dh ) );
+
+    // return ( ( R0_min <= Rmax ) && ( Rmin <= R0_max ) )
+    //   || ( ( R1_min <= Rmax ) && ( Rmin <= R1_max ) );
+  }
+  
+  // ---------------------- value services --------------------------------
+public:
 
   /**
      @return the "invalid" value, used for instance for the infinite vertex.
@@ -540,6 +663,7 @@ private:
   Board & _board;
   AVT & _avt;
   Value _min, _max;
+  bool _gouraud;
   std::vector<Color> _label_colors;
   std::vector<Color> _other_colors;
 
@@ -550,9 +674,10 @@ public:
   */
   ViewerAVT( DGtal::Alias<Board> board, 
              DGtal::Alias<AVT> avt,
-             Value min, Value max )
+             Value min, Value max, 
+	     bool gouraud )
     : _board( board ), _avt( avt ),
-      _min( min ), _max( max )
+      _min( min ), _max( max ), _gouraud( gouraud )
   {
     DGtal::GrayscaleColorMap<double> grayShade( (double) min, (double) max );
     for ( Value i = min; i <= max; i++ )
@@ -635,18 +760,111 @@ public:
     for ( FiniteFacesIterator it = _avt.T().finite_faces_begin(), itend = _avt.T().finite_faces_end();
           it != itend; ++it )
       {
+	_board.setLineWidth( 0.0f );
         FaceHandle fh = it;
-        Value l1 = (Value) _avt.value( fh );
-        Color col = color( l1 );
-        _board.setPenColor( col );
-        _board.setFillColor( col );
-        _board.setLineWidth( 0.0f );
-        PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
-        PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
-        PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
-        _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
+	if ( _gouraud )
+	  {
+	    Value lf = (Value) _avt.value( fh );
+	    Value l0 = (Value) _avt.value( fh->vertex( 0 ) );
+	    Value l1 = (Value) _avt.value( fh->vertex( 1 ) );
+	    Value l2 = (Value) _avt.value( fh->vertex( 2 ) );
+	    PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
+	    PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
+	    PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
+	    _board.setPenColor( color( lf ) );
+	    _board.setFillColor( color( lf ) );
+	    _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
+	    _board.setPenColor( DGtal::Color( 0, 0, 0, 255 ) );
+	    _board.fillGouraudTriangle( a[ 0 ], a[ 1 ], lf <= l0 ? color( l0 ) : color( lf ),
+	     				b[ 0 ], b[ 1 ], lf <= l1 ? color( l1 ) : color( lf ),
+	     				c[ 0 ], c[ 1 ], lf <= l2 ? color( l2 ) : color( lf ),
+					2 );
+	  }
+	else
+	  {
+	    Value l1 = (Value) _avt.value( fh );
+	    Color col = color( l1 );
+	    _board.setPenColor( col );
+	    _board.setFillColor( col );
+	    PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
+	    PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
+	    PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
+	    _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
+	  }
       }
   }
+
+  /**
+     View edges of the triangulation. 
+  */
+  void viewContour( Value val )
+  {
+    PointZ2 dummy;
+    std::string specificStyle =  dummy.className() + "/Grid";
+    _board << DGtal::SetMode( dummy.className(), "Grid" );
+    std::vector<Edge> in_edges, out_edges;
+    for ( FiniteVerticesIterator it = _avt.T().finite_vertices_begin(), itend = _avt.T().finite_vertices_end();
+          it != itend; ++it )
+      {
+        VertexHandle vh = it;
+        Value l1 = (Value) _avt.value( vh );
+	if ( _avt.localIsocontour( in_edges, out_edges, vh, val ) )
+	  {
+	    Color col = Color::Green;
+	    PointZ2 b = toDGtal( it->point() );
+	    _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( col, col ) );
+	    _board << b;
+	    _board.setPenColor( col );
+	    _board.setFillColor( col );
+	    _board.setLineWidth( 2.0f );
+	    for ( unsigned int i = 0; i < in_edges.size(); ++i )
+	      {
+		PointZ2 a = toDGtal( _avt.TH.source( in_edges[ i ] )->point() );
+		PointZ2 c = toDGtal( _avt.TH.target( out_edges[ i ] )->point() );
+		_board.drawLine( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ] );
+		_board.drawLine( b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
+	      }
+	  }
+      }
+  }
+
+  /**
+     View edges of the triangulation. 
+  */
+  void viewCorners( Value val )
+  {
+    PointZ2 dummy;
+    std::string specificStyle =  dummy.className() + "/Grid";
+    _board << DGtal::SetMode( dummy.className(), "Grid" );
+    std::vector<Edge> in_edges, out_edges;
+    for ( FiniteVerticesIterator it = _avt.T().finite_vertices_begin(), itend = _avt.T().finite_vertices_end();
+          it != itend; ++it )
+      {
+        VertexHandle vh = it;
+        Value l1 = (Value) _avt.value( vh );
+	if ( _avt.localIsocontour( in_edges, out_edges, vh, val ) )
+	  {
+	    Color col = Color::Magenta;
+	    for ( unsigned int i = 0; i < in_edges.size(); ++i )
+	      {
+		if ( ! _avt.isSmooth( in_edges[ i ], out_edges[ i ], 1.0 ) )
+		  {
+		    PointZ2 b = toDGtal( it->point() );
+		    _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( col, col ) );
+		    _board << b;
+		    _board.setPenColor( col );
+		    _board.setFillColor( col );
+		    _board.setLineWidth( 2.0f );
+		    PointZ2 a = toDGtal( _avt.TH.source( in_edges[ i ] )->point() );
+		    PointZ2 c = toDGtal( _avt.TH.target( out_edges[ i ] )->point() );
+		    _board.drawLine( (a[ 0 ] + b[ 0 ])/2.0, (a[ 1 ] + b[ 1 ])/2.0, b[ 0 ], b[ 1 ] );
+		    _board.drawLine( b[ 0 ], b[ 1 ], (b[ 0 ] + c[ 0 ])/2.0, (b[ 1 ] + c[ 1 ])/2.0 );
+		  }
+	      }
+	  }
+      }
+  }
+  
 
 };
 
@@ -752,12 +970,12 @@ public:
 
   inline int i( double x ) const
   {
-    return round( x * _xf ) - _x0;
+    return (int)round( x * _xf ) - _x0;
   }
 
   inline int j( double y ) const
   {
-    return round( y * _yf ) - _y0;
+    return _height - (int)(round( y * _yf ) - _y0) - 1;
   }
 
 };
@@ -874,13 +1092,16 @@ int affineValuedTriangulation( po::variables_map & vm )
   trace.endBlock();
 
   int view = vm[ "view" ].as<int>();
+  bool gouraud = vm.count( "gouraud" );
   trace.beginBlock("View initial triangulation");
   Board2D board;
-  ViewerAVT< AVTriangulation2, int > viewer( board, avt, min_value, max_value );
+  ViewerAVT< AVTriangulation2, int > viewer( board, avt, min_value, max_value, gouraud );
   if ( view & 0x4 ) viewer.viewFaces();
   if ( view & 0x2 ) viewer.viewEdges();
   if ( view & 0x1 ) viewer.viewVertices();
   if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
+  if ( vm.count( "contour" ) ) viewer.viewContour( vm[ "contour" ].as<int>() );
+  if ( vm.count( "corners" ) ) viewer.viewCorners( vm[ "corners" ].as<int>() );
   board.saveSVG("avt-before.svg");
   board.saveEPS("avt-before.eps");
   board.clear();
@@ -898,7 +1119,9 @@ int affineValuedTriangulation( po::variables_map & vm )
         if ( view & 0x2 ) viewer.viewEdges();
         if ( view & 0x1 ) viewer.viewVertices();
         if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
-        std::ostringstream ostr;
+	if ( vm.count( "contour" ) ) viewer.viewContour( vm[ "contour" ].as<int>() );
+	if ( vm.count( "corners" ) ) viewer.viewCorners( vm[ "corners" ].as<int>() );
+	std::ostringstream ostr;
         ostr << "tmp/avt-" << pass << ".eps";
         board.saveEPS( ostr.str().c_str() );
         board.clear();
@@ -913,6 +1136,8 @@ int affineValuedTriangulation( po::variables_map & vm )
   if ( view & 0x2 ) viewer.viewEdges();
   if ( view & 0x1 ) viewer.viewVertices();
   if ( view & 0x8 ) viewer.viewTriangulation( DGtal::Color::Red );
+  if ( vm.count( "contour" ) ) viewer.viewContour( vm[ "contour" ].as<int>() );
+  if ( vm.count( "corners" ) ) viewer.viewCorners( vm[ "corners" ].as<int>() );
   board.saveSVG("avt-after.svg");
   board.saveEPS("avt-after.eps");
   board.clear();
@@ -952,6 +1177,9 @@ int main( int argc, char** argv )
     ("limit,L", po::value<int>()->default_value(1000), "Gives the maximum number of passes (default is 10000).")  
     ("reverse,R", "Reverses the topology of the image (black has more priority than white).") 
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
+    ("gouraud,g", "Displays faces with Gouraud-like shading.")  
+    ("contour,c", po::value<int>(), "Displays the contour of value [arg].")  
+    ("corners,C", po::value<int>(), "Displays the corners of contour of value [arg].")  
     ;
 
   bool parseOK = true;
