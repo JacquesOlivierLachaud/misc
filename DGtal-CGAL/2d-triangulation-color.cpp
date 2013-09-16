@@ -691,242 +691,230 @@ public:
     _fFct.erase( fh );
   }
 
-};
-
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-/**
-   This class is intended for visualizing Affine Valued triangulation.
-*/
-template <typename TAVT, typename TValue>
-class ViewerAVT
-{
+  // ---------------------- value services --------------------------------
 public:
-  typedef TAVT                                 AVT;
-  typedef TValue                               Value;
-  typedef typename AVT::Triangulation2         Triangulation2;
-  typedef typename AVT::VertexHandle           VertexHandle;
-  typedef typename AVT::FiniteVerticesIterator FiniteVerticesIterator;
-  typedef typename AVT::Edge                   Edge;
-  typedef typename AVT::EdgeIterator           EdgeIterator;
-  typedef typename AVT::FiniteEdgesIterator    FiniteEdgesIterator;
-  typedef typename AVT::FiniteFacesIterator    FiniteFacesIterator;
-  typedef typename AVT::FaceHandle             FaceHandle;
-  typedef typename AVT::Point2                 Point2;
-  typedef DGtal::Board2D                       Board;
-  typedef DGtal::Color                         Color;
-  typedef DGtal::Z2i::Point                    PointZ2;
-
-private:
-  Board & _board;
-  AVT & _avt;
-  Value _min, _max;
-  bool _gouraud;
-  std::vector<Color> _label_colors;
-  std::vector<Color> _other_colors;
-
-public:
-  /**
-     Constructor. Requires a board \a board for display and an affine
-     valued triangulation \a avt.
-  */
-  ViewerAVT( DGtal::Alias<Board> board, 
-             DGtal::Alias<AVT> avt,
-             Value min, Value max, 
-	     bool gouraud )
-    : _board( board ), _avt( avt ),
-      _min( min ), _max( max ), _gouraud( gouraud )
+  
+  static double linearInterpolation( Point p, Point p1, Point p2, 
+				     double v1, double v2 )
   {
-    DGtal::GrayscaleColorMap<double> grayShade( (double) min, (double) max );
-    for ( Value i = min; i <= max; i++ )
-      _label_colors.push_back( grayShade( (double) i ) );
-    _other_colors.push_back( Color::Blue );
+    double ux = p2.x() - p1.x();
+    double uy = p2.y() - p1.y();
+    double mu = ( abs( ux ) >= abs( uy ) )
+      ? ( p.x() - p1.x() ) / ux
+      : ( p.y() - p1.y() ) / uy;
+    return ( 1.0 - mu ) * v1 + mu * v2;
   }
 
-  inline Color color( Value val ) const
+  static double twiceAreaTriangle( Point p1, Point p2, Point p3 )
   {
-    if ( val == (Value) _avt.invalid() )
-      return _other_colors[ 0 ];
+    double ux = p2.x() - p1.x();
+    double uy = p2.y() - p1.y();
+    double vx = p3.x() - p1.x();
+    double vy = p3.y() - p1.y();
+    return abs( ux * vy - uy * vx );
+  }
+
+  static double midValue( double v1, double v2, double v3 )
+  {
+    return ( v1 + v2 + v3 ) / 3.0;
+  }
+  static double midValue( double v1, double v2 )
+  {
+    return ( v1 + v2 ) / 2.0;
+  }
+  static Point midPoint( Point p1, Point p2, Point p3 )
+  {
+    return Point( ( p1.x() + p2.x() + p3.x() ) / 3.0, ( p1.y() + p2.y() + p3.y() ) / 3.0 );
+  }
+  static Point midPoint( Point p1, Point p2 )
+  {
+    return Point( ( p1.x() + p2.x() ) / 2.0, ( p1.y() + p2.y() ) / 2.0 );
+  }
+
+  static double linearInterpolation( Point p, Point p1, Point p2, Point p3, 
+				     double v1, double v2, double v3 )
+  {
+    double area = twiceAreaTriangle( p1, p2, p3 );
+    double a1 = twiceAreaTriangle( p, p2, p3 ) / area;
+    double a2 = twiceAreaTriangle( p, p3, p1 ) / area;
+    double a3 = twiceAreaTriangle( p, p1, p2 ) / area;
+    return a1 * v1 + a2 * v2 + a3 * v3;
+  }
+
+  /**
+     @param[in] p any point.
+     @param[in] gouraud when 'true', performs Gouraud interpolation.
+     @return the value at position \a p. 
+  */
+  double preciseValue( Point p, bool gouraud, FaceHandle hint = FaceHandle() )
+  {
+    typename Triangulation2::Locate_type lt;
+    int li;
+    FaceHandle	fh = T().locate( p, lt, li, hint );
+    double result = 0.0;
+    switch ( lt ) {
+    case Triangulation2::VERTEX:
+      { // If lt==VERTEX the variable li is set to the index of the vertex
+	result = (double) value( fh->vertex( li ) );
+      } break;
+    case Triangulation2::EDGE:
+      { // if lt==EDGE li is set to the index of the vertex opposite to the edge
+	VertexHandle v1 = fh->vertex( (li+1)%3 );
+	VertexHandle v2 = fh->vertex( (li+2)%3 );
+	result = ( gouraud )
+	  ? linearInterpolation( p, v1->point(), v2->point(), value( v1 ), value( v2 ) )
+	  : (double) value( Edge( fh, li ) );
+      } break;
+    case Triangulation2::FACE:
+      {
+	VertexHandle v0 = fh->vertex( 0 );
+	VertexHandle v1 = fh->vertex( 1 );
+	VertexHandle v2 = fh->vertex( 2 );
+	result = ( gouraud )
+	  ? linearInterpolation( p, v0->point(), v1->point(), v2->point(), 
+				 value( v0 ), value( v1 ), value( v2 ) )
+	  : (double) value( fh );
+      } break;
+    // otherwise OUTSIDE_CONVEX_HULL, or OUTSIDE_AFFINE_HULL
+    }
+    return result;
+  }
+
+  double errorTVOnTriangle( Point p1, Point p2, Point p3, 
+			    double v1, double v2, double v3,
+			    bool gouraud, int subdivision = 2 )
+  {
+    if ( subdivision <= 0 ) 
+      {
+	double val_one = midValue( v1, v2, v3 );
+	double val_two = preciseValue( midPoint( p1, p2, p3 ), gouraud );
+	return abs( val_one - val_two ) * twiceAreaTriangle( p1, p2, p3 );
+      }
     else
-      return _label_colors[ std::min( _max, std::max( _min, val ) ) - _min ];
+      return errorTVOnTriangle( p1, midPoint( p1, p2 ), midPoint( p1, p3 ),
+				  v1, midValue( v1, v2 ), midValue( v1, v3 ),
+				  gouraud, subdivision - 1 )
+	+ errorTVOnTriangle( midPoint( p1, p2 ), p2, midPoint( p2, p3 ),
+			     midValue( v1, v2 ), v2, midValue( v2, v3 ),
+			     gouraud, subdivision - 1 )
+	+ errorTVOnTriangle( midPoint( p1, p2 ), midPoint( p1, p3 ), midPoint( p2, p3 ),
+			     midValue( v1, v2 ), midValue( v1, v3 ), midValue( v2, v3 ),
+			     gouraud, subdivision - 1 )
+	+ errorTVOnTriangle( midPoint( p1, p3 ), midPoint( p2, p3 ), p3,
+			     midValue( v1, v3 ), midValue( v2, v3 ), v3,
+			     gouraud, subdivision - 1 );
   }
 
   /**
-     View vertices of the triangulation. 
+     Estimates the resulting error in the reconstruction when removing vertex \a vh.
+
+     @param[in] vh the vertex whose removal is checked.
   */
-  void viewVertices()
+  double errorTVWhenRemoved( VertexHandle vh, bool gouraud, int sub = 2 )
   {
-    PointZ2 dummy;
-    std::string specificStyle =  dummy.className() + "/Grid";
-    _board << DGtal::SetMode( dummy.className(), "Grid" );
-    for ( FiniteVerticesIterator it = _avt.T().finite_vertices_begin(), itend = _avt.T().finite_vertices_end();
-          it != itend; ++it )
+    Point p = vh->point();
+    Value val = value( vh );
+    std::vector<Point> neighbors;
+    std::vector<Value> values;
+
+    Self miniAVT( _invalid );
+    typename Triangulation2::Vertex_circulator ci_start = T().incident_vertices( vh );
+    typename Triangulation2::Vertex_circulator ci = ci_start;
+    do {
+      VertexHandle n = ci;
+      neighbors.push_back( n->point() );
+      values.push_back( value( n ) );
+      miniAVT.add( neighbors.back(), values.back() );
+      ++ci;
+    } while ( ci != ci_start );
+    double error = 0.0;
+    for ( unsigned int i = 0; i < neighbors.size(); ++i )
       {
-        VertexHandle vh = it;
-        Value l1 = (Value) _avt.value( vh );
-        Color c = color( l1 );
-        PointZ2 a = toDGtal( it->point() );
-        _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( c, c ) );
-        _board << a;
+	unsigned int j = ( i+1 ) % neighbors.size();
+	error += miniAVT.errorTVOnTriangle( p, neighbors[ i ], neighbors[ j ],
+					    val, values[ i ], values[ j ], gouraud, sub );
       }
+    return error;
   }
 
-  /**
-     View edges of the triangulation. 
-  */
-  void viewEdges()
+  struct VertexError {
+    VertexHandle _vh;
+    double _error;
+    VertexError( VertexHandle vh, double error )
+      : _vh( vh ), _error( error ) {}
+  };
+
+  struct VertexErrorComparator {
+    double operator()( const VertexError & ve1,
+		       const VertexError & ve2 ) const
+    {
+      return ve1._error < ve2._error;
+    }
+  };
+
+  bool isOnConvexHull( VertexHandle vh ) const
   {
-    for ( FiniteEdgesIterator it = _avt.T().finite_edges_begin(), itend = _avt.T().finite_edges_end();
-          it != itend; ++it )
-      {
-        Edge e = *it;
-        Value l1 = (Value) _avt.value( e );
-        Color col = color( l1 );
-        _board.setPenColor( col );
-        _board.setFillColor( col );
-        _board.setLineWidth( 2.0f );
-        PointZ2 a = toDGtal( _avt.TH.source( e )->point() );
-        PointZ2 b = toDGtal( _avt.TH.target( e )->point() );
-        _board.drawLine( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ] );
-      }
+    typename Triangulation2::Vertex_circulator ci_start 
+      = T().incident_vertices( vh );
+    typename Triangulation2::Vertex_circulator ci = ci_start;
+    do {
+      if ( T().is_infinite( ci ) ) return true;
+      ++ci;
+    } while ( ci != ci_start );    
+    return false;
   }
 
-  /**
-     View edges of the triangulation. 
-  */
-  void viewTriangulation( Color col )
-  {
-    _board.setPenColor( col );
-    _board.setFillColor( col );
-    _board.setLineWidth( 1.0f );
-    for ( FiniteEdgesIterator it = _avt.T().finite_edges_begin(), itend = _avt.T().finite_edges_end();
-          it != itend; ++it )
-      {
-        Edge e = *it;
-        Value l1 = (Value) _avt.value( e );
-        PointZ2 a = toDGtal( _avt.TH.source( e )->point() );
-        PointZ2 b = toDGtal( _avt.TH.target( e )->point() );
-        _board.drawLine( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ] );
-      }
-  }
 
-  /**
-     View faces of the triangulation. 
-  */
-  void viewFaces()
+  void compress( double ratio, bool gouraud, int sub )
   {
-    for ( FiniteFacesIterator it = _avt.T().finite_faces_begin(), itend = _avt.T().finite_faces_end();
-          it != itend; ++it )
+    std::set< VertexError, VertexErrorComparator > candidates;
+    std::set< VertexHandle > modified_vertices;
+    unsigned int nb = T().number_of_vertices();
+    unsigned int to_remove = (unsigned int) ceil( ((double)nb) * ratio );
+    while ( to_remove != 0 )
       {
-	_board.setLineWidth( 0.0f );
-        FaceHandle fh = it;
-	if ( _gouraud )
+	if ( candidates.empty() )
 	  {
-	    Value lf = (Value) _avt.value( fh );
-	    Value l0 = (Value) _avt.value( fh->vertex( 0 ) );
-	    Value l1 = (Value) _avt.value( fh->vertex( 1 ) );
-	    Value l2 = (Value) _avt.value( fh->vertex( 2 ) );
-	    PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
-	    PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
-	    PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
-	    _board.setPenColor( color( lf ) );
-	    _board.setFillColor( color( lf ) );
-	    _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
-	    _board.setPenColor( DGtal::Color( 0, 0, 0, 255 ) );
-	    _board.fillGouraudTriangle( a[ 0 ], a[ 1 ], lf <= l0 ? color( l0 ) : color( lf ),
-	     				b[ 0 ], b[ 1 ], lf <= l1 ? color( l1 ) : color( lf ),
-	     				c[ 0 ], c[ 1 ], lf <= l2 ? color( l2 ) : color( lf ),
-					2 );
-	  }
-	else
-	  {
-	    Value l1 = (Value) _avt.value( fh );
-	    Color col = color( l1 );
-	    _board.setPenColor( col );
-	    _board.setFillColor( col );
-	    PointZ2 a = toDGtal( fh->vertex( 0 )->point() );
-	    PointZ2 b = toDGtal( fh->vertex( 1 )->point() );
-	    PointZ2 c = toDGtal( fh->vertex( 2 )->point() );
-	    _board.drawTriangle( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
-	  }
-      }
-  }
-
-  /**
-     View edges of the triangulation. 
-  */
-  void viewContour( Value val )
-  {
-    PointZ2 dummy;
-    std::string specificStyle =  dummy.className() + "/Grid";
-    _board << DGtal::SetMode( dummy.className(), "Grid" );
-    std::vector<Edge> in_edges, out_edges;
-    for ( FiniteVerticesIterator it = _avt.T().finite_vertices_begin(), itend = _avt.T().finite_vertices_end();
-          it != itend; ++it )
-      {
-        VertexHandle vh = it;
-        Value l1 = (Value) _avt.value( vh );
-	if ( _avt.localIsocontour( in_edges, out_edges, vh, val ) )
-	  {
-	    Color col = Color::Green;
-	    PointZ2 b = toDGtal( it->point() );
-	    _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( col, col ) );
-	    _board << b;
-	    _board.setPenColor( col );
-	    _board.setFillColor( col );
-	    _board.setLineWidth( 2.0f );
-	    for ( unsigned int i = 0; i < in_edges.size(); ++i )
+	    modified_vertices.clear();
+	    for ( FiniteVerticesIterator it = T().finite_vertices_begin(), 
+		    ite = T().finite_vertices_end(); it != ite; ++it )
 	      {
-		PointZ2 a = toDGtal( _avt.TH.source( in_edges[ i ] )->point() );
-		PointZ2 c = toDGtal( _avt.TH.target( out_edges[ i ] )->point() );
-		_board.drawLine( a[ 0 ], a[ 1 ], b[ 0 ], b[ 1 ] );
-		_board.drawLine( b[ 0 ], b[ 1 ], c[ 0 ], c[ 1 ] );
-	      }
-	  }
-      }
-  }
-
-  /**
-     View edges of the triangulation. 
-  */
-  void viewCorners( Value val )
-  {
-    PointZ2 dummy;
-    std::string specificStyle =  dummy.className() + "/Grid";
-    _board << DGtal::SetMode( dummy.className(), "Grid" );
-    std::vector<Edge> in_edges, out_edges;
-    for ( FiniteVerticesIterator it = _avt.T().finite_vertices_begin(), itend = _avt.T().finite_vertices_end();
-          it != itend; ++it )
-      {
-        VertexHandle vh = it;
-        Value l1 = (Value) _avt.value( vh );
-	if ( _avt.localIsocontour( in_edges, out_edges, vh, val ) )
-	  {
-	    Color col = Color::Magenta;
-	    for ( unsigned int i = 0; i < in_edges.size(); ++i )
-	      {
-		if ( ! _avt.isSmooth( in_edges[ i ], out_edges[ i ], 1.0 ) )
+		if ( ! isOnConvexHull( it ) )
 		  {
-		    PointZ2 b = toDGtal( it->point() );
-		    _board << DGtal::CustomStyle( specificStyle, new DGtal::CustomColors( col, col ) );
-		    _board << b;
-		    _board.setPenColor( col );
-		    _board.setFillColor( col );
-		    _board.setLineWidth( 2.0f );
-		    PointZ2 a = toDGtal( _avt.TH.source( in_edges[ i ] )->point() );
-		    PointZ2 c = toDGtal( _avt.TH.target( out_edges[ i ] )->point() );
-		    _board.drawLine( (a[ 0 ] + b[ 0 ])/2.0, (a[ 1 ] + b[ 1 ])/2.0, b[ 0 ], b[ 1 ] );
-		    _board.drawLine( b[ 0 ], b[ 1 ], (b[ 0 ] + c[ 0 ])/2.0, (b[ 1 ] + c[ 1 ])/2.0 );
+		    VertexError ve( it, errorTVWhenRemoved( it, gouraud, sub ) );
+		    candidates.insert( ve );
 		  }
 	      }
 	  }
+	VertexError ve = *( candidates.begin() );
+	candidates.erase( candidates.begin() );
+	DGtal::trace.info() << "[" << to_remove << "]"
+			    << "Compressing pt=" << ve._vh->point() 
+			    << " error=" << ve._error << std::endl;
+	typename std::set< VertexHandle >::iterator itm 
+	  = modified_vertices.find( ve._vh );
+	if ( itm != modified_vertices.end() )
+	  { // this vertex was closed to a removed vertex.
+	    continue;
+	  }
+	// Mark nearby vertices
+	typename Triangulation2::Vertex_circulator ci_start = T().incident_vertices( ve._vh );
+	typename Triangulation2::Vertex_circulator ci = ci_start;
+	do {
+	  modified_vertices.insert( VertexHandle( ci ) );
+	  ++ci;
+	} while ( ci != ci_start );
+	// Remove vertex.
+	_T.remove( ve._vh );
+	--to_remove;
       }
   }
   
-
 };
+
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 
 
@@ -1228,6 +1216,30 @@ int affineValuedTriangulation( po::variables_map & vm )
     cviewer.save( "avt-after.png" );
     trace.endBlock();
   }
+  {
+    double ratio = vm[ "compress" ].as<double>();
+    int sub = 2;
+    trace.beginBlock("Compressing triangulation -- RED");
+    avt_red.compress( ratio, gouraud, sub );
+    trace.endBlock();
+    trace.beginBlock("Compressing triangulation -- GREEN");
+    avt_green.compress( ratio, gouraud, sub );
+    trace.endBlock();
+    trace.beginBlock("Compressing triangulation -- BLUE");
+    avt_blue.compress( ratio, gouraud, sub );
+    trace.endBlock();
+    trace.beginBlock("View affine valued triangulation");
+    double b = vm[ "bitmap" ].as<double>();
+    CairoViewerAVT< AVTriangulation2, int > cviewer
+      ( (int) round( x0 ), (int) round( y0 ), 
+        (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
+        b, b, gouraud );
+    cviewer.viewAVT( avt_red, CairoViewerAVT< AVTriangulation2, int>::Red );
+    cviewer.viewAVT( avt_green, CairoViewerAVT< AVTriangulation2, int>::Green );
+    cviewer.viewAVT( avt_blue, CairoViewerAVT< AVTriangulation2, int>::Blue );
+    cviewer.save( "avt-compressed.png" );
+    trace.endBlock();
+  }
 
 
   return 0;
@@ -1249,6 +1261,7 @@ int main( int argc, char** argv )
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("gouraud,g", "Displays faces with Gouraud-like shading.")  
     ("saddle,s", "Process saddle points.")  
+    ("compress,z", po::value<double>(), "Compress image with compress ratio [arg], e.g. arg=0.9 means keeping only 10% of vertices.")  
     ;
 
   bool parseOK = true;
