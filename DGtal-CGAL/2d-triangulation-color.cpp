@@ -18,6 +18,7 @@
 #include <DGtal/io/colormaps/GradientColorMap.h>
 #include <DGtal/io/colormaps/GrayscaleColorMap.h>
 #include "DGtal/io/readers/GenericReader.h"
+#include "DGtal/io/writers/PPMWriter.h"
 #include <DGtal/geometry/curves/ArithmeticalDSS.h>
 #include <DGtal/geometry/curves/SaturatedSegmentation.h>
 #include "DGtal/io/readers/PointListReader.h"
@@ -46,6 +47,30 @@ CGALPoint toCGAL( const DGtal::Z2i::Point & p )
   return CGALPoint( p[ 0 ], p[ 1 ] );
 }
 
+struct ColorToRedFunctor {
+  int operator()( int color ) const
+  { return (color >> 16) & 0xff; }
+};
+struct ColorToGreenFunctor {
+  int operator()( int color ) const
+  { return (color >> 8) & 0xff; }
+};
+struct ColorToBlueFunctor {
+  int operator()( int color ) const
+  { return color & 0xff; }
+};
+struct GrayToGrayFunctor {
+  int operator()( int color ) const
+  { return color & 0xff; }
+};
+struct GrayToRedGreen {
+  DGtal::Color operator()( int value ) const
+  { 
+    if ( value >= 128 ) return DGtal::Color( 0, (value-128)*2+1, 0 );
+    else                return DGtal::Color( 0, 0, 255-value*2 );
+  }
+};
+
 template <typename Image, typename ToScalarFunctor>
 class Derivatives
 {
@@ -62,7 +87,7 @@ public:
     : myImage( other.myImage ), myFunctor( other.myFunctor )
   {}
 
-  typedef double (Derivatives::*PointFunctorMethod)( Point );
+  typedef double (Derivatives::*PointFunctorMethod)( Point ) const;
 
   double interpolate( double x, double y, 
 		      PointFunctorMethod fct ) const
@@ -70,10 +95,10 @@ public:
     Point p( (int) floor( x ), (int) floor( y ) );
     double lx = x - p[ 0 ];
     double ly = y - p[ 1 ];
-    return (1.0-lx) * (1.0-ly) * this->fct( p ) 
-      +     lx      * (1.0-ly) * this->fct( p + Point(1,0) ) 
-      +    (1.0-lx) * ly       * this->fct( p + Point(0,1) ) 
-      +    (1.0-lx) * (1.0-ly) * this->fct( p + Point(1,1) );
+    return (1.0-lx) * (1.0-ly) * (this->*fct)( p ) 
+      +     lx      * (1.0-ly) * (this->*fct)( p + Point(1,0) ) 
+      +    (1.0-lx) * ly       * (this->*fct)( p + Point(0,1) ) 
+      +     lx      * ly       * (this->*fct)( p + Point(1,1) );
   }
 
   double f( Point p ) const
@@ -84,13 +109,13 @@ public:
     Point lo = myImage.domain().lowerBound();
     Point up = myImage.domain().upperBound();
     for ( unsigned int i = 0; i < 2; ++i ) {
-      if ( p[ 0 ] < lo[ 0 ] ) {
-	q[ 0 ] = lo[ 0 ];
-	p[ 0 ] = 2*q[ 0 ] - p[ 0 ];
+      if ( p[ i ] < lo[ i ] ) {
+	q[ i ] = lo[ i ];
+	p[ i ] = 2*q[ i ] - p[ i ];
       }
-      else if ( p[ 0 ] > up[ 0 ] ) {
-	q[ 0 ] = up[ 0 ];
-	p[ 0 ] = 2*q[ 0 ] - p[ 0 ];
+      else if ( p[ i ] > up[ i ] ) {
+	q[ i ] = up[ i ];
+	p[ i ] = 2*q[ i ] - p[ i ];
       }
     }
     return 2 * myFunctor( myImage( q ) ) - myFunctor( myImage( p ) );
@@ -107,12 +132,24 @@ public:
     double vm1 = f( p - Point( 1, 0 ) );
     return (v1-vm1)/2.0;
   }
+
+  double dx( double x, double y ) const
+  {
+    return interpolate( x, y, &Derivatives::dx );
+  }
+
   double dy( Point p ) const
   {
     double v1  = f( p + Point( 0, 1 ) );
     double vm1 = f( p - Point( 0, 1 ) );
     return (v1-vm1)/2.0;
   }
+
+  double dy( double x, double y ) const
+  {
+    return interpolate( x, y, &Derivatives::dy );
+  }
+
   double dx2( Point p ) const
   {
     double v1 = f( p + Point( 1, 0 ) );
@@ -1279,6 +1316,28 @@ void viewAffineValuedTriangulationColor
   trace.endBlock();
 }
 
+template <typename OutImage, typename Derivatives>
+void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::string & s )
+{
+  typedef typename OutImage::Domain Domain;
+  for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
+        it != ite; ++it )
+    {
+      double val = der.dx( (double) (*it)[ 0 ] / 2.0, (double) (*it)[ 1 ] / 2.0 );
+      val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
+      dImage.setValue( *it, (int) round(val) );
+    }
+  DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-dx.ppm", dImage );
+  for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
+        it != ite; ++it )
+    {
+      double val = der.dy( (double) (*it)[ 0 ] / 2.0, (double) (*it)[ 1 ] / 2.0 );
+      val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
+      dImage.setValue( *it, (int) round(val) );
+    }
+  DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-dy.ppm", dImage );
+}
+
 template <typename Value>
 int affineValuedTriangulation( po::variables_map & vm )
 {
@@ -1301,52 +1360,85 @@ int affineValuedTriangulation( po::variables_map & vm )
   AVTriangulation2 avt_red( -1 );
   AVTriangulation2 avt_green( -1 );
   AVTriangulation2 avt_blue( -1 );
-  double ratio = vm[ "random" ].as<double>();
-  bool color = false;
-  if ( vm.count( "image" ) )
-    {
-      typedef ImageSelector < Z2i::Domain, unsigned int>::Type Image;
-      typedef Image::Domain Domain;
-      std::string imageFileName = vm[ "image" ].as<std::string>();
-      Image image = GenericReader<Image>::import( imageFileName ); 
-      std::string extension = imageFileName.substr(imageFileName.find_last_of(".") + 1);
-      if ( extension == "ppm" ) color = true;
-      x0 = 0.0; y0 = 0.0;
-      x1 = (double) image.domain().upperBound()[ 0 ];
-      y1 = (double) image.domain().upperBound()[ 1 ];
-      if ( color )
-	for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
-	      it != ite; ++it )
-	  {
-	    Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
-	    unsigned int val = image( *it );
-	    if ( randomUniform() <= ratio )
-	      {
-		avt_red.add  ( pt2, (val >> 16) & 0xff );
-		avt_green.add( pt2, (val >> 8) & 0xff );
-		avt_blue.add ( pt2, val & 0xff );
-	      }
-	  }
-      else
-	for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
-	      it != ite; ++it )
-	  {
-	    Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
-	    unsigned int val = image( *it );
-	    if ( randomUniform() <= ratio )
-	      avt_blue.add ( pt2, val & 0xff );
-	  }
-    }
-  trace.endBlock();
-  
   bool gouraud = vm.count( "gouraud" );
   double b = vm[ "bitmap" ].as<double>();
+  double ratio = vm[ "random" ].as<double>();
+  bool color = false;
+  if ( ! vm.count( "image" ) ) return 1;
+
+  typedef ImageSelector < Z2i::Domain, unsigned int>::Type Image;
+  typedef Image::Domain Domain;
+  ColorToRedFunctor c2r;
+  ColorToGreenFunctor c2g;
+  ColorToBlueFunctor c2b;
+  GrayToGrayFunctor g2g;
+
+  std::string imageFileName = vm[ "image" ].as<std::string>();
+  Image image = GenericReader<Image>::import( imageFileName ); 
+  std::string extension = imageFileName.substr(imageFileName.find_last_of(".") + 1);
+  if ( extension == "ppm" ) color = true;
+  x0 = 0.0; y0 = 0.0;
+  x1 = (double) image.domain().upperBound()[ 0 ];
+  y1 = (double) image.domain().upperBound()[ 1 ];
+  if ( color )
+    for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
+          it != ite; ++it )
+      {
+        Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
+        unsigned int val = image( *it );
+        if ( randomUniform() <= ratio )
+          {
+            avt_red.add  ( pt2, c2r( val ) );
+            avt_green.add( pt2, c2g( val ) );
+            avt_blue.add ( pt2, c2b( val ) );
+          }
+      }
+  else
+    for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
+          it != ite; ++it )
+      {
+        Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
+        unsigned int val = image( *it );
+        if ( randomUniform() <= ratio )
+          avt_blue.add ( pt2, g2g( val ) );
+      }
+  trace.endBlock();
+
+  trace.beginBlock("Computes derivatives.");
+  typedef Derivatives<Image,ColorToRedFunctor>   RedDerivatives;
+  typedef Derivatives<Image,ColorToGreenFunctor> GreenDerivatives;
+  typedef Derivatives<Image,ColorToBlueFunctor>  BlueDerivatives;
+  typedef Derivatives<Image,GrayToGrayFunctor>   GrayDerivatives;
+  RedDerivatives redDer( image, c2r );
+  GreenDerivatives greenDer( image, c2g );
+  BlueDerivatives blueDer( image, c2b );
+  GrayDerivatives grayDer( image, g2g );
+  DPoint size( image.domain().upperBound() - image.domain().lowerBound() );
+  size *= 2;
+  typedef DGtal::ImageContainerBySTLVector<Domain, unsigned char> GrayImage2D;
+  GrayImage2D dImage( Domain( DPoint( 0, 0 ), size ) );
+  
+  if ( color ) {
+    viewDerivatives( dImage, redDer, "image-red" );
+    viewDerivatives( dImage, redDer, "image-green" );
+    viewDerivatives( dImage, redDer, "image-blue" );
+    // for ( Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
+    //       it != ite; ++it )
+    //   {
+    //     double val = redDer.dx( (double) (*it)[ 0 ] / 2.0, (double) (*it)[ 1 ] / 2.0 );
+    //     val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
+    //     dImage.setValue( *it, (int) round(val) );
+    //   }
+    // PPMWriter<GrayImage2D, GrayToRedGreen>::exportPPM( "image-dx.ppm", dImage );
+  }
+  trace.endBlock();
+
   if ( vm.count( "saddle" ) )
     {
       trace.beginBlock("Process saddle points");
       if ( color ) {
-	avt_red.processSaddlePoints();
-	avt_green.processSaddlePoints();
+        avt_red.processSaddlePoints();
+        avt_green.processSaddlePoints();
       }
       avt_blue.processSaddlePoints();
       trace.endBlock();
@@ -1354,11 +1446,11 @@ int affineValuedTriangulation( po::variables_map & vm )
 
   if ( color )
     viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
-					b, x0, y0, x1, y1,
-					gouraud, "avt-before.png" );
+                                        b, x0, y0, x1, y1,
+                                        gouraud, "avt-before.png" );
   else
     viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
-				   gouraud, "avt-before.png" );
+                                   gouraud, "avt-before.png" );
 
   if ( color )
     {
@@ -1369,18 +1461,18 @@ int affineValuedTriangulation( po::variables_map & vm )
 
   if ( color )
     viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
-					b, x0, y0, x1, y1,
-					gouraud, "avt-after.png" );
+                                        b, x0, y0, x1, y1,
+                                        gouraud, "avt-after.png" );
   else
     viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
-				   gouraud, "avt-after.png" );
+                                   gouraud, "avt-after.png" );
 
   if ( vm.count( "compress" ) )
     {
       double ratio = vm[ "compress" ].as<double>();
       int sub = 2;
       if ( color ) {
-	trace.beginBlock("Compressing triangulation -- RED");
+        trace.beginBlock("Compressing triangulation -- RED");
 	avt_red.compress( ratio, gouraud, sub );
 	trace.endBlock();
 	trace.beginBlock("Compressing triangulation -- GREEN");
