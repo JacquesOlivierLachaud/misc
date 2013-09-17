@@ -23,6 +23,7 @@
 #include "DGtal/io/readers/PointListReader.h"
 
 #include <CGAL/Delaunay_triangulation_2.h>
+#include <CGAL/Constrained_Delaunay_triangulation_2.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Triangulation_2.h>
 
@@ -44,6 +45,92 @@ CGALPoint toCGAL( const DGtal::Z2i::Point & p )
 {
   return CGALPoint( p[ 0 ], p[ 1 ] );
 }
+
+template <typename Image, typename ToScalarFunctor>
+class Derivatives
+{
+public:
+  typedef typename Image::Domain Domain;
+  typedef typename Domain::Point Point;
+  const Image & myImage;
+  const ToScalarFunctor & myFunctor;
+
+  Derivatives( const Image & image, const ToScalarFunctor & f )
+    : myImage( image ), myFunctor( f )
+  {}
+  Derivatives( const Derivatives & other )
+    : myImage( other.myImage ), myFunctor( other.myFunctor )
+  {}
+
+  typedef double (Derivatives::*PointFunctorMethod)( Point );
+
+  double interpolate( double x, double y, 
+		      PointFunctorMethod fct ) const
+  {
+    Point p( (int) floor( x ), (int) floor( y ) );
+    double lx = x - p[ 0 ];
+    double ly = y - p[ 1 ];
+    return (1.0-lx) * (1.0-ly) * this->fct( p ) 
+      +     lx      * (1.0-ly) * this->fct( p + Point(1,0) ) 
+      +    (1.0-lx) * ly       * this->fct( p + Point(0,1) ) 
+      +    (1.0-lx) * (1.0-ly) * this->fct( p + Point(1,1) );
+  }
+
+  double f( Point p ) const
+  {
+    if ( myImage.domain().isInside( p ) ) 
+      return myFunctor( myImage( p ) );
+    Point q = p;
+    Point lo = myImage.domain().lowerBound();
+    Point up = myImage.domain().upperBound();
+    for ( unsigned int i = 0; i < 2; ++i ) {
+      if ( p[ 0 ] < lo[ 0 ] ) {
+	q[ 0 ] = lo[ 0 ];
+	p[ 0 ] = 2*q[ 0 ] - p[ 0 ];
+      }
+      else if ( p[ 0 ] > up[ 0 ] ) {
+	q[ 0 ] = up[ 0 ];
+	p[ 0 ] = 2*q[ 0 ] - p[ 0 ];
+      }
+    }
+    return 2 * myFunctor( myImage( q ) ) - myFunctor( myImage( p ) );
+  }
+
+  double f( double x, double y ) const
+  {
+    return interpolate( x, y, &Derivatives::f );
+  }
+  
+  double dx( Point p ) const
+  {
+    double v1  = f( p + Point( 1, 0 ) );
+    double vm1 = f( p - Point( 1, 0 ) );
+    return (v1-vm1)/2.0;
+  }
+  double dy( Point p ) const
+  {
+    double v1  = f( p + Point( 0, 1 ) );
+    double vm1 = f( p - Point( 0, 1 ) );
+    return (v1-vm1)/2.0;
+  }
+  double dx2( Point p ) const
+  {
+    double v1 = f( p + Point( 1, 0 ) );
+    double v0 = f( p );
+    double vm1 = f( p - Point( 1, 0 ) );
+    return (v1+vm1-2.0*v0)/2.0;
+  }
+  double dy2( Point p ) const
+  {
+    double v1 = f( p + Point( 1, 0 ) );
+    double v0 = f( p );
+    double vm1 = f( p - Point( 1, 0 ) );
+    return (v1+vm1-2.0*v0)/2.0;
+  }
+
+  
+};
+
 
 /**
    An AVT is an abbreviation of affine valued triangulation. It is a
@@ -775,7 +862,12 @@ public:
 				 value( v0 ), value( v1 ), value( v2 ) )
 	  : (double) value( fh );
       } break;
-    // otherwise OUTSIDE_CONVEX_HULL, or OUTSIDE_AFFINE_HULL
+    case Triangulation2::OUTSIDE_CONVEX_HULL:
+      std::cerr << "OUTSIDE_CONVEX_HULL" << std::endl;
+      break;
+    case Triangulation2::OUTSIDE_AFFINE_HULL:
+      std::cerr << "OUTSIDE_AFFINE_HULL" << std::endl;
+      break;
     }
     return result;
   }
@@ -788,7 +880,8 @@ public:
       {
 	double val_one = midValue( v1, v2, v3 );
 	double val_two = preciseValue( midPoint( p1, p2, p3 ), gouraud );
-	return abs( val_one - val_two ) * twiceAreaTriangle( p1, p2, p3 );
+	return ( val_one - val_two ) * ( val_one - val_two ) 
+	  * twiceAreaTriangle( p1, p2, p3 );
       }
     else
       return errorTVOnTriangle( p1, midPoint( p1, p2 ), midPoint( p1, p3 ),
@@ -845,10 +938,12 @@ public:
   };
 
   struct VertexErrorComparator {
-    double operator()( const VertexError & ve1,
-		       const VertexError & ve2 ) const
+    bool operator()( const VertexError & ve1,
+		     const VertexError & ve2 ) const
     {
-      return ve1._error < ve2._error;
+      return ( ve1._error < ve2._error )
+	|| ( ( ve1._error == ve2._error )
+	     && ( ve1._vh < ve2._vh ) );
     }
   };
 
@@ -867,15 +962,32 @@ public:
 
   void compress( double ratio, bool gouraud, int sub )
   {
+    // First constrain the whole triangulation
+    DGtal::trace.info() << "[AVT::compress] Setting constraints." << std::endl;
+    for ( FiniteEdgesIterator it = T().finite_edges_begin(), ite = T().finite_edges_end();
+	  it != ite; ++it )
+      {
+	_T.insert_constraint( TH.source( *it ), TH.target( *it ) );
+      }
+
+    DGtal::trace.info() << "[AVT::compress] Removing vertices." << std::endl;
     std::set< VertexError, VertexErrorComparator > candidates;
     std::set< VertexHandle > modified_vertices;
     unsigned int nb = T().number_of_vertices();
     unsigned int to_remove = (unsigned int) ceil( ((double)nb) * ratio );
+    unsigned int nb_candidates = 0;
+    unsigned int nb_removed = 0;
+    unsigned int nb_rescan = 0;
+    double ratio_rescan = 0.25;
     while ( to_remove != 0 )
       {
-	if ( candidates.empty() )
+	if ( candidates.empty() 
+	     || ( nb_removed >= nb_rescan ) )
 	  {
 	    modified_vertices.clear();
+	    candidates.clear();
+	    nb_removed = 0;
+	    nb_candidates = 0;
 	    for ( FiniteVerticesIterator it = T().finite_vertices_begin(), 
 		    ite = T().finite_vertices_end(); it != ite; ++it )
 	      {
@@ -883,14 +995,20 @@ public:
 		  {
 		    VertexError ve( it, errorTVWhenRemoved( it, gouraud, sub ) );
 		    candidates.insert( ve );
+		    ++nb_candidates;
 		  }
 	      }
+	    nb_rescan = (unsigned int) ceil( ratio_rescan * (double) nb_candidates );
+	    DGtal::trace.info() << "[AVT::compress]"
+				<< " to_remove=" << to_remove
+				<< " candidates=" << nb_candidates
+				<< " rescan=" << nb_rescan << std::endl;
 	  }
 	VertexError ve = *( candidates.begin() );
 	candidates.erase( candidates.begin() );
-	DGtal::trace.info() << "[" << to_remove << "]"
-			    << "Compressing pt=" << ve._vh->point() 
-			    << " error=" << ve._error << std::endl;
+	// DGtal::trace.info() << "[" << to_remove << "]"
+	// 		    << "Compressing pt=" << ve._vh->point() 
+	// 		    << " error=" << ve._error << std::endl;
 	typename std::set< VertexHandle >::iterator itm 
 	  = modified_vertices.find( ve._vh );
 	if ( itm != modified_vertices.end() )
@@ -898,16 +1016,26 @@ public:
 	    continue;
 	  }
 	// Mark nearby vertices
-	typename Triangulation2::Vertex_circulator ci_start = T().incident_vertices( ve._vh );
-	typename Triangulation2::Vertex_circulator ci = ci_start;
+	Edge start = *( T().incident_edges( ve._vh ) );
+	if ( TH.source( start ) != ve._vh ) start = T().mirror_edge( start );
+	Edge e = start;
 	do {
-	  modified_vertices.insert( VertexHandle( ci ) );
-	  ++ci;
-	} while ( ci != ci_start );
+	  modified_vertices.insert( TH.target( e ) );
+	  eraseValue( e );
+	  eraseValue( e.first );
+	  e = TH.nextCCWAroundSourceVertex( e );
+	} while ( e != start );
 	// Remove vertex.
+	eraseValue( ve._vh );
+	modified_vertices.erase( ve._vh );
+	_T.remove_incident_constraints( ve._vh );
 	_T.remove( ve._vh );
 	--to_remove;
+	++nb_removed;
       }
+    for ( FiniteVerticesIterator it = T().finite_vertices_begin(), 
+	    ite = T().finite_vertices_end(); it != ite; ++it )
+      _T.remove_incident_constraints( it );
   }
   
 };
@@ -1094,11 +1222,68 @@ struct Reverse {
 namespace po = boost::program_options;
 ///////////////////////////////////////////////////////////////////////////////
 
+template <typename AVT>
+void computeFullRelativeHull( AVT & avt, int l, std::string txt )
+{
+  using namespace DGtal;
+  txt = "Compute full relative hull -- " + txt;
+  trace.beginBlock( txt.c_str() );
+  unsigned int pass = 0;
+  bool changes = true;
+  do {
+    trace.info() << "- Pass " << pass << std::endl;
+    changes = avt.fullRelativeHull();
+    ++pass;
+    if ( pass >= l ) break;
+  } while ( changes );
+  trace.endBlock();
+}
+
+template <typename AVT>
+void viewAffineValuedTriangulation( AVT & avt, double b, 
+				    double x0, double y0,
+				    double x1, double y1,
+				    bool gouraud,
+				    std::string fname )
+{
+  using namespace DGtal;
+  trace.beginBlock("View affine valued triangulation");
+  CairoViewerAVT< AVT, int > cviewer
+    ( (int) round( x0 ), (int) round( y0 ), 
+      (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
+      b, b, gouraud );
+  cviewer.viewAVT( avt, CairoViewerAVT< AVT, int>::Gray );
+  cviewer.save( fname.c_str() );
+  trace.endBlock();
+}
+
+template <typename AVT>
+void viewAffineValuedTriangulationColor
+( AVT & avt_red, AVT & avt_green, AVT & avt_blue,
+  double b, 
+  double x0, double y0,
+  double x1, double y1,
+  bool gouraud,
+  std::string fname )
+{
+  using namespace DGtal;
+  trace.beginBlock("View affine valued triangulation");
+  CairoViewerAVT< AVT, int > cviewer
+    ( (int) round( x0 ), (int) round( y0 ), 
+      (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
+      b, b, gouraud );
+  cviewer.viewAVT( avt_red, CairoViewerAVT< AVT, int>::Red );
+  cviewer.viewAVT( avt_green, CairoViewerAVT< AVT, int>::Green );
+  cviewer.viewAVT( avt_blue, CairoViewerAVT< AVT, int>::Blue );
+  cviewer.save( fname.c_str() );
+  trace.endBlock();
+}
+
 template <typename Value>
 int affineValuedTriangulation( po::variables_map & vm )
 {
   typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel2;
-  typedef CGAL::Delaunay_triangulation_2<Kernel2>             Triangulation2;
+  typedef CGAL::Constrained_Delaunay_triangulation_2<Kernel2> Triangulation2;
   typedef Triangulation2::Point                               Point2;
   typedef DGtal::Z2i::Space Space;
   typedef DGtal::Z2i::Domain Domain;
@@ -1117,130 +1302,117 @@ int affineValuedTriangulation( po::variables_map & vm )
   AVTriangulation2 avt_green( -1 );
   AVTriangulation2 avt_blue( -1 );
   double ratio = vm[ "random" ].as<double>();
+  bool color = false;
   if ( vm.count( "image" ) )
     {
       typedef ImageSelector < Z2i::Domain, unsigned int>::Type Image;
       typedef Image::Domain Domain;
       std::string imageFileName = vm[ "image" ].as<std::string>();
       Image image = GenericReader<Image>::import( imageFileName ); 
+      std::string extension = imageFileName.substr(imageFileName.find_last_of(".") + 1);
+      if ( extension == "ppm" ) color = true;
       x0 = 0.0; y0 = 0.0;
       x1 = (double) image.domain().upperBound()[ 0 ];
       y1 = (double) image.domain().upperBound()[ 1 ];
-      for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
-            it != ite; ++it )
-        {
-          Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
-          unsigned int val = image( *it );
-          if ( randomUniform() <= ratio )
-	    {
-	      avt_red.add  ( pt2, (val >> 16) & 0xff );
-	      avt_green.add( pt2, (val >> 8) & 0xff );
+      if ( color )
+	for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
+	      it != ite; ++it )
+	  {
+	    Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
+	    unsigned int val = image( *it );
+	    if ( randomUniform() <= ratio )
+	      {
+		avt_red.add  ( pt2, (val >> 16) & 0xff );
+		avt_green.add( pt2, (val >> 8) & 0xff );
+		avt_blue.add ( pt2, val & 0xff );
+	      }
+	  }
+      else
+	for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
+	      it != ite; ++it )
+	  {
+	    Point2 pt2( (*it)[ 0 ], (*it)[ 1 ] );
+	    unsigned int val = image( *it );
+	    if ( randomUniform() <= ratio )
 	      avt_blue.add ( pt2, val & 0xff );
-	    }
-        }
+	  }
     }
   trace.endBlock();
   
   bool gouraud = vm.count( "gouraud" );
+  double b = vm[ "bitmap" ].as<double>();
   if ( vm.count( "saddle" ) )
     {
       trace.beginBlock("Process saddle points");
-      avt_red.processSaddlePoints();
-      avt_green.processSaddlePoints();
+      if ( color ) {
+	avt_red.processSaddlePoints();
+	avt_green.processSaddlePoints();
+      }
       avt_blue.processSaddlePoints();
       trace.endBlock();
     }
 
-  {
-    trace.beginBlock("View affine valued triangulation");
-    double b = vm[ "bitmap" ].as<double>();
-    CairoViewerAVT< AVTriangulation2, int > cviewer
-      ( (int) round( x0 ), (int) round( y0 ), 
-        (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
-        b, b, gouraud );
-    cviewer.viewAVT( avt_red, CairoViewerAVT< AVTriangulation2, int>::Red );
-    cviewer.viewAVT( avt_green, CairoViewerAVT< AVTriangulation2, int>::Green );
-    cviewer.viewAVT( avt_blue, CairoViewerAVT< AVTriangulation2, int>::Blue );
-    cviewer.save( "avt-before.png" );
-    trace.endBlock();
-  }
+  if ( color )
+    viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
+					b, x0, y0, x1, y1,
+					gouraud, "avt-before.png" );
+  else
+    viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
+				   gouraud, "avt-before.png" );
 
+  if ( color )
+    {
+      computeFullRelativeHull( avt_red, vm[ "limit" ].as<int>(), "RED" );
+      computeFullRelativeHull( avt_green, vm[ "limit" ].as<int>(), "GREEN" );
+    }
+  computeFullRelativeHull( avt_blue, vm[ "limit" ].as<int>(), "BLUE" );
+
+  if ( color )
+    viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
+					b, x0, y0, x1, y1,
+					gouraud, "avt-after.png" );
+  else
+    viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
+				   gouraud, "avt-after.png" );
+
+  if ( vm.count( "compress" ) )
+    {
+      double ratio = vm[ "compress" ].as<double>();
+      int sub = 2;
+      if ( color ) {
+	trace.beginBlock("Compressing triangulation -- RED");
+	avt_red.compress( ratio, gouraud, sub );
+	trace.endBlock();
+	trace.beginBlock("Compressing triangulation -- GREEN");
+	avt_green.compress( ratio, gouraud, sub );
+	trace.endBlock();
+      }
+      trace.beginBlock("Compressing triangulation -- BLUE");
+      avt_blue.compress( ratio, gouraud, sub );
+      trace.endBlock();
+      if ( color )
+	viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
+					    b, x0, y0, x1, y1,
+					    gouraud, "avt-compressed.png" );
+      else
+	viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
+				       gouraud, "avt-compressed.png" );
   
-  {
-    trace.beginBlock("Compute full relative hull -- RED");
-    unsigned int pass = 0;
-    bool changes = true;
-    do {
-      trace.info() << "- Pass " << pass << std::endl;
-      changes = avt_red.fullRelativeHull();
-      ++pass;
-      if ( pass >= vm[ "limit" ].as<int>() ) break;
-    } while ( changes );
-    trace.endBlock();
-  }
-  {
-    trace.beginBlock("Compute full relative hull -- GREEN");
-    unsigned int pass = 0;
-    bool changes = true;
-    do {
-      trace.info() << "- Pass " << pass << std::endl;
-      changes = avt_green.fullRelativeHull();
-      ++pass;
-      if ( pass >= vm[ "limit" ].as<int>() ) break;
-    } while ( changes );
-    trace.endBlock();
-  }
-  {
-    trace.beginBlock("Compute full relative hull -- BLUE");
-    unsigned int pass = 0;
-    bool changes = true;
-    do {
-      trace.info() << "- Pass " << pass << std::endl;
-      changes = avt_blue.fullRelativeHull();
-      ++pass;
-      if ( pass >= vm[ "limit" ].as<int>() ) break;
-    } while ( changes );
-    trace.endBlock();
-  }
+      if ( color )
+	{
+	  computeFullRelativeHull( avt_red, vm[ "limit" ].as<int>(), "RED" );
+	  computeFullRelativeHull( avt_green, vm[ "limit" ].as<int>(), "GREEN" );
+	}
+      computeFullRelativeHull( avt_blue, vm[ "limit" ].as<int>(), "BLUE" );
 
-  {
-    trace.beginBlock("View affine valued triangulation");
-    double b = vm[ "bitmap" ].as<double>();
-    CairoViewerAVT< AVTriangulation2, int > cviewer
-      ( (int) round( x0 ), (int) round( y0 ), 
-        (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
-        b, b, gouraud );
-    cviewer.viewAVT( avt_red, CairoViewerAVT< AVTriangulation2, int>::Red );
-    cviewer.viewAVT( avt_green, CairoViewerAVT< AVTriangulation2, int>::Green );
-    cviewer.viewAVT( avt_blue, CairoViewerAVT< AVTriangulation2, int>::Blue );
-    cviewer.save( "avt-after.png" );
-    trace.endBlock();
-  }
-  {
-    double ratio = vm[ "compress" ].as<double>();
-    int sub = 2;
-    trace.beginBlock("Compressing triangulation -- RED");
-    avt_red.compress( ratio, gouraud, sub );
-    trace.endBlock();
-    trace.beginBlock("Compressing triangulation -- GREEN");
-    avt_green.compress( ratio, gouraud, sub );
-    trace.endBlock();
-    trace.beginBlock("Compressing triangulation -- BLUE");
-    avt_blue.compress( ratio, gouraud, sub );
-    trace.endBlock();
-    trace.beginBlock("View affine valued triangulation");
-    double b = vm[ "bitmap" ].as<double>();
-    CairoViewerAVT< AVTriangulation2, int > cviewer
-      ( (int) round( x0 ), (int) round( y0 ), 
-        (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
-        b, b, gouraud );
-    cviewer.viewAVT( avt_red, CairoViewerAVT< AVTriangulation2, int>::Red );
-    cviewer.viewAVT( avt_green, CairoViewerAVT< AVTriangulation2, int>::Green );
-    cviewer.viewAVT( avt_blue, CairoViewerAVT< AVTriangulation2, int>::Blue );
-    cviewer.save( "avt-compressed.png" );
-    trace.endBlock();
-  }
-
+      if ( color )
+	viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
+					    b, x0, y0, x1, y1,
+					    gouraud, "avt-compressed-rhull.png" );
+      else
+	viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
+				       gouraud, "avt-compressed-rhull.png" );
+    }
 
   return 0;
 }
