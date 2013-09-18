@@ -922,6 +922,29 @@ public:
     return result;
   }
 
+  Vector2 gradientPixel( double x0, double y0, double s, FaceHandle hint = FaceHandle() ) const
+  {
+    const int n = 8;
+    const double N = (double) n;
+    const double pas = 1.0 / N;
+    const double shift = pas / 2.0;
+    hint = T().locate( Point2( x0, y0 ), hint );
+    double spas = s * pas;
+    double ymin = y0 - s * shift * (N+1.0); 
+    double xmin = x0 - s * shift * (N+1.0);
+    double y = ymin;
+    Vector2 grad( 0.0, 0.0 );
+    for ( int i = 0; i < n; ++i, y += spas )
+      {
+        double x = xmin;
+        for ( int j = 0; j < n; ++j, x += spas )
+          {
+            grad = grad + gradient( x, y, hint );
+          }
+      }
+    return grad * ( s*s * pas * pas );
+  }
+
   // ---------------------- various services --------------------------------
 public:
   
@@ -1594,8 +1617,8 @@ void viewAVTGradient( OutImage & dImage, AVT & avt, const std::string & s )
   for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
         it != ite; ++it )
     {
-      double val = avt.gradient( (double) (*it)[ 0 ] / 1.0, 
-				 (double) (*it)[ 1 ] / 1.0 ).x();
+      double val = avt.gradientPixel( (double) (*it)[ 0 ], 
+                                      (double) (*it)[ 1 ], 1.0 ).x();
       val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
       dImage.setValue( *it, (int) round(val) );
     }
@@ -1603,8 +1626,8 @@ void viewAVTGradient( OutImage & dImage, AVT & avt, const std::string & s )
   for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
         it != ite; ++it )
     {
-      double val = avt.gradient( (double) (*it)[ 0 ] / 1.0, 
-				 (double) (*it)[ 1 ] / 1.0 ).y();
+      double val = avt.gradientPixel( (double) (*it)[ 0 ], 
+                                      (double) (*it)[ 1 ], 1.0 ).y();
       val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
       dImage.setValue( *it, (int) round(val) );
     }
