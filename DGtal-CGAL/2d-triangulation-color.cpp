@@ -80,6 +80,25 @@ public:
   const Image & myImage;
   const ToScalarFunctor & myFunctor;
 
+  struct FFunctor {
+    const Derivatives & _der;
+    FFunctor( const Derivatives & der ) : _der( der ) {}
+    inline double operator()( double x, double y ) const
+    { return _der.f( x, y ); }
+  };
+  struct FxFunctor {
+    const Derivatives & _der;
+    FxFunctor( const Derivatives & der ) : _der( der ) {}
+    inline double operator()( double x, double y ) const
+    { return _der.dx( x, y ); }
+  };
+  struct FyFunctor {
+    const Derivatives & _der;
+    FyFunctor( const Derivatives & der ) : _der( der ) {}
+    inline double operator()( double x, double y ) const
+    { return _der.dy( x, y ); }
+  };
+
   Derivatives( const Image & image, const ToScalarFunctor & f )
     : myImage( image ), myFunctor( f )
   {}
@@ -201,6 +220,7 @@ public:
   typedef typename Triangulation2::Point                    Point;
   typedef typename Triangulation2::Point                    Point2;
   typedef typename Kernel2::Vector_2                        Vector;
+  typedef typename Kernel2::Vector_2                        Vector2;
   typedef typename Kernel2::FT                              Coordinate;
   typedef typename Kernel2::FT                              Component;
   typedef typename std::map<VertexHandle,Value>             VertexHandle2ValueMap;
@@ -815,7 +835,94 @@ public:
     _fFct.erase( fh );
   }
 
-  // ---------------------- value services --------------------------------
+
+  // ---------------------- gradient services --------------------------------
+public:
+
+  /**
+     Computes the gradient within a triangular face (p_0,p_1,p_2) with
+     the standard formula:
+
+     Grad u = (1/ (2*Af)) * ( \sum_i=0^2 u_i N x e_i ) 
+
+     where u is the fonction, u_i the value at point p_i , e_i =
+     p_{i+1} - p_i, Af is the area of the triangle, N its normal
+     vector.
+
+     @param fh a handle to a face of the triangulation.
+     @return the discrete gradient at \a fh.
+
+     @note For computations, the triangles belongs to the xy-plane and
+     u_i is the value in the AVT.
+  */
+  Vector2 gradient( FaceHandle fh ) const
+  {
+    ASSERT( ! T().is_infinite( fh ) );
+    Point p0 = fh->vertex( 0 )->point();
+    Point p1 = fh->vertex( 1 )->point();
+    Point p2 = fh->vertex( 2 )->point();
+    double f0 = (double) value( fh->vertex( 0 ) );
+    double f1 = (double) value( fh->vertex( 1 ) );
+    double f2 = (double) value( fh->vertex( 2 ) );
+    double Af = twiceAreaTriangle( p0, p1, p2 );
+    Vector2 e2 = p1 - p0;
+    Vector2 e0 = p2 - p1;
+    Vector2 e1 = p0 - p2;
+    return Vector2( -(f0*e0.y() + f1*e1.y() + f2*e2.y()) / Af,
+		     (f0*e0.x() + f1*e1.x() + f2*e2.x()) / Af );
+  }
+
+  Vector2 gradient( VertexHandle vh ) const
+  {
+    Edge start = *( T().incident_edges( vh ) );
+    if ( TH.source( start ) != vh ) start = T().mirror_edge( start );
+    Edge e = start;
+    Vector2 grad( 0.0, 0.0 );
+    unsigned int nb = 0;
+    do {
+      if ( ! T().is_infinite( e.first ) ) {
+	grad = grad + gradient( e.first );
+	++nb;
+      }
+      e = TH.nextCCWAroundSourceVertex( e );
+    } while ( e != start );    
+    return grad / nb;
+  }
+
+  Vector2 gradient( Edge e ) const
+  {
+    Vector2 grad( 0.0, 0.0 );
+    unsigned int nb = 0;
+    if ( ! T().is_infinite( e.first ) ) {
+      grad = grad + gradient( e.first );
+      ++nb;
+    }
+    e = T().mirror_edge( e );
+    if ( ! T().is_infinite( e.first ) ) {
+      grad = grad + gradient( e.first );
+      ++nb;
+    }
+    return grad / nb;
+  }
+
+  Vector2 gradient( double x, double y, FaceHandle hint = FaceHandle() ) const
+  {
+    typename Triangulation2::Locate_type lt;
+    int li;
+    FaceHandle	fh = T().locate( Point2( x,y ), lt, li, hint );
+    Vector2 result( 0.0, 0.0 );
+    switch ( lt ) {
+    case Triangulation2::VERTEX:
+      result = gradient( fh->vertex( li ) ); break;
+    case Triangulation2::EDGE:
+      result = gradient( Edge( fh, li ) ); break;
+    case Triangulation2::FACE:
+      result = gradient( fh ); break;
+    }
+    return result;
+  }
+
+  // ---------------------- various services --------------------------------
 public:
   
   static double linearInterpolation( Point p, Point p1, Point p2, 
@@ -1101,6 +1208,7 @@ public:
   typedef typename AVT::FiniteFacesIterator    FiniteFacesIterator;
   typedef typename AVT::FaceHandle             FaceHandle;
   typedef typename AVT::Point2                 Point2;
+  typedef typename AVT::Vector2                Vector2;
   typedef DGtal::Board2D                       Board;
   typedef DGtal::Color                         Color;
   typedef DGtal::Z2i::Point                    PointZ2;
@@ -1112,6 +1220,7 @@ private:
   bool _gouraud;
   cairo_surface_t* _surface;
   cairo_t* _cr;
+  double _redf, _greenf, _bluef;
 
 public:
 
@@ -1145,72 +1254,137 @@ public:
     cairo_surface_write_to_png( _surface, file_name );
   }
 
+  void viewGouraudTriangle( Point2 a, Point2 b, Point2 c, 
+			    double val_a, double val_b, double val_c ) 
+  {
+    cairo_pattern_t * pattern = cairo_pattern_create_mesh();
+    /* Add a Gouraud-shaded triangle */
+    cairo_mesh_pattern_begin_patch (pattern);
+    cairo_mesh_pattern_move_to (pattern, i( a.x() ), j( a.y() ) );
+    cairo_mesh_pattern_line_to (pattern, i( b.x() ), j( b.y() ) );
+    cairo_mesh_pattern_line_to (pattern, i( c.x() ), j( c.y() ) );
+    cairo_mesh_pattern_set_corner_color_rgb (pattern, 0, val_a * _redf, val_a * _greenf, val_a * _bluef );
+    cairo_mesh_pattern_set_corner_color_rgb (pattern, 1, val_b * _redf, val_b * _greenf, val_b * _bluef );
+    cairo_mesh_pattern_set_corner_color_rgb (pattern, 2, val_c * _redf, val_c * _greenf, val_c * _bluef );
+    cairo_mesh_pattern_end_patch (pattern);
+    cairo_set_source( _cr, pattern );
+    cairo_move_to( _cr, i( a.x() ), j( a.y() ) );
+    cairo_line_to( _cr, i( b.x() ), j( b.y() ) );
+    cairo_line_to( _cr, i( c.x() ), j( c.y() ) );
+    cairo_close_path( _cr );
+    cairo_fill( _cr );
+    cairo_pattern_destroy( pattern );
+  }
+
+  void viewFlatTriangle( Point2 a, Point2 b, Point2 c, double val )
+  {
+    cairo_set_source_rgb( _cr, val * _redf, val * _greenf, val * _bluef );
+    cairo_move_to( _cr, i( a.x() ), j( a.y() ) );
+    cairo_line_to( _cr, i( b.x() ), j( b.y() ) );
+    cairo_line_to( _cr, i( c.x() ), j( c.y() ) );
+    cairo_close_path( _cr );
+    cairo_fill( _cr );
+  }
+
+  void viewAVTGouraudTriangle( AVT & avt, FaceHandle fh )
+  {
+    Point2 a = fh->vertex( 0 )->point();
+    Point2 b = fh->vertex( 1 )->point();
+    Point2 c = fh->vertex( 2 )->point();
+    viewGouraudTriangle( a, b, c, 
+			 (double) avt.value( fh->vertex( 0 ) ),
+			 (double) avt.value( fh->vertex( 1 ) ),
+			 (double) avt.value( fh->vertex( 2 ) ) );
+  }
+
+  template <typename FFunctor, typename FxFunctor, typename FyFunctor>
+  void viewFunctorTriangle( const FFunctor & f, 
+			    const FxFunctor & fx, const FyFunctor & fy, 
+			    Point2 a, Point2 b, Point2 c )
+  {
+    double val_a = f( a.x(), a.y() );
+    double val_b = f( b.x(), b.y() );
+    double val_c = f( c.x(), c.y() );
+    Vector2 gradf_a( fx( a.x(), a.y() ), fy( a.x(), a.y() ) );
+    Vector2 gradf_b( fx( b.x(), b.y() ), fy( b.x(), b.y() ) );
+    Vector2 gradf_c( fx( c.x(), c.y() ), fy( c.x(), c.y() ) );
+    Vector2 ab = b - a;
+    Vector2 bc = c - b;
+    Vector2 ca = a - c;
+    Point2 mid_ab = a + (ab/2.0);
+    Point2 mid_bc = b + (bc/2.0);
+    Point2 mid_ca = c + (ca/2.0);
+    ab = ab / sqrt( ab.squared_length() );
+    bc = bc / sqrt( bc.squared_length() );
+    ca = ca / sqrt( ca.squared_length() );
+    double val_ab = ( gradf_a * ab - gradf_b * ab + 4.0 * ( val_a + val_b ) ) / 8.0;
+    double val_bc = ( gradf_b * bc - gradf_c * bc + 4.0 * ( val_b + val_c ) ) / 8.0;
+    double val_ca = ( gradf_c * ca - gradf_a * ca + 4.0 * ( val_c + val_a ) ) / 8.0;
+    viewGouraudTriangle( a, mid_ab, mid_ca, val_a, val_ab, val_ca );
+    viewGouraudTriangle( b, mid_bc, mid_ab, val_b, val_bc, val_ab );
+    viewGouraudTriangle( c, mid_ca, mid_bc, val_c, val_ca, val_bc );
+    viewGouraudTriangle( mid_ab, mid_bc, mid_ca, val_ab, val_bc, val_ca );
+  }
+
+  void viewAVTFlatTriangle( AVT & avt, FaceHandle fh )
+  {
+    Point2 a = fh->vertex( 0 )->point();
+    Point2 b = fh->vertex( 1 )->point();
+    Point2 c = fh->vertex( 2 )->point();
+    double val = (double) avt.value( fh );
+    viewFlatTriangle( a, b, c, val );
+  }
+
   void viewAVT( AVT & avt, Mode mode )
   {
-    cairo_operator_t op;
-    switch ( mode ) {
-    case Red: 
-    case Green:
-    case Blue: 
-      op = CAIRO_OPERATOR_ADD; break;
-    case Gray:
-    default: op = CAIRO_OPERATOR_SOURCE; break;
-    };
-    op = CAIRO_OPERATOR_ADD;
-    cairo_set_operator( _cr, op );
-    double redf   = ( mode == Red )   || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
-    double greenf = ( mode == Green ) || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
-    double bluef  = ( mode == Blue )  || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+    _redf   = ( mode == Red )   || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    _greenf = ( mode == Green ) || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    _bluef  = ( mode == Blue )  || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
     cairo_set_line_width( _cr, 0.0 ); 
     cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
     cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
-    if ( ! _gouraud )
-      for ( FiniteFacesIterator it = avt.T().finite_faces_begin(), itend = avt.T().finite_faces_end();
-	    it != itend; ++it )
-	{
-	  FaceHandle fh = it;
-	  double val = (double) avt.value( fh );
-	  cairo_set_source_rgb( _cr, val * redf, val * greenf, val * bluef );
-	  Point2 a = fh->vertex( 0 )->point();
-	  Point2 b = fh->vertex( 1 )->point();
-	  Point2 c = fh->vertex( 2 )->point();
-	  cairo_move_to( _cr, i( a.x() ), j( a.y() ) );
-	  cairo_line_to( _cr, i( b.x() ), j( b.y() ) );
-	  cairo_line_to( _cr, i( c.x() ), j( c.y() ) );
-	  cairo_close_path( _cr );
-	  cairo_fill( _cr );
-	  //cairo_stroke( _cr );
-	}
-    else
-      for ( FiniteFacesIterator it = avt.T().finite_faces_begin(), itend = avt.T().finite_faces_end();
-	    it != itend; ++it )
-	{
-	  FaceHandle fh = it;
-	  Point2 a = fh->vertex( 0 )->point();
-	  Point2 b = fh->vertex( 1 )->point();
-	  Point2 c = fh->vertex( 2 )->point();
-	  cairo_pattern_t * pattern = cairo_pattern_create_mesh();
-	  /* Add a Gouraud-shaded triangle */
-	  cairo_mesh_pattern_begin_patch (pattern);
-	  cairo_mesh_pattern_move_to (pattern, i( a.x() ), j( a.y() ) );
-	  cairo_mesh_pattern_line_to (pattern, i( b.x() ), j( b.y() ) );
-	  cairo_mesh_pattern_line_to (pattern, i( c.x() ), j( c.y() ) );
-	  for ( int idx = 0; idx < 3; ++idx )
-	    {
-	      double val = (double) avt.value( fh->vertex( idx ) );
-	      cairo_mesh_pattern_set_corner_color_rgb (pattern, idx, val * redf, val * greenf, val * bluef );
-	    }
-	  cairo_mesh_pattern_end_patch (pattern);
-	  cairo_set_source( _cr, pattern );
-	  cairo_move_to( _cr, i( a.x() ), j( a.y() ) );
-	  cairo_line_to( _cr, i( b.x() ), j( b.y() ) );
-	  cairo_line_to( _cr, i( c.x() ), j( c.y() ) );
-	  cairo_close_path( _cr );
-	  cairo_fill( _cr );
-	  cairo_pattern_destroy( pattern );
-	}
-
+    for ( FiniteFacesIterator it = avt.T().finite_faces_begin(), itend = avt.T().finite_faces_end();
+	  it != itend; ++it )
+      {
+	if ( _gouraud ) viewAVTGouraudTriangle( avt, it );
+	else            viewAVTFlatTriangle( avt, it );
+      }
+    // cairo_operator_t op;
+    // switch ( mode ) {
+    // case Red: 
+    // case Green:
+    // case Blue: 
+    //   op = CAIRO_OPERATOR_ADD; break;
+    // case Gray:
+    // default: op = CAIRO_OPERATOR_SOURCE; break;
+    // };
+    // op = CAIRO_OPERATOR_ADD;
+    // cairo_set_operator( _cr, op );
   }
+
+  template <typename ImageDerivatives>
+  void viewAVTWithDerivatives( AVT & avt, const ImageDerivatives & dImg, Mode mode )
+  {
+    cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+    _redf   = ( mode == Red )   || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    _greenf = ( mode == Green ) || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    _bluef  = ( mode == Blue )  || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    cairo_set_line_width( _cr, 0.0 ); 
+    cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+    cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+    typename ImageDerivatives::FFunctor   f( dImg );
+    typename ImageDerivatives::FxFunctor fx( dImg );
+    typename ImageDerivatives::FyFunctor fy( dImg );
+    for ( FiniteFacesIterator it = avt.T().finite_faces_begin(), itend = avt.T().finite_faces_end();
+	  it != itend; ++it )
+      {
+	Point2 a = it->vertex( 0 )->point();
+	Point2 b = it->vertex( 1 )->point();
+	Point2 c = it->vertex( 2 )->point();
+	viewFunctorTriangle( f, fx, fy, a, b, c );
+      }
+  }  
 
   inline int i( double x ) const
   {
@@ -1294,6 +1468,36 @@ void viewAffineValuedTriangulation( AVT & avt, double b,
   trace.endBlock();
 }
 
+template <typename AVT, typename ImageDerivatives>
+void viewAVTWithDerivatives( AVT & avt, const ImageDerivatives & dImg,
+			     double b, 
+			     double x0, double y0,
+			     double x1, double y1,
+			     std::string fname )
+{
+  using namespace DGtal;
+  trace.beginBlock("View affine valued triangulation with derivatives");
+  CairoViewerAVT< AVT, int > cviewer
+    ( (int) round( x0 ), (int) round( y0 ), 
+      (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
+      b, b, true );
+  cviewer.viewAVTWithDerivatives( avt, dImg, CairoViewerAVT< AVT, int>::Gray );
+  cviewer.save( fname.c_str() );
+  trace.endBlock();
+}
+
+template <typename AVT, typename ImageDerivatives>
+void viewAVTAll( AVT & avt, const ImageDerivatives & dImg,
+		 double b, 
+		 double x0, double y0,
+		 double x1, double y1,
+		 std::string fname )
+{
+  viewAffineValuedTriangulation( avt, b, x0, y0, x1, y1, false, fname + ".png" );
+  viewAffineValuedTriangulation( avt, b, x0, y0, x1, y1, true, fname + "-g.png" );
+  viewAVTWithDerivatives( avt, dImg, b, x0, y0, x1, y1, fname + "-g2.png" );
+}
+
 template <typename AVT>
 void viewAffineValuedTriangulationColor
 ( AVT & avt_red, AVT & avt_green, AVT & avt_blue,
@@ -1316,6 +1520,51 @@ void viewAffineValuedTriangulationColor
   trace.endBlock();
 }
 
+template <typename AVT, 
+	  typename RedDerivatives, typename GreenDerivatives, typename BlueDerivatives>
+void viewAVTColorWithDerivatives
+( AVT & avt_red, AVT & avt_green, AVT & avt_blue,
+  const RedDerivatives & dRed,
+  const GreenDerivatives & dGreen,
+  const BlueDerivatives & dBlue,
+  double b, 
+  double x0, double y0,
+  double x1, double y1,
+  std::string fname )
+{
+  using namespace DGtal;
+  trace.beginBlock("View affine valued triangulation with derivatives");
+  CairoViewerAVT< AVT, int > cviewer
+    ( (int) round( x0 ), (int) round( y0 ), 
+      (int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
+      b, b, true );
+  cviewer.viewAVTWithDerivatives( avt_red, dRed, CairoViewerAVT< AVT, int>::Red );
+  cviewer.viewAVTWithDerivatives( avt_green, dGreen, CairoViewerAVT< AVT, int>::Green );
+  cviewer.viewAVTWithDerivatives( avt_blue, dBlue, CairoViewerAVT< AVT, int>::Blue );
+  cviewer.save( fname.c_str() );
+  trace.endBlock();
+}
+
+template <typename AVT, 
+	  typename RedDerivatives, typename GreenDerivatives, typename BlueDerivatives>
+void viewAVTColorAll
+( AVT & avt_red, AVT & avt_green, AVT & avt_blue,
+  const RedDerivatives & dRed,
+  const GreenDerivatives & dGreen,
+  const BlueDerivatives & dBlue,
+  double b, 
+  double x0, double y0,
+  double x1, double y1,
+  std::string fname )
+{
+  viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue,
+				      b, x0, y0, x1, y1, false, fname + ".png" );
+  viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue,
+				      b, x0, y0, x1, y1, true, fname + "-g.png" );
+  viewAVTColorWithDerivatives( avt_red, avt_green, avt_blue, dRed, dGreen, dBlue,
+			       b, x0, y0, x1, y1, fname + "-g2.png" );
+}
+
 template <typename OutImage, typename Derivatives>
 void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::string & s )
 {
@@ -1323,7 +1572,7 @@ void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::str
   for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
         it != ite; ++it )
     {
-      double val = der.dx( (double) (*it)[ 0 ] / 2.0, (double) (*it)[ 1 ] / 2.0 );
+      double val = der.dx( (double) (*it)[ 0 ] / 1.0, (double) (*it)[ 1 ] / 1.0 );
       val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
       dImage.setValue( *it, (int) round(val) );
     }
@@ -1331,11 +1580,35 @@ void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::str
   for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
         it != ite; ++it )
     {
-      double val = der.dy( (double) (*it)[ 0 ] / 2.0, (double) (*it)[ 1 ] / 2.0 );
+      double val = der.dy( (double) (*it)[ 0 ] / 1.0, (double) (*it)[ 1 ] / 1.0 );
       val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
       dImage.setValue( *it, (int) round(val) );
     }
   DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-dy.ppm", dImage );
+}
+
+template <typename OutImage, typename AVT>
+void viewAVTGradient( OutImage & dImage, AVT & avt, const std::string & s )
+{
+  typedef typename OutImage::Domain Domain;
+  for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
+        it != ite; ++it )
+    {
+      double val = avt.gradient( (double) (*it)[ 0 ] / 1.0, 
+				 (double) (*it)[ 1 ] / 1.0 ).x();
+      val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
+      dImage.setValue( *it, (int) round(val) );
+    }
+  DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-adx.ppm", dImage );
+  for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
+        it != ite; ++it )
+    {
+      double val = avt.gradient( (double) (*it)[ 0 ] / 1.0, 
+				 (double) (*it)[ 1 ] / 1.0 ).y();
+      val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
+      dImage.setValue( *it, (int) round(val) );
+    }
+  DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-ady.ppm", dImage );
 }
 
 template <typename Value>
@@ -1414,22 +1687,16 @@ int affineValuedTriangulation( po::variables_map & vm )
   BlueDerivatives blueDer( image, c2b );
   GrayDerivatives grayDer( image, g2g );
   DPoint size( image.domain().upperBound() - image.domain().lowerBound() );
-  size *= 2;
+  // size *= 2;
   typedef DGtal::ImageContainerBySTLVector<Domain, unsigned char> GrayImage2D;
   GrayImage2D dImage( Domain( DPoint( 0, 0 ), size ) );
   
   if ( color ) {
     viewDerivatives( dImage, redDer, "image-red" );
-    viewDerivatives( dImage, redDer, "image-green" );
-    viewDerivatives( dImage, redDer, "image-blue" );
-    // for ( Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
-    //       it != ite; ++it )
-    //   {
-    //     double val = redDer.dx( (double) (*it)[ 0 ] / 2.0, (double) (*it)[ 1 ] / 2.0 );
-    //     val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
-    //     dImage.setValue( *it, (int) round(val) );
-    //   }
-    // PPMWriter<GrayImage2D, GrayToRedGreen>::exportPPM( "image-dx.ppm", dImage );
+    viewDerivatives( dImage, greenDer, "image-green" );
+    viewDerivatives( dImage, blueDer, "image-blue" );
+  } else {
+    viewDerivatives( dImage, grayDer, "image-gray" );
   }
   trace.endBlock();
 
@@ -1444,14 +1711,11 @@ int affineValuedTriangulation( po::variables_map & vm )
       trace.endBlock();
     }
 
-  if ( color )
-    viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
-                                        b, x0, y0, x1, y1,
-                                        gouraud, "avt-before.png" );
-  else
-    viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
-                                   gouraud, "avt-before.png" );
-
+  if ( color ) viewAVTColorAll( avt_red, avt_green, avt_blue, 
+				redDer, greenDer, blueDer,
+				b, x0, y0, x1, y1, "avt-before" );
+  else         viewAVTAll( avt_blue, grayDer, 
+			   b, x0, y0, x1, y1, "avt-before" );
   if ( color )
     {
       computeFullRelativeHull( avt_red, vm[ "limit" ].as<int>(), "RED" );
@@ -1459,14 +1723,19 @@ int affineValuedTriangulation( po::variables_map & vm )
     }
   computeFullRelativeHull( avt_blue, vm[ "limit" ].as<int>(), "BLUE" );
 
-  if ( color )
-    viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
-                                        b, x0, y0, x1, y1,
-                                        gouraud, "avt-after.png" );
-  else
-    viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
-                                   gouraud, "avt-after.png" );
-
+  if ( color ) viewAVTColorAll( avt_red, avt_green, avt_blue, 
+				redDer, greenDer, blueDer,
+				b, x0, y0, x1, y1, "avt-after" );
+  else         viewAVTAll( avt_blue, grayDer,
+			   b, x0, y0, x1, y1, "avt-after" );
+  if ( color ) {
+    viewAVTGradient( dImage, avt_red, "avt-after-red" );
+    viewAVTGradient( dImage, avt_green, "avt-after-green" );
+    viewAVTGradient( dImage, avt_blue, "avt-after-blue" );
+  } else {
+    viewAVTGradient( dImage, avt_blue, "avt-after-gray" );
+  }
+  
   if ( vm.count( "compress" ) )
     {
       double ratio = vm[ "compress" ].as<double>();
@@ -1482,28 +1751,23 @@ int affineValuedTriangulation( po::variables_map & vm )
       trace.beginBlock("Compressing triangulation -- BLUE");
       avt_blue.compress( ratio, gouraud, sub );
       trace.endBlock();
-      if ( color )
-	viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
-					    b, x0, y0, x1, y1,
-					    gouraud, "avt-compressed.png" );
-      else
-	viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
-				       gouraud, "avt-compressed.png" );
-  
+      if ( color ) viewAVTColorAll( avt_red, avt_green, avt_blue, 
+				    redDer, greenDer, blueDer,
+				    b, x0, y0, x1, y1, "avt-compressed" );
+      else         viewAVTAll( avt_blue, grayDer,
+			       b, x0, y0, x1, y1, "avt-compressed" );
       if ( color )
 	{
 	  computeFullRelativeHull( avt_red, vm[ "limit" ].as<int>(), "RED" );
 	  computeFullRelativeHull( avt_green, vm[ "limit" ].as<int>(), "GREEN" );
 	}
       computeFullRelativeHull( avt_blue, vm[ "limit" ].as<int>(), "BLUE" );
+      if ( color ) viewAVTColorAll( avt_red, avt_green, avt_blue, 
+				    redDer, greenDer, blueDer,
+				    b, x0, y0, x1, y1, "avt-compressed-rhull" );
+      else         viewAVTAll( avt_blue, grayDer,
+			       b, x0, y0, x1, y1, "avt-compressed-rhull" );
 
-      if ( color )
-	viewAffineValuedTriangulationColor( avt_red, avt_green, avt_blue, 
-					    b, x0, y0, x1, y1,
-					    gouraud, "avt-compressed-rhull.png" );
-      else
-	viewAffineValuedTriangulation( avt_blue, b, x0, y0, x1, y1,
-				       gouraud, "avt-compressed-rhull.png" );
     }
 
   return 0;
@@ -1524,6 +1788,7 @@ int main( int argc, char** argv )
     ("reverse,R", "Reverses the topology of the image (black has more priority than white).") 
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("gouraud,g", "Displays faces with Gouraud-like shading.")  
+    ("2ndorder,2", "Displays faces with 2nd order Gouraud-like shading.")  
     ("saddle,s", "Process saddle points.")  
     ("compress,z", po::value<double>(), "Compress image with compress ratio [arg], e.g. arg=0.9 means keeping only 10% of vertices.")  
     ;
