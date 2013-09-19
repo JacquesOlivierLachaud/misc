@@ -34,6 +34,36 @@
 #include "UmbrellaPart2D.h"
 #include "Auxiliary.h"
 
+/**
+   Primitive used for computing a (convoluted) radius of curvature
+   along a (convex) polygonal segment.
+   
+   @param x the angle (in radian)
+
+   @param a the x-component of the vector between some base point and
+   the vertex concerned by this angle.  
+   @param b the y-component of the vector between some base point and
+   the vertex concerned by this angle.  
+
+   @param s the scale (in radian) that is chosen for the convolution.
+*/
+double PrimiviteRadius( double x, double a, double b, double s )
+{
+  double cx = cos(x); double sx = sin(x);
+  double x2 = x*x;    double s2 = s*s;
+  // F(t=0) = Int( (G_s(x) + G''_s(x))*(a cos(-x) + b sin(-x)), convolution at t=0;
+  // with sage: integral( F, x, algorithm='sympy' )
+  return sqrt(2)/(2.0*sqrt(M_PI)*s)*( a*exp(-0.5*x2/s2)*sx
+				      + b*exp(-0.5*x2/s2)*cx
+				      - a*x*exp(-0.5*x2/s2)*cx/s2 
+				      + b*x*exp(-0.5*x2/s2)*sx/s2 );
+}
+double PartialIntegralRadius( double phi, double phi1, double phi2, 
+			      double a, double b, double s )
+{
+  return PrimiviteRadius( phi2 - phi, a, b, s ) - PrimiviteRadius( phi1 - phi, a, b, s );
+}
+
 static const double EPSILON = 0.0000001;
 template <typename CGALPoint>
 DGtal::Z2i::Point toDGtal( const CGALPoint & p )
@@ -942,7 +972,7 @@ public:
             grad = grad + gradient( x, y, hint );
           }
       }
-    return grad * ( s*s * pas * pas );
+    return grad * ( pas * pas / s );
   }
 
   // ---------------------- various services --------------------------------
@@ -1358,6 +1388,9 @@ public:
     viewFlatTriangle( a, b, c, val );
   }
 
+  /**
+     Displays the AVT with flat or Gouraud shading.
+  */
   void viewAVT( AVT & avt, Mode mode )
   {
     cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
@@ -1386,6 +1419,9 @@ public:
     // cairo_set_operator( _cr, op );
   }
 
+  /**
+     Displays the AVT with 2nd order Gouraud shading.
+  */
   template <typename ImageDerivatives>
   void viewAVTWithDerivatives( AVT & avt, const ImageDerivatives & dImg, Mode mode )
   {
@@ -1408,6 +1444,26 @@ public:
 	viewFunctorTriangle( f, fx, fy, a, b, c );
       }
   }  
+
+  /**
+     Displays the AVT with flat or Gouraud shading.
+  */
+  void viewAVTGradient( AVT & avt, Mode mode )
+  {
+    cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+    _redf   = ( mode == Red )   || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    _greenf = ( mode == Green ) || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    _bluef  = ( mode == Blue )  || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
+    cairo_set_line_width( _cr, 0.0 ); 
+    cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+    cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+    for ( FiniteFacesIterator it = avt.T().finite_faces_begin(), itend = avt.T().finite_faces_end();
+	  it != itend; ++it )
+      {
+	if ( _gouraud ) viewAVTGouraudTriangle( avt, it );
+	else            viewAVTFlatTriangle( avt, it );
+      }
+  }
 
   inline int i( double x ) const
   {
@@ -1589,13 +1645,14 @@ void viewAVTColorAll
 }
 
 template <typename OutImage, typename Derivatives>
-void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::string & s )
+void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::string & s, int n )
 {
+  double step = 1.0 / (double) n;
   typedef typename OutImage::Domain Domain;
   for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
         it != ite; ++it )
     {
-      double val = der.dx( (double) (*it)[ 0 ] / 1.0, (double) (*it)[ 1 ] / 1.0 );
+      double val = der.dx( (double) (*it)[ 0 ] * step, (double) (*it)[ 1 ] * step );
       val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
       dImage.setValue( *it, (int) round(val) );
     }
@@ -1603,7 +1660,7 @@ void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::str
   for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
         it != ite; ++it )
     {
-      double val = der.dy( (double) (*it)[ 0 ] / 1.0, (double) (*it)[ 1 ] / 1.0 );
+      double val = der.dy( (double) (*it)[ 0 ] * step, (double) (*it)[ 1 ] * step );
       val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
       dImage.setValue( *it, (int) round(val) );
     }
@@ -1611,27 +1668,23 @@ void viewDerivatives( OutImage & dImage, const Derivatives & der, const std::str
 }
 
 template <typename OutImage, typename AVT>
-void viewAVTGradient( OutImage & dImage, AVT & avt, const std::string & s )
+void viewAVTGradient( OutImage & dImage, AVT & avt, const std::string & s, int n )
 {
+  OutImage dImage2( dImage );
+  double step = 1.0 / (double) n;
   typedef typename OutImage::Domain Domain;
   for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
         it != ite; ++it )
     {
-      double val = avt.gradientPixel( (double) (*it)[ 0 ], 
-                                      (double) (*it)[ 1 ], 1.0 ).x();
-      val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
+      typename AVT::Vector2 grad = avt.gradientPixel( ((double) (*it)[ 0 ]) * step, 
+						      ((double) (*it)[ 1 ]) * step, step );
+      double val = std::min( 127.0, std::max( -128.0, grad.x() ) ) + 128.0;
       dImage.setValue( *it, (int) round(val) );
+      val = std::min( 127.0, std::max( -128.0, grad.y() ) ) + 128.0;
+      dImage2.setValue( *it, (int) round(val) );
     }
   DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-adx.ppm", dImage );
-  for ( typename Domain::ConstIterator it = dImage.domain().begin(), ite = dImage.domain().end();
-        it != ite; ++it )
-    {
-      double val = avt.gradientPixel( (double) (*it)[ 0 ], 
-                                      (double) (*it)[ 1 ], 1.0 ).y();
-      val = std::min( 127.0, std::max( -128.0, val ) ) + 128.0;
-      dImage.setValue( *it, (int) round(val) );
-    }
-  DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-ady.ppm", dImage );
+  DGtal::PPMWriter<OutImage, GrayToRedGreen>::exportPPM( s + "-ady.ppm", dImage2 );
 }
 
 template <typename Value>
@@ -1710,16 +1763,17 @@ int affineValuedTriangulation( po::variables_map & vm )
   BlueDerivatives blueDer( image, c2b );
   GrayDerivatives grayDer( image, g2g );
   DPoint size( image.domain().upperBound() - image.domain().lowerBound() );
-  // size *= 2;
+  int z = 1;
+  size *= z;
   typedef DGtal::ImageContainerBySTLVector<Domain, unsigned char> GrayImage2D;
   GrayImage2D dImage( Domain( DPoint( 0, 0 ), size ) );
   
   if ( color ) {
-    viewDerivatives( dImage, redDer, "image-red" );
-    viewDerivatives( dImage, greenDer, "image-green" );
-    viewDerivatives( dImage, blueDer, "image-blue" );
+    viewDerivatives( dImage, redDer, "image-red", z );
+    viewDerivatives( dImage, greenDer, "image-green", z );
+    viewDerivatives( dImage, blueDer, "image-blue", z );
   } else {
-    viewDerivatives( dImage, grayDer, "image-gray" );
+    viewDerivatives( dImage, grayDer, "image-gray", z );
   }
   trace.endBlock();
 
@@ -1752,11 +1806,11 @@ int affineValuedTriangulation( po::variables_map & vm )
   else         viewAVTAll( avt_blue, grayDer,
 			   b, x0, y0, x1, y1, "avt-after" );
   if ( color ) {
-    viewAVTGradient( dImage, avt_red, "avt-after-red" );
-    viewAVTGradient( dImage, avt_green, "avt-after-green" );
-    viewAVTGradient( dImage, avt_blue, "avt-after-blue" );
+    viewAVTGradient( dImage, avt_red, "avt-after-red", z );
+    viewAVTGradient( dImage, avt_green, "avt-after-green", z );
+    viewAVTGradient( dImage, avt_blue, "avt-after-blue", z );
   } else {
-    viewAVTGradient( dImage, avt_blue, "avt-after-gray" );
+    viewAVTGradient( dImage, avt_blue, "avt-after-gray", z );
   }
   
   if ( vm.count( "compress" ) )
