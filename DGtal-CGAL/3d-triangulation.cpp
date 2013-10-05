@@ -27,7 +27,7 @@
 #include "SimplicialStrip3D.h"
 #include "RelativeConvexHull.h"
 
-typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
+typedef DGtal::SpaceND<3, DGtal::int32_t> Z3;
 typedef Z3::Point PointZ3;
 typedef Z3::RealPoint RealPointZ3;
 typedef DGtal::HyperRectDomain<Z3> Domain;
@@ -110,7 +110,7 @@ int main (int argc, char** argv )
 {
   using namespace DGtal;
 
-  typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
+  typedef KhalimskySpaceND<3,DGtal::int32_t> K3;
   typedef Z3::Vector Vector;
   typedef Z3::RealPoint RealPoint;
   typedef K3::SCell SCell;
@@ -244,7 +244,7 @@ int main (int argc, char** argv )
   do 
     {
       trace.info() << "--------- step " << i << " ----------" << std::endl;
-      Viewer3D<> viewerRCH;
+      Viewer3D<> viewerRCH( ks );
       viewerRCH.show();
       for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 
       	      itend = rch.T().finite_facets_end(); it != itend; ++it )
@@ -278,7 +278,7 @@ int main (int argc, char** argv )
 
   // start viewer
   int view = vm["view"].as<int>();
-  Viewer3D<> viewerRCH;
+  Viewer3D<> viewerRCH( ks );
   viewerRCH.show();
   if ( view & 0x1 ) { // View digital core.
     for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 

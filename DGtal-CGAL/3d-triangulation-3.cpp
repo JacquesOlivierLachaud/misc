@@ -33,8 +33,9 @@
 #include <DGtal/topology/helpers/Surfaces.h>
 #include "DGtal/io/viewers/Viewer3D.h"
 #include "DGtal/io/DrawWithDisplay3DModifier.h"
-#include "DGtal/geometry/surfaces/COBAGenericNaivePlane.h"
-#include "DGtal/geometry/surfaces/ChordGenericNaivePlane.h"
+// #include "DGtal/geometry/surfaces/COBAGenericNaivePlaneComputer.h"
+// #include "DGtal/geometry/surfaces/ChordGenericNaivePlaneComputer.h"
+#include "DGtal/geometry/surfaces/ChordGenericStandardPlaneComputer.h"
 
 #include <CGAL/Delaunay_triangulation_3.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -48,7 +49,7 @@
 // #include "SimplicialStrip3D.h"
 // #include "RelativeConvexHull.h"
 
-typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
+typedef DGtal::SpaceND<3, DGtal::int32_t> Z3;
 typedef Z3::Point PointZ3;
 typedef Z3::RealPoint RealPointZ3;
 typedef DGtal::HyperRectDomain<Z3> Domain;
@@ -856,7 +857,8 @@ class PolyhedronHull
 
   typedef typename DGtal::SpaceND<3,int>       DSpace;
   typedef typename DSpace::Point               DPoint;
-  typedef typename DGtal::ChordGenericNaivePlane<DPoint,DGtal::int64_t> DigitalPlane;
+  typedef typename DSpace::RealVector          DRealVector;
+  typedef typename DGtal::ChordGenericStandardPlaneComputer<DSpace,DPoint,DGtal::int64_t> DigitalPlane;
   struct FacetInformation {
     DigitalPlane plane;
   };
@@ -964,7 +966,7 @@ public:
 	typename Core::IndexList l = core.getPointIndices( f );
 	FacetInformation & info = myPlaneMap[ facet_he ];
 	// info.plane.init( 200, 3, 1 );
-	info.plane.init( 3, 1 );
+	info.plane.init( 2, 1 );
 	std::vector<DPoint> dpoints( l.size() );
 	for ( unsigned int i = 0; i < l.size(); ++i )
 	  dpoints[ i ] = toDGtal( core.getPoint( l[ i ] ) );
@@ -1288,14 +1290,13 @@ public:
 
   double signAngle( HalfEdgeConstHandle he ) const
   {
-    double vn1[ 3 ];
-    double vn2[ 3 ];
+    DRealVector vn1, vn2;
     HalfEdgeConstHandle he_face1 = smallestHalfEdge( he );
     HalfEdgeConstHandle he_face2 = smallestHalfEdge( he->opposite() );
     const FacetInformation & info1 = myPlaneMap.find( he_face1 )->second;
     const FacetInformation & info2 = myPlaneMap.find( he_face2 )->second;
-    info1.plane.getUnitNormal( vn1 );
-    info2.plane.getUnitNormal( vn2 );
+    vn1 = info1.plane.primitive().normal();
+    vn2 = info2.plane.primitive().normal();
     Vector n1( vn1[ 0 ], vn1[ 1 ], vn1[ 2 ] );
     Vector n2( vn2[ 0 ], vn2[ 1 ], vn2[ 2 ] );
     Vector c = cross( n1, n2 );
@@ -1305,14 +1306,13 @@ public:
 
   double signAngle( HalfEdgeHandle he1, HalfEdgeHandle he2 )
   {
-    double vn1[ 3 ];
-    double vn2[ 3 ];
+    DRealVector vn1, vn2;
     HalfEdgeHandle he_face1 = smallestHalfEdge( he1 );
     HalfEdgeHandle he_face2 = smallestHalfEdge( he2 );
     const FacetInformation & info1 = myPlaneMap.find( he_face1 )->second;
     const FacetInformation & info2 = myPlaneMap.find( he_face2 )->second;
-    info1.plane.getUnitNormal( vn1 );
-    info2.plane.getUnitNormal( vn2 );
+    vn1 = info1.plane.primitive().normal();
+    vn2 = info2.plane.primitive().normal();
     Vector n1( vn1[ 0 ], vn1[ 1 ], vn1[ 2 ] );
     Vector n2( vn2[ 0 ], vn2[ 1 ], vn2[ 2 ] );
     Vector c = cross( n1, n2 );
@@ -1479,7 +1479,7 @@ int main( int argc, char ** argv ) {
   
   using namespace DGtal;
 
-  typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
+  typedef KhalimskySpaceND<3,DGtal::int32_t> K3;
   typedef Z3::Vector Vector;
   typedef Z3::RealPoint RealPoint;
   typedef K3::SCell SCell;
@@ -1605,7 +1605,7 @@ int main( int argc, char ** argv ) {
   int view = vm["view"].as<int>();
   double retract = vm["retract"].as<double>();
 
-  Viewer3D<> viewerCore;
+  Viewer3D<> viewerCore( ks );
   viewerCore.show();
   Color colBasicFacet2( 0, 255, 255, 255 );
   Color colBasicFacet1( 0, 255, 0, 255 );
@@ -1687,7 +1687,7 @@ int main( int argc, char ** argv ) {
   // PH.expand();
   while ( PH.expandByUnionFind() ) // ( PH.expandByVertices() )
     {
-      Viewer3D<> viewer3d;
+      Viewer3D<> viewer3d( ks );
       viewer3d.show();
       // PH.view( viewer3d, retract );
       PH.viewUnionFind( viewer3d, retract );
@@ -1697,11 +1697,11 @@ int main( int argc, char ** argv ) {
     }
   
   {
-    Viewer3D<> viewer3d;
+    Viewer3D<> viewer3d( ks );
     viewer3d.show();
     PH.viewUnionFind( viewer3d, retract );
     viewer3d << Viewer3D<>::updateDisplay;
-    Viewer3D<> viewer3d_2;
+    Viewer3D<> viewer3d_2( ks );
     viewer3d_2.show();
     PH.viewUnionFindPoints( viewer3d_2, retract );
     viewer3d_2 << Viewer3D<>::updateDisplay;

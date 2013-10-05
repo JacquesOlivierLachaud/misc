@@ -35,7 +35,7 @@
 // #include "SimplicialStrip3D.h"
 // #include "RelativeConvexHull.h"
 
-typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
+typedef DGtal::SpaceND<3, DGtal::int32_t> Z3;
 typedef Z3::Point PointZ3;
 typedef Z3::RealPoint RealPointZ3;
 typedef DGtal::HyperRectDomain<Z3> Domain;
@@ -1087,7 +1087,7 @@ int main( int argc, char ** argv ) {
   
   using namespace DGtal;
 
-  typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
+  typedef KhalimskySpaceND<3,DGtal::int32_t> K3;
   typedef Z3::Vector Vector;
   typedef Z3::RealPoint RealPoint;
   typedef K3::SCell SCell;
@@ -1211,7 +1211,7 @@ int main( int argc, char ** argv ) {
   int view = vm["view"].as<int>();
   double retract = vm["retract"].as<double>();
 
-  Viewer3D<> viewerCore;
+  Viewer3D<> viewerCore( ks );
   viewerCore.show();
   Color colBasicFacet2( 0, 255, 255, 255 );
   Color colBasicFacet1( 0, 255, 0, 255 );
@@ -1290,7 +1290,7 @@ int main( int argc, char ** argv ) {
     {
       if ( i++ % 1000 == 0 )
         {
-          Viewer3D<> viewer3d;
+          Viewer3D<> viewer3d( ks );
           viewer3d.show();
           PF.view( viewer3d, retract );
           viewer3d << Viewer3D<>::updateDisplay;
