@@ -39,8 +39,9 @@ typedef Delaunay::Vertex_handle     Vertex_handle;
 typedef Delaunay::Point             CGALPoint;
 typedef Delaunay::Cell_handle       Cell_handle;
 typedef Delaunay::Triangle          Triangle;
-typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
+typedef DGtal::SpaceND<3, DGtal::int32_t> Z3;
 typedef Z3::Point Point;
+typedef Z3::RealPoint RealPoint;
 typedef DGtal::HyperRectDomain<Z3> Domain;
 typedef Domain::ConstIterator DomainConstIterator;
 
@@ -49,6 +50,12 @@ Point toDGtal(const CGALPoint &p)
   return Point ( p.x(),
 		 p.y(),
 		 p.z() );
+}
+RealPoint toDGtalR(const CGALPoint &p)
+{
+  return RealPoint ( p.x(),
+                     p.y(),
+                     p.z() );
 }
 // Point toDGtal(const CGALPoint &p)
 // {
@@ -830,21 +837,21 @@ namespace po = boost::program_options;
    @param argv an array of C-string, such that argv[0] is the name of
    the program, argv[1] the first parameter, etc.
 
-  "29*z+47*y+23*x-5"
-  "10*z-x^2+y^2-100"
-  "z*x*y+x^4-5*x^2+2*y^2*z-z^2-1000"
-  "(15*z-x^2+y^2-100)*(x^2+y^2+z^2-1000)" nice
-  "(x^2+y^2+(z+5)^2-100)^2+10*(x^2+y^2+(z-3)^2)-2000" bowl
-  "x^2+y^2+2*z^2-x*y*z+z^3-100" dragonfly
-  "(x^2+y^2+(z+5)^2)^2-x^2*(z^2-x^2-y^2)-100" joli coeur
-  "0.5*(z^2-4*4)^2+(x^2-7*7)^2+(y^2-7*7)^2-7.2*7.2*7.2*7.2" convexites et concavites
-  "(1-(x^2+y^2))^2*(1+(x^2+y^2))^2-z" "cup"
+   "29*z+47*y+23*x-5"
+   "10*z-x^2+y^2-100"
+   "z*x*y+x^4-5*x^2+2*y^2*z-z^2-1000"
+   "(15*z-x^2+y^2-100)*(x^2+y^2+z^2-1000)" nice
+   "(x^2+y^2+(z+5)^2-100)^2+10*(x^2+y^2+(z-3)^2)-2000" bowl
+   "x^2+y^2+2*z^2-x*y*z+z^3-100" dragonfly
+   "(x^2+y^2+(z+5)^2)^2-x^2*(z^2-x^2-y^2)-100" joli coeur
+   "0.5*(z^2-4*4)^2+(x^2-7*7)^2+(y^2-7*7)^2-7.2*7.2*7.2*7.2" convexites et concavites
+   "(1-(x^2+y^2))^2*(1+(x^2+y^2))^2-z" "cup"
 */
 int main (int argc, char** argv )
 {
   using namespace DGtal;
 
-  typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
+  typedef KhalimskySpaceND<3,DGtal::int32_t> K3;
   typedef Z3::Vector Vector;
   typedef Z3::RealPoint RealPoint;
   typedef K3::SCell SCell;
@@ -852,6 +859,8 @@ int main (int argc, char** argv )
   typedef SCellSet::const_iterator SCellSetConstIterator;
   // typedef ImplicitRoundedHyperCube<Z3> Shape;
   typedef RealPoint::Coordinate Ring;
+
+  typedef Viewer3D<Z3,K3> MViewer3D;
 
   QApplication application(argc,argv); // remove Qt arguments.
 
@@ -908,7 +917,7 @@ int main (int argc, char** argv )
 					    vm["vol"].as<std::string>(),
 					    vm["min"].as<int>(),
 					    vm["max"].as<int>() );
-     }
+    }
   else if ( vm.count( "poly" ) )
     {
       ok = makeSpaceAndBoundaryFromPolynomialString( ks, boundary,
@@ -978,7 +987,7 @@ int main (int argc, char** argv )
 
   // start viewer
   int view = vm["view"].as<int>();
-  Viewer3D viewerCore;
+  MViewer3D viewerCore;
   viewerCore.show();
   Color colBasicFacet2( 0, 255, 255, 255 );
   Color colBasicFacet1( 0, 255, 0, 255 );
@@ -1001,16 +1010,20 @@ int main (int argc, char** argv )
             double dx[ 3 ];
             for ( unsigned int j = 0; j < 3; ++j )
               dx[ j ] = 0.001*((double) n[j])/norm;
-            viewerCore.addTriangle( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ],
-                                    (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ],
-                                    (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ],
-                                    colBasicFacet2 );
+            RealPoint A( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ] );
+            RealPoint B( (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ] );
+            RealPoint C( (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ] );
+            viewerCore.setFillColor( colBasicFacet2 );
+            viewerCore.addTriangle( A, C, B );
           }
         else
-          viewerCore.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-                                  c[ 0 ], c[ 1 ], c[ 2 ],
-                                  b[ 0 ], b[ 1 ], b[ 2 ],
-                                  colBasicFacet1 );
+          {
+            RealPoint A( a[ 0 ], a[ 1 ], a[ 2 ] );
+            RealPoint B( b[ 0 ], b[ 1 ], b[ 2 ] );
+            RealPoint C( c[ 0 ], c[ 1 ], c[ 2 ] );
+            viewerCore.setFillColor( colBasicFacet1 );
+            viewerCore.addTriangle( A, B, C );
+          }
       }
   } //  if ( view & 0x1 ) {
 
@@ -1023,41 +1036,30 @@ int main (int argc, char** argv )
         if ( ( ! t.is_infinite( it ) )
              && ( core.nbLatticePoints(  it ) == 4 )
              && ( core.interior().find( it ) == core.interior().end() ) )
-	{
-	  draw = true;
-	  col = colSpuriousTetrahedra;
-	}
+          {
+            draw = true;
+            col = colSpuriousTetrahedra;
+          }
         if ( draw )
           {
-            Point a( toDGtal(it->vertex(0)->point())),
-              b(toDGtal(it->vertex(1)->point())),
-              c(toDGtal(it->vertex(2)->point())),
-              d(toDGtal(it->vertex(3)->point()));
-            viewerCore.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-                                    b[ 0 ], b[ 1 ], b[ 2 ],
-                                    c[ 0 ], c[ 1 ], c[ 2 ],
-                                    col );
-            viewerCore.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-                                    b[ 0 ], b[ 1 ], b[ 2 ],
-                                    d[ 0 ], d[ 1 ], d[ 2 ], 
-                                    col );
-            viewerCore.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-                                    d[ 0 ], d[ 1 ], d[ 2 ], 
-                                    a[ 0 ], a[ 1 ], a[ 2 ],
-                                    col );
-            viewerCore.addTriangle( d[ 0 ], d[ 1 ], d[ 2 ], 
-                                    b[ 0 ], b[ 1 ], b[ 2 ],
-                                    a[ 0 ], a[ 1 ], a[ 2 ],
-                                    col );
+            RealPoint a( toDGtalR(it->vertex(0)->point()));
+            RealPoint b( toDGtalR(it->vertex(1)->point()));
+            RealPoint c( toDGtalR(it->vertex(2)->point()));
+            RealPoint d( toDGtalR(it->vertex(3)->point()));
+            viewerCore.setFillColor( col );
+            viewerCore.addTriangle( a, b, c );
+            viewerCore.addTriangle( c, b, d );
+            viewerCore.addTriangle( c, d, a );
+            viewerCore.addTriangle( d, b, a );
           }
       }
   }
  
-  viewerCore << Viewer3D::updateDisplay;
+  viewerCore << MViewer3D::updateDisplay;
   application.exec();
 
   // start viewer
-  Viewer3D viewer1, viewer2, viewer3;
+  MViewer3D viewer1, viewer2, viewer3;
   viewer1.show();
   viewer2.show();
   viewer3.show();
@@ -1099,11 +1101,10 @@ int main (int argc, char** argv )
           Cell_handle itC = it->first; 
           int i = it->second;
           int j = it->third;
-          Point a( toDGtal(itC->vertex( i )->point()));
-          Point b( toDGtal(itC->vertex( j )->point()));
-	  viewer1.addLine( a[ 0 ], a[ 1 ], a[ 2 ],
-                          b[ 0 ], b[ 1 ], b[ 2 ],
-                          colBasicEdge, 1.0 );
+          RealPoint a( toDGtalR(itC->vertex( i )->point()));
+          RealPoint b( toDGtalR(itC->vertex( j )->point()));
+          viewer1.setLineColor( colBasicEdge );
+          viewer1.addLine( a, b, 1.0 );
         }
     }
   trace.endBlock();
@@ -1136,86 +1137,86 @@ int main (int argc, char** argv )
       bool found_neighbors_in_queue = false;
       for ( unsigned int i = 0; i < facets.size(); ++i )
         {
-	  if ( elementQ.find( facets[ i ] ) != elementQ.end() )
-	    {
-	      found_neighbors_in_queue = true;
-	      break;
-	    }
-	}
+          if ( elementQ.find( facets[ i ] ) != elementQ.end() )
+            {
+              found_neighbors_in_queue = true;
+              break;
+            }
+        }
       // a later facet will take care of the possible fusion.
       if ( found_neighbors_in_queue ) continue;
       if ( nbLatticePoints[ ofacet.facet.first ] == 4 )
-	{ // potential fusion
-	  std::vector<unsigned int> f_marked;
-	  std::vector<unsigned int> f_unmarked;
-	  for ( unsigned int i = 0; i < facets.size(); ++i )
-	    {
-	      isMarked[ i ] = ( markedFacet.find( facets[ i ] ) != markedFacet.end() );
-	      if ( isMarked[ i ] )  f_marked.push_back( i );
-	      else                  f_unmarked.push_back( i );
-	    }
-	  // // Add basic planar facets when encountered.
-	  // for ( std::vector<unsigned int>::iterator it_fu = f_unmarked.begin();
-	  //       it_fu != f_unmarked.end(); )
-	  //   {
-	  //     if ( checkPlanarFacet( t, facets[ *it_fu ] ) )
-	  //       {
-	  //         Facet mf = t.mirror_facet( facets[ *it_fu ] );
-	  //         markedFacet.insert( facets[ *it_fu ] );
-	  //         markedFacet.insert( mf );
-	  //         isMarked[ *it_fu ] = true;
-	  //         f_marked.push_back( *it_fu );
-	  //         f_unmarked.erase( it_fu );
-	  //       }
-	  //     else 
-	  //       ++it_fu;
-	  //   }
-	  unsigned int n = f_marked.size();
-	  // At least 2 are marked, by convexity, we can close the gap
-	  // to the further faces of the cell.
-	  // std::cout << " " << n;
-	  bool propagate = n >= 3;
-	  if ( n == 2 )
-	    {
-	      // We must check that further tetrahedra do not contain integer points.
-	      // Facet h0 = t.mirror_facet( facets[ f_marked[ 0 ] ] );
-	      // Facet h1 = t.mirror_facet( facets[ f_marked[ 1 ] ] );
-	      // std::cout << "(" << nbLatticePoints[ h0.first ] 
-	      // 		<< "," << nbLatticePoints[ h1.first ] << ")";
-	      double area_interior = 
-		sqrt( t.triangle( facets[ f_marked[ 0 ] ] ).squared_area() )
-		+ sqrt( t.triangle( facets[ f_marked[ 1 ] ] ).squared_area() );
-	      double area_exterior = 
-		sqrt( t.triangle( facets[ f_unmarked[ 0 ] ] ).squared_area() )
-		+ sqrt( t.triangle( facets[ f_unmarked[ 1 ] ] ).squared_area() );
-	      if ( area_exterior > area_factor_extend * area_interior )
-		weirdCells.insert( ofacet.facet.first );
-	      else
-		propagate = true;
-	      // if ( ( nbLatticePoints[ h0.first ] != 4 )
-	      // 	   && ( nbLatticePoints[ h1.first ] != 4 ) )
-	      // 	propagate = false;
-	    }
-	  if ( propagate ) 
-	    {
-	      // marked cell as interior
-	      // std::cout << "+";
-	      markedCells.insert( ofacet.facet.first );
-	      for ( unsigned int i = 0; i < facets.size(); ++i )
-		{
-		  if ( ! isMarked[ i ] )
-		    {
-		      OFacet nfacet1( facets[ i ] );
-		      OFacet nfacet2( t.mirror_facet( nfacet1.facet ), nfacet1.criterion );
-		      // markedFacet.insert( nfacet1.facet );
-		      // put everything into queue.
-		      priorityQ.insert( nfacet2 );
-		      markedFacet.insert( nfacet2.facet );
-		      elementQ.insert( nfacet2.facet );
-		    }
-		}
-	    }
-	}
+        { // potential fusion
+          std::vector<unsigned int> f_marked;
+          std::vector<unsigned int> f_unmarked;
+          for ( unsigned int i = 0; i < facets.size(); ++i )
+            {
+              isMarked[ i ] = ( markedFacet.find( facets[ i ] ) != markedFacet.end() );
+              if ( isMarked[ i ] )  f_marked.push_back( i );
+              else                  f_unmarked.push_back( i );
+            }
+          // // Add basic planar facets when encountered.
+          // for ( std::vector<unsigned int>::iterator it_fu = f_unmarked.begin();
+          //       it_fu != f_unmarked.end(); )
+          //   {
+          //     if ( checkPlanarFacet( t, facets[ *it_fu ] ) )
+          //       {
+          //         Facet mf = t.mirror_facet( facets[ *it_fu ] );
+          //         markedFacet.insert( facets[ *it_fu ] );
+          //         markedFacet.insert( mf );
+          //         isMarked[ *it_fu ] = true;
+          //         f_marked.push_back( *it_fu );
+          //         f_unmarked.erase( it_fu );
+          //       }
+          //     else 
+          //       ++it_fu;
+          //   }
+          unsigned int n = f_marked.size();
+          // At least 2 are marked, by convexity, we can close the gap
+          // to the further faces of the cell.
+          // std::cout << " " << n;
+          bool propagate = n >= 3;
+          if ( n == 2 )
+            {
+              // We must check that further tetrahedra do not contain integer points.
+              // Facet h0 = t.mirror_facet( facets[ f_marked[ 0 ] ] );
+              // Facet h1 = t.mirror_facet( facets[ f_marked[ 1 ] ] );
+              // std::cout << "(" << nbLatticePoints[ h0.first ] 
+              // 		<< "," << nbLatticePoints[ h1.first ] << ")";
+              double area_interior = 
+                sqrt( t.triangle( facets[ f_marked[ 0 ] ] ).squared_area() )
+                + sqrt( t.triangle( facets[ f_marked[ 1 ] ] ).squared_area() );
+              double area_exterior = 
+                sqrt( t.triangle( facets[ f_unmarked[ 0 ] ] ).squared_area() )
+                + sqrt( t.triangle( facets[ f_unmarked[ 1 ] ] ).squared_area() );
+              if ( area_exterior > area_factor_extend * area_interior )
+                weirdCells.insert( ofacet.facet.first );
+              else
+                propagate = true;
+              // if ( ( nbLatticePoints[ h0.first ] != 4 )
+              // 	   && ( nbLatticePoints[ h1.first ] != 4 ) )
+              // 	propagate = false;
+            }
+          if ( propagate ) 
+            {
+              // marked cell as interior
+              // std::cout << "+";
+              markedCells.insert( ofacet.facet.first );
+              for ( unsigned int i = 0; i < facets.size(); ++i )
+                {
+                  if ( ! isMarked[ i ] )
+                    {
+                      OFacet nfacet1( facets[ i ] );
+                      OFacet nfacet2( t.mirror_facet( nfacet1.facet ), nfacet1.criterion );
+                      // markedFacet.insert( nfacet1.facet );
+                      // put everything into queue.
+                      priorityQ.insert( nfacet2 );
+                      markedFacet.insert( nfacet2.facet );
+                      elementQ.insert( nfacet2.facet );
+                    }
+                }
+            }
+        }
     }
   std::cout << std::endl;
   trace.endBlock();
@@ -1229,72 +1230,72 @@ int main (int argc, char** argv )
       double factor = vm[ "prune" ].as<double>();
       double changed = true;
       while ( changed ) {
-          changed = false;
-          for ( std::set<Cell_handle>::const_iterator it = weirdCells.begin(), itend = weirdCells.end();
-                it != itend; ++it )
-            {
-              if ( removedWeirdCells.find( *it ) == removedWeirdCells.end() ) 
-                { 
-                  std::vector<Facet> facets;
-                  getFacets( facets, *it );
-                  std::vector<unsigned int> f_exterior;
-                  std::vector<unsigned int> f_interior;
-                  std::vector<unsigned int> f_basic;
-                  for ( unsigned int i = 0; i < facets.size(); ++i )
-                    { // count exterior facets
-                      Facet m = t.mirror_facet( facets[ i ] );
-                      if ( ( markedFacet.find( m ) != markedFacet.end() )
-                           && ( markedCells.find( m.first ) == markedCells.end() ) )
-                        f_exterior.push_back( i );
-                      else if ( markedFacet.find( facets[ i ] ) != markedFacet.end() )
-                        f_interior.push_back( i );
-                      if ( basicFacet.find( m ) != basicFacet.end() )
-                        f_basic.push_back( i );
-                    }
-                  if ( ( f_exterior.size() >= 3 ) ) //&& ( f_interior.size() == 2 ) )
-                    {
-                      //if ( f_basic.size() == 0 )
-                        std::cerr << "Weird !"
-                                  << " ext=" << f_exterior.size()
-                                  << " int=" << f_interior.size()
-                                  << " bas=" << f_basic.size()
-                                  << std::endl;
-                      // while ( f_basic.empty() )
-                      //   {
-                      //     f_exterior.erase
-                      //   }
-                    }
-                  if ( ( f_exterior.size() == 2 ) && ( f_interior.size() == 2 ) )
-                    {
-                      // (i,j) is the edge common to the two other faces.
-                      int i = facets[ f_exterior[ 0 ] ].second; 
-                      int j = facets[ f_exterior[ 1 ] ].second;
-                      // (k,l) is the edge common to the two exterior faces.
-                      int k = ( (i+1)%4 == j ) ? (i+2)%4 : (i+1)%4;
-                      int l = (k+1)%4;
-                      for ( ; (l == i ) || ( l == j ); l = (l+1)%4 ) ;
-                      Point A( toDGtal( (*it )->vertex( i )->point() ) );
-                      Point B( toDGtal( (*it )->vertex( j )->point() ) );
-                      Point C( toDGtal( (*it )->vertex( k )->point() ) );
-                      Point D( toDGtal( (*it )->vertex( l )->point() ) );
+        changed = false;
+        for ( std::set<Cell_handle>::const_iterator it = weirdCells.begin(), itend = weirdCells.end();
+              it != itend; ++it )
+          {
+            if ( removedWeirdCells.find( *it ) == removedWeirdCells.end() ) 
+              { 
+                std::vector<Facet> facets;
+                getFacets( facets, *it );
+                std::vector<unsigned int> f_exterior;
+                std::vector<unsigned int> f_interior;
+                std::vector<unsigned int> f_basic;
+                for ( unsigned int i = 0; i < facets.size(); ++i )
+                  { // count exterior facets
+                    Facet m = t.mirror_facet( facets[ i ] );
+                    if ( ( markedFacet.find( m ) != markedFacet.end() )
+                         && ( markedCells.find( m.first ) == markedCells.end() ) )
+                      f_exterior.push_back( i );
+                    else if ( markedFacet.find( facets[ i ] ) != markedFacet.end() )
+                      f_interior.push_back( i );
+                    if ( basicFacet.find( m ) != basicFacet.end() )
+                      f_basic.push_back( i );
+                  }
+                if ( ( f_exterior.size() >= 3 ) ) //&& ( f_interior.size() == 2 ) )
+                  {
+                    //if ( f_basic.size() == 0 )
+                    std::cerr << "Weird !"
+                              << " ext=" << f_exterior.size()
+                              << " int=" << f_interior.size()
+                              << " bas=" << f_basic.size()
+                              << std::endl;
+                    // while ( f_basic.empty() )
+                    //   {
+                    //     f_exterior.erase
+                    //   }
+                  }
+                if ( ( f_exterior.size() == 2 ) && ( f_interior.size() == 2 ) )
+                  {
+                    // (i,j) is the edge common to the two other faces.
+                    int i = facets[ f_exterior[ 0 ] ].second; 
+                    int j = facets[ f_exterior[ 1 ] ].second;
+                    // (k,l) is the edge common to the two exterior faces.
+                    int k = ( (i+1)%4 == j ) ? (i+2)%4 : (i+1)%4;
+                    int l = (k+1)%4;
+                    for ( ; (l == i ) || ( l == j ); l = (l+1)%4 ) ;
+                    Point A( toDGtal( (*it )->vertex( i )->point() ) );
+                    Point B( toDGtal( (*it )->vertex( j )->point() ) );
+                    Point C( toDGtal( (*it )->vertex( k )->point() ) );
+                    Point D( toDGtal( (*it )->vertex( l )->point() ) );
 
-                      double angle = fabs( M_PI - computeDihedralAngle( t, facets[ f_exterior[ 0 ] ], 
-                                                                        facets[ f_exterior[ 1 ] ] ) );
-                      if ( angle < factor )
-                        // if ( (C-D).norm( Point::L_1 ) > factor*(A-B).norm( Point::L_1 ) )
-                        { // preference to shorter edge.
-                          // std::cout << "(" << f_exterior.size() << "," << f_interior.size() << std::endl;
-                          markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 0 ] ] ) );
-                          markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 1 ] ] ) );
-                          markedCells.erase( *it );
-                          removedWeirdCells.insert( *it );
-                          markedFacet.insert( facets[ f_interior[ 0 ] ] );
-                          markedFacet.insert( facets[ f_interior[ 1 ] ] );
-                          changed = true;
-                        }
-                    }
-                }
-            }
+                    double angle = fabs( M_PI - computeDihedralAngle( t, facets[ f_exterior[ 0 ] ], 
+                                                                      facets[ f_exterior[ 1 ] ] ) );
+                    if ( angle < factor )
+                      // if ( (C-D).norm( Point::L_1 ) > factor*(A-B).norm( Point::L_1 ) )
+                      { // preference to shorter edge.
+                        // std::cout << "(" << f_exterior.size() << "," << f_interior.size() << std::endl;
+                        markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 0 ] ] ) );
+                        markedFacet.erase( t.mirror_facet( facets[ f_exterior[ 1 ] ] ) );
+                        markedCells.erase( *it );
+                        removedWeirdCells.insert( *it );
+                        markedFacet.insert( facets[ f_interior[ 0 ] ] );
+                        markedFacet.insert( facets[ f_interior[ 1 ] ] );
+                        changed = true;
+                      }
+                  }
+              }
+          }
       } //  while ( changed ) {
 
     }
@@ -1304,40 +1305,44 @@ int main (int argc, char** argv )
   // Color colBasicFacet2( 0, 255, 255, 255 );
   // Color colBasicFacet1( 0, 255, 0, 255 );
   for ( FacetSet::const_iterator it = markedFacet.begin(), itend = markedFacet.end();
-  	it != itend; ++it )
+        it != itend; ++it )
     {
       Cell_handle cell = it->first;
       if ( markedCells.find( cell ) == markedCells.end() )
-  	{ // we display it.
-	  Triangle triangle = t.triangle( *it );
-	  Point a( toDGtal( triangle.vertex( 0 ) ) );
-	  Point b( toDGtal( triangle.vertex( 1 ) ) );
-	  Point c( toDGtal( triangle.vertex( 2 ) ) );
-  	  // int i = it->second;
-  	  // Point a( toDGtal( cell->vertex( (i+1)%4 )->point() ) );
-  	  // Point b( toDGtal( cell->vertex( (i+2)%4 )->point() ) );
-  	  // Point c( toDGtal( cell->vertex( (i+3)%4 )->point() ) );
-	  Facet f2 = t.mirror_facet( *it );
-	  if ( ( markedFacet.find( f2 ) != markedFacet.end() )
-	       && ( markedCells.find( f2.first ) == markedCells.end() ) )
-	    { // the mirror facet is also in the triangulation. 
-	      // We need to move vertices a little bit when two triangles are at the same position.
-	      Point n = (b-a)^(c-a);
-	      double norm = n.norm(Point::L_2);
-	      double dx[ 3 ];
-	      for ( unsigned int j = 0; j < 3; ++j )
-		dx[ j ] = 0.001*((double) n[j])/norm;
-	      viewer2.addTriangle( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ],
-				   (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ],
-				   (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ],
-				   colBasicFacet2 );
-	    }
-	  else
-	    viewer2.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-				 c[ 0 ], c[ 1 ], c[ 2 ],
-				 b[ 0 ], b[ 1 ], b[ 2 ],
-				 colBasicFacet1 );
-  	}
+        { // we display it.
+          Triangle triangle = t.triangle( *it );
+          Point a( toDGtal( triangle.vertex( 0 ) ) );
+          Point b( toDGtal( triangle.vertex( 1 ) ) );
+          Point c( toDGtal( triangle.vertex( 2 ) ) );
+          // int i = it->second;
+          // Point a( toDGtal( cell->vertex( (i+1)%4 )->point() ) );
+          // Point b( toDGtal( cell->vertex( (i+2)%4 )->point() ) );
+          // Point c( toDGtal( cell->vertex( (i+3)%4 )->point() ) );
+          Facet f2 = t.mirror_facet( *it );
+          if ( ( markedFacet.find( f2 ) != markedFacet.end() )
+               && ( markedCells.find( f2.first ) == markedCells.end() ) )
+            { // the mirror facet is also in the triangulation. 
+              // We need to move vertices a little bit when two triangles are at the same position.
+              Point n = (b-a)^(c-a);
+              double norm = n.norm(Point::L_2);
+              double dx[ 3 ];
+              for ( unsigned int j = 0; j < 3; ++j )
+                dx[ j ] = 0.001*((double) n[j])/norm;
+              RealPoint A( (double) a[ 0 ] + dx[ 0 ], (double) a[ 1 ] +  dx[ 1 ], (double) a[ 2 ] + dx[ 2 ] );
+              RealPoint B( (double) b[ 0 ] + dx[ 0 ], (double) b[ 1 ] +  dx[ 1 ], (double) b[ 2 ] + dx[ 2 ] );
+              RealPoint C( (double) c[ 0 ] + dx[ 0 ], (double) c[ 1 ] +  dx[ 1 ], (double) c[ 2 ] + dx[ 2 ] );
+              viewer2.setFillColor( colBasicFacet2 );
+              viewer2.addTriangle( A, C, B );
+            }
+          else
+            {
+              RealPoint A( a[ 0 ], a[ 1 ], a[ 2 ] );
+              RealPoint B( b[ 0 ], b[ 1 ], b[ 2 ] );
+              RealPoint C( c[ 0 ], c[ 1 ], c[ 2 ] );
+              viewer2.setFillColor( colBasicFacet1 );
+              viewer2.addTriangle( A, B, C );
+            }
+        }
     }
 
   //////////////////////////////////////////////////////////////////////
@@ -1358,36 +1363,25 @@ int main (int argc, char** argv )
         }
       else
         if ( ( ! t.is_infinite( it ) )
-		&& ( nbLatticePoints[ it ] == 4 )
-		&& ( markedCells.find( it ) == markedCells.end() ) )
-	{
-	  draw = true;
-	  col = Color( 255, 0, 0, 100 );
-	}
-        //if ( n > 4 ) trace.info() << " " << n;
+             && ( nbLatticePoints[ it ] == 4 )
+             && ( markedCells.find( it ) == markedCells.end() ) )
+          {
+            draw = true;
+            col = Color( 255, 0, 0, 100 );
+          }
+      //if ( n > 4 ) trace.info() << " " << n;
       // if ( n <= 3 ) trace.error() << " Not enough lattice points" << std::endl;
       if ( draw )
         {
-          Point a( toDGtal(it->vertex(0)->point())),
-            b(toDGtal(it->vertex(1)->point())),
-            c(toDGtal(it->vertex(2)->point())),
-            d(toDGtal(it->vertex(3)->point()));
-          viewer1.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-        		      b[ 0 ], b[ 1 ], b[ 2 ],
-        		      c[ 0 ], c[ 1 ], c[ 2 ],
-        		      col );
-          viewer1.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-        		      b[ 0 ], b[ 1 ], b[ 2 ],
-        		      d[ 0 ], d[ 1 ], d[ 2 ], 
-        		      col );
-          viewer1.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-        		      d[ 0 ], d[ 1 ], d[ 2 ], 
-        		      a[ 0 ], a[ 1 ], a[ 2 ],
-        		      col );
-          viewer1.addTriangle( d[ 0 ], d[ 1 ], d[ 2 ], 
-        		      b[ 0 ], b[ 1 ], b[ 2 ],
-        		      a[ 0 ], a[ 1 ], a[ 2 ],
-        		      col );
+          RealPoint a( toDGtalR(it->vertex(0)->point()));
+          RealPoint b( toDGtalR(it->vertex(1)->point()));
+          RealPoint c( toDGtalR(it->vertex(2)->point()));
+          RealPoint d( toDGtalR(it->vertex(3)->point()));
+          viewer1.setFillColor( col );
+          viewer1.addTriangle( a, b, c );
+          viewer1.addTriangle( c, b, d );
+          viewer1.addTriangle( c, d, a );
+          viewer1.addTriangle( d, b, a );
         }
     }
 
@@ -1403,9 +1397,9 @@ int main (int argc, char** argv )
   for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
     viewer3 << ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
 
-  viewer1 << Viewer3D::updateDisplay;
-  viewer2 << Viewer3D::updateDisplay;
-  viewer3 << Viewer3D::updateDisplay;
+  viewer1 << MViewer3D::updateDisplay;
+  viewer2 << MViewer3D::updateDisplay;
+  viewer3 << MViewer3D::updateDisplay;
   application.exec();
   
   return 0;

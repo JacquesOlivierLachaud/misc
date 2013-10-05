@@ -29,6 +29,7 @@
 
 typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
 typedef Z3::Point PointZ3;
+typedef Z3::RealPoint RealPointZ3;
 typedef DGtal::HyperRectDomain<Z3> Domain;
 typedef Domain::ConstIterator DomainConstIterator;
 
@@ -69,10 +70,11 @@ void displayFacet( Viewer & viewer, const ToDGtal & toDGtal,
   Point a( f.first->vertex( (f.second+1)%4 )->point() );
   Point b( f.first->vertex( (f.second+2)%4 )->point() );
   Point c( f.first->vertex( (f.second+3)%4 )->point() );
-  viewer.addTriangle( a.x(), a.y(), a.z(),
-		      c.x(), c.y(), c.z(),
-		      b.x(), b.y(), b.z(),
-		      col );
+  RealPointZ3 A( a[ 0 ], a[ 1 ], a[ 2 ] );
+  RealPointZ3 B( b[ 0 ], b[ 1 ], b[ 2 ] );
+  RealPointZ3 C( c[ 0 ], c[ 1 ], c[ 2 ] );
+  viewer.setFillColor( col );
+  viewer.addTriangle( A, B, C );
 }
 
 template <typename Viewer, typename ToDGtal, typename Cell>
@@ -242,7 +244,7 @@ int main (int argc, char** argv )
   do 
     {
       trace.info() << "--------- step " << i << " ----------" << std::endl;
-      Viewer3D viewerRCH;
+      Viewer3D<> viewerRCH;
       viewerRCH.show();
       for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 
       	      itend = rch.T().finite_facets_end(); it != itend; ++it )
@@ -267,7 +269,7 @@ int main (int argc, char** argv )
       	      displayFacet( viewerRCH, toDGtal, f, colBasicFacet3 );
       	  }
       	}
-      viewerRCH << Viewer3D::updateDisplay;
+      viewerRCH << Viewer3D<>::updateDisplay;
       application.exec();
       ++i;
     }
@@ -276,7 +278,7 @@ int main (int argc, char** argv )
 
   // start viewer
   int view = vm["view"].as<int>();
-  Viewer3D viewerRCH;
+  Viewer3D<> viewerRCH;
   viewerRCH.show();
   if ( view & 0x1 ) { // View digital core.
     for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 
@@ -303,7 +305,7 @@ int main (int argc, char** argv )
 	  }
       }
   }
-  viewerRCH << Viewer3D::updateDisplay;
+  viewerRCH << Viewer3D<>::updateDisplay;
   application.exec();
 
   std::cout << "number of vertices :  " ;
