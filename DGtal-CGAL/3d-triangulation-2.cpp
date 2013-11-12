@@ -35,9 +35,9 @@
 // #include "SimplicialStrip3D.h"
 // #include "RelativeConvexHull.h"
 
-typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
+typedef DGtal::SpaceND<3, DGtal::int32_t> Z3;
 typedef Z3::Point PointZ3;
-typedef Z3::Point RealPoint;
+typedef Z3::RealPoint RealPointZ3;
 typedef DGtal::HyperRectDomain<Z3> Domain;
 typedef Domain::ConstIterator DomainConstIterator;
 
@@ -107,10 +107,11 @@ void displayTriangle( Viewer & viewer, const ToDGtal & toDGtal,
   a = a + ( mid-a )*retract;
   b = b + ( mid-b )*retract;
   c = c + ( mid-c )*retract;
+  RealPointZ3 A( a.x(), a.y(), a.z() );
+  RealPointZ3 B( b.x(), b.y(), b.z() );
+  RealPointZ3 C( c.x(), c.y(), c.z() );
   viewer.setFillColor( col );
-  viewer.addTriangle( RealPoint( a.x(), a.y(), a.z() ),
-		      RealPoint( c.x(), c.y(), c.z() ),
-		      RealPoint( b.x(), b.y(), b.z() ) );
+  viewer.addTriangle( A, C, B );
 }
 
 template <typename Viewer, typename ToDGtal, typename Cell>
@@ -1086,7 +1087,7 @@ int main( int argc, char ** argv ) {
   
   using namespace DGtal;
 
-  typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
+  typedef KhalimskySpaceND<3,DGtal::int32_t> K3;
   typedef Z3::Vector Vector;
   typedef Z3::RealPoint RealPoint;
   typedef K3::SCell SCell;
@@ -1210,7 +1211,7 @@ int main( int argc, char ** argv ) {
   int view = vm["view"].as<int>();
   double retract = vm["retract"].as<double>();
 
-  Viewer3D<> viewerCore;
+  Viewer3D<> viewerCore( ks );
   viewerCore.show();
   Color colBasicFacet2( 0, 255, 255, 255 );
   Color colBasicFacet1( 0, 255, 0, 255 );
@@ -1289,7 +1290,7 @@ int main( int argc, char ** argv ) {
     {
       if ( i++ % 1000 == 0 )
         {
-          Viewer3D<> viewer3d;
+          Viewer3D<> viewer3d( ks );
           viewer3d.show();
           PF.view( viewer3d, retract );
           viewer3d << Viewer3D<>::updateDisplay;

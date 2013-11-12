@@ -27,9 +27,9 @@
 #include "SimplicialStrip3D.h"
 #include "RelativeConvexHull.h"
 
-typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
+typedef DGtal::SpaceND<3, DGtal::int32_t> Z3;
 typedef Z3::Point PointZ3;
-typedef Z3::Point RealPoint;
+typedef Z3::RealPoint RealPointZ3;
 typedef DGtal::HyperRectDomain<Z3> Domain;
 typedef Domain::ConstIterator DomainConstIterator;
 
@@ -70,10 +70,11 @@ void displayFacet( Viewer & viewer, const ToDGtal & toDGtal,
   Point a( f.first->vertex( (f.second+1)%4 )->point() );
   Point b( f.first->vertex( (f.second+2)%4 )->point() );
   Point c( f.first->vertex( (f.second+3)%4 )->point() );
+  RealPointZ3 A( a[ 0 ], a[ 1 ], a[ 2 ] );
+  RealPointZ3 B( b[ 0 ], b[ 1 ], b[ 2 ] );
+  RealPointZ3 C( c[ 0 ], c[ 1 ], c[ 2 ] );
   viewer.setFillColor( col );
-  viewer.addTriangle( RealPoint( a.x(), a.y(), a.z() ),
-		      RealPoint( c.x(), c.y(), c.z() ),
-		      RealPoint( b.x(), b.y(), b.z() ) );
+  viewer.addTriangle( A, B, C );
 }
 
 template <typename Viewer, typename ToDGtal, typename Cell>
@@ -109,7 +110,7 @@ int main (int argc, char** argv )
 {
   using namespace DGtal;
 
-  typedef KhalimskySpaceND<3,DGtal::int64_t> K3;
+  typedef KhalimskySpaceND<3,DGtal::int32_t> K3;
   typedef Z3::Vector Vector;
   typedef Z3::RealPoint RealPoint;
   typedef K3::SCell SCell;
@@ -243,7 +244,7 @@ int main (int argc, char** argv )
   do 
     {
       trace.info() << "--------- step " << i << " ----------" << std::endl;
-      Viewer3D<> viewerRCH;
+      Viewer3D<> viewerRCH( ks );
       viewerRCH.show();
       for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 
       	      itend = rch.T().finite_facets_end(); it != itend; ++it )
@@ -277,7 +278,7 @@ int main (int argc, char** argv )
 
   // start viewer
   int view = vm["view"].as<int>();
-  Viewer3D<> viewerRCH;
+  Viewer3D<> viewerRCH( ks );
   viewerRCH.show();
   if ( view & 0x1 ) { // View digital core.
     for ( FiniteFacetsIterator it = rch.T().finite_facets_begin(), 

@@ -37,6 +37,7 @@ typedef Delaunay::Point             CGALPoint;
 typedef Delaunay::Cell_handle       Cell_handle;
 typedef DGtal::SpaceND<3, DGtal::int64_t> Z3;
 typedef Z3::Point Point;
+typedef Z3::RealPoint RealPoint;
 typedef DGtal::HyperRectDomain<Z3> Domain;
 typedef Domain::ConstIterator DomainConstIterator;
 
@@ -125,12 +126,17 @@ typedef std::map< VEdge, DGtal::int64_t > MapEdge2Int;
 typedef std::map< Vertex_iterator, DGtal::int64_t > MapVertex2Int;
 
 
-
 Point toDGtal(const CGALPoint &p)
 {
   return Point ( p.x(),
-		 p.y(),
-		 p.z() );
+                 p.y(),
+                 p.z() );
+}
+RealPoint toDGtalR(const CGALPoint &p)
+{
+  return RealPoint ( p.x(),
+                     p.y(),
+                     p.z() );
 }
 // Point toDGtal(const CGALPoint &p)
 // {
@@ -331,7 +337,7 @@ int main (int argc, char** argv )
   trace.endBlock();
 
   // start viewer
-  Viewer3D viewer;
+  Viewer3D<> viewer;
   viewer.show();
   // for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
   //    viewer << *it;
@@ -373,11 +379,10 @@ int main (int argc, char** argv )
           Cell_handle itC = it->first; 
           int i = it->second;
           int j = it->third;
-          Point a( toDGtal(itC->vertex( i )->point()));
-          Point b( toDGtal(itC->vertex( j )->point()));
-	  viewer.addLine( a[ 0 ], a[ 1 ], a[ 2 ],
-                          b[ 0 ], b[ 1 ], b[ 2 ],
-                          colBasicEdge, 1.0 );
+          RealPoint a( toDGtalR( itC->vertex( i )->point() ) );
+          RealPoint b( toDGtalR( itC->vertex( j )->point() ) );
+          viewer.setLineColor( colBasicEdge );
+	  viewer.addLine( a, b, 1.0 );
         }
     }
 
@@ -429,13 +434,11 @@ int main (int argc, char** argv )
       //std::cout << " " << bFacet[ f ];
       if ( bFacet[ f ] > 0 )
         {
-          Point a( toDGtal( f.first->point() ) );
-          Point b( toDGtal( f.second->point() ) );
-          Point c( toDGtal( f.third->point() ) );
-	  viewer.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-			      b[ 0 ], b[ 1 ], b[ 2 ],
-			      c[ 0 ], c[ 1 ], c[ 2 ],
-			      (bFacet[ f ] == 1) ? colBasicFacet1 : colBasicFacet2 );
+          RealPoint a( toDGtalR( f.first->point() ) );
+          RealPoint b( toDGtalR( f.second->point() ) );
+          RealPoint c( toDGtalR( f.third->point() ) );
+          viewer.setFillColor( (bFacet[ f ] == 1) ? colBasicFacet1 : colBasicFacet2 ); 
+	  viewer.addTriangle( a, b, c );
         }
     }
   std::cout << std::endl;
@@ -449,27 +452,15 @@ int main (int argc, char** argv )
         //if ( n > 4 ) trace.info() << " " << n;
       // if ( n <= 3 ) trace.error() << " Not enough lattice points" << std::endl;
         {
-          Point a( toDGtal(it->vertex(0)->point())),
-            b(toDGtal(it->vertex(1)->point())),
-            c(toDGtal(it->vertex(2)->point())),
-            d(toDGtal(it->vertex(3)->point()));
-          Color col( 255, 0, 0, 100 );
-          viewer.addTriangle( a[ 0 ], a[ 1 ], a[ 2 ],
-        		      b[ 0 ], b[ 1 ], b[ 2 ],
-        		      c[ 0 ], c[ 1 ], c[ 2 ],
-        		      col );
-          viewer.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-        		      b[ 0 ], b[ 1 ], b[ 2 ],
-        		      d[ 0 ], d[ 1 ], d[ 2 ], 
-        		      col );
-          viewer.addTriangle( c[ 0 ], c[ 1 ], c[ 2 ],
-        		      d[ 0 ], d[ 1 ], d[ 2 ], 
-        		      a[ 0 ], a[ 1 ], a[ 2 ],
-        		      col );
-          viewer.addTriangle( d[ 0 ], d[ 1 ], d[ 2 ], 
-        		      b[ 0 ], b[ 1 ], b[ 2 ],
-        		      a[ 0 ], a[ 1 ], a[ 2 ],
-        		      col );
+          RealPoint a( toDGtalR( it->vertex(0)->point() ) );
+          RealPoint b( toDGtalR( it->vertex(1)->point() ) );
+          RealPoint c( toDGtalR( it->vertex(2)->point() ) );
+          RealPoint d( toDGtalR( it->vertex(3)->point() ) );
+          viewer.setFillColor( Color( 255, 0, 0, 100 ) );
+          viewer.addTriangle( a, b, c );
+          viewer.addTriangle( c, b, d );
+          viewer.addTriangle( c, d, a );
+          viewer.addTriangle( d, b, a );
         }
     }
 
@@ -483,7 +474,7 @@ int main (int argc, char** argv )
   std::cout << "number of cells :  " ;
   std::cout << t.number_of_cells() << std::endl;
 
-  viewer << Viewer3D::updateDisplay;
+  viewer << Viewer3D<>::updateDisplay;
   application.exec();
   
   return 0;
