@@ -509,7 +509,7 @@ namespace DGtal {
     
     inline 
     DigitalCore( ConstAlias<Triangulation> t ) 
-      : myTriangulation( t )
+      : myTriangulation( &t )
     {
       countLatticePoints();
       computeBasicFacets();
