@@ -966,7 +966,7 @@ public:
 	typename Core::IndexList l = core.getPointIndices( f );
 	FacetInformation & info = myPlaneMap[ facet_he ];
 	// info.plane.init( 200, 3, 1 );
-	info.plane.init( 2, 1 );
+	info.plane.init( 1, 1 );
 	std::vector<DPoint> dpoints( l.size() );
 	for ( unsigned int i = 0; i < l.size(); ++i )
 	  dpoints[ i ] = toDGtal( core.getPoint( l[ i ] ) );
