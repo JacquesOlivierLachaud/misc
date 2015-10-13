@@ -755,7 +755,7 @@ public:
     GenericConcavity( VertexHandle v0, VertexHandle v1, 
                       DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
                       DGtal::ConstAlias< Predicate > pred )
-      : _v0( v0 ), _v1( v1 ), _TH( TH ), _pred( pred )
+      : _v0( v0 ), _v1( v1 ), _TH( &TH ), _pred( &pred )
     {
       //_n01 = ( _v1->point() - _v0->point() ).squared_length();
       Edge e;
@@ -769,7 +769,7 @@ public:
                       DGtal::ConstAlias< TriangulationHelper<Triangulation,Kernel> > TH,
                       DGtal::ConstAlias< Predicate > pred,
                       double prior )
-      : _v0( v0 ), _v1( v1 ), _TH( TH ), _pred( pred ), _n01( prior )
+      : _v0( v0 ), _v1( v1 ), _TH( &TH ), _pred( &pred ), _n01( prior )
     {}
 
     GenericConcavity( const GenericConcavity & other )
@@ -1657,7 +1657,7 @@ private:
 
 public:
   Border( DGtal::ConstAlias<DigitalAffineComplex> dac, Label l )
-    : _dac( dac ), _l( l )
+    : _dac( &dac ), _l( l )
   {
     _dac->getBorderEdges( _border, _l );
     _dac->tagBorderEdges( _eTags, _border.begin(), _border.end() );

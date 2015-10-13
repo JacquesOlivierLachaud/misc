@@ -46,7 +46,7 @@ ENDIF(CAIRO_FOUND)
 
 
 SET(SRCs
-  simpleExample
+#  simpleExample
   2d-triangulation
   2d-triangulation-f
   2d-triangulation-color
@@ -55,7 +55,8 @@ SET(SRCs
   3d-triangulation-3
   2d-patterns-v2
   3d-patterns
-  3d-patterns-v2)
+  3d-patterns-v2
+  inside-delaunay-3d )
 
 if ( CGAL_FOUND )
   

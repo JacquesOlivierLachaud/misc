@@ -509,7 +509,7 @@ namespace DGtal {
     
     inline 
     DigitalCore( ConstAlias<Triangulation> t ) 
-      : myTriangulation( t )
+      : myTriangulation( &t )
     {
       countLatticePoints();
       computeBasicFacets();
@@ -932,6 +932,8 @@ int main (int argc, char** argv )
     }
   trace.endBlock();
   if ( ok != 0 ) return ok; // error.
+
+  SCellSet boundary2 (boundary);
 
   trace.beginBlock("Constructing the set of points");
   std::vector<Point> digital_points;
@@ -1394,11 +1396,11 @@ int main (int argc, char** argv )
   std::cout << "number of cells :  " ;
   std::cout << t.number_of_cells() << std::endl;
 
-  for ( SCellSetConstIterator it=boundary.begin(), itend=boundary.end(); it != itend; ++it )
+  for ( SCellSetConstIterator it=boundary2.begin(), itend=boundary2.end(); it != itend; ++it )
     viewer3 << ks.sDirectIncident( *it, ks.sOrthDir( *it ) );
 
-  viewer1 << MViewer3D::updateDisplay;
-  viewer2 << MViewer3D::updateDisplay;
+  //viewer1 << MViewer3D::updateDisplay;
+  // viewer2 << MViewer3D::updateDisplay;
   viewer3 << MViewer3D::updateDisplay;
   application.exec();
   
