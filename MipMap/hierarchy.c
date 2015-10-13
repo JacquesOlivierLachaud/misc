@@ -1,4 +1,5 @@
-// gcc -std=c99 -Wall -pedantic hierarchy.c -lm -o hierarchy
+// Author: Jacques-Olivier Lachaud
+// gcc -O3 -std=c99 -Wall -pedantic hierarchy.c -lm -o hierarchy
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
@@ -6,16 +7,17 @@
 
 // Not in math.h
 #define PI 3.14159265358979323846
-#define SIZE 256
-#define LVL 8
+#define LVL 11
 
 typedef float Value;
 
+// Useful basic functions
 Value square_int( int x );
 Value square( Value x );
 Value distance2( int x1, int y1, int z1, int x2, int y2, int z2 );
 Value distance( int x1, int y1, int z1, int x2, int y2, int z2 );
 
+// Defines moment functors
 typedef Value (* VoxelFunctor )( Value data, int x, int y, int z );
 Value moment000( Value data, int x, int y, int z );
 Value moment100( Value data, int x, int y, int z );
@@ -28,6 +30,8 @@ Value moment110( Value data, int x, int y, int z );
 Value moment101( Value data, int x, int y, int z );
 Value moment011( Value data, int x, int y, int z );
 
+
+// A 3D image of size (2^lvl)^3
 struct SImage {
   int size;
   int lvl;
@@ -40,6 +44,8 @@ Value Image_get( Image* img, int x, int y, int z );
 void  Image_set( Image* img, int x, int y, int z, Value v );
 void  Image_finish( Image* img );
 
+// A MipMap structure, i.e. a hierarchy of images with coarser and
+// coarser resolution.
 struct SMipMap {
   int   max_lvl;
   Image hierarchy[ LVL+1 ];
@@ -50,11 +56,26 @@ void   MipMap_init_from_image_and_functor( MipMap* mipmap, Image* img, VoxelFunc
 Image* MipMap_get_image( MipMap* mipmap, int lvl );
 void   MipMap_finish( MipMap* mipmap );
 
+// Those three functions traverse the octree as a kind of first-son /
+// right brother tree.
+void goUp( int xyzk[] );
+void goDown( int xyzk[] );
+int  goNext( int xyzk[] );
+
+Value computeExact( MipMap* M, int x0, int y0, int z0, Value r );
+Value computeHierarchy( MipMap* M, int x0, int y0, int z0, Value r );
+Value computeApproximateHierarchy( MipMap* M, int x0, int y0, int z0, Value r, int min_h );
+
+
+// Global variables to determine the complexity of "compute" functions.
 int nb_iteration_exact     = 0;
 int nb_access_exact        = 0;
 int nb_iteration_hierarchy = 0;
 int nb_access_hierarchy    = 0;
+int nb_iteration_approx[ LVL+1 ] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+int nb_access_approx   [ LVL+1 ] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
  
+
 
 Value square_int( int x )
 {
@@ -120,9 +141,9 @@ void Image_ball( Image* img, int x0, int y0, int z0, float r )
 
 void MipMap_init_from_image_and_functor( MipMap* mipmap, Image* img, VoxelFunctor f )
 {
-  assert( ( img->lvl >= 1 ) && ( img->lvl <= LVL ) );
+  assert( ( img->lvl >= 0 ) && ( img->lvl <= LVL ) );
   mipmap->max_lvl = img->lvl;
-  for ( int k = img->lvl; k > 0; --k )
+  for ( int k = img->lvl; k >= 0; --k )
     {
       Image_init( &mipmap->hierarchy[ k ], k );
     }
@@ -134,7 +155,7 @@ void MipMap_init_from_image_and_functor( MipMap* mipmap, Image* img, VoxelFuncto
       for ( int x = 0; x < src->size; ++x )
         Image_set( dst, x, y, z, f( Image_get( src, x, y, z ), x, y, z ) );
   // Compute hierarchy
-  for ( int k = img->lvl - 1; k > 0; --k )
+  for ( int k = img->lvl - 1; k >= 0; --k )
     {
       Image* src = MipMap_get_image( mipmap, k+1 );
       Image* dst = MipMap_get_image( mipmap, k );
@@ -157,13 +178,13 @@ void MipMap_init_from_image_and_functor( MipMap* mipmap, Image* img, VoxelFuncto
 
 Image* MipMap_get_image( MipMap* mipmap, int lvl )
 {
-  assert( ( lvl >= 1 ) && ( lvl <= LVL ) );
+  assert( ( lvl >= 0 ) && ( lvl <= LVL ) );
   return &mipmap->hierarchy[ lvl ];
 }
 
 void   MipMap_finish( MipMap* mipmap )
 {
-  for ( int k = 1; k <= mipmap->max_lvl; ++k )
+  for ( int k = 0; k <= mipmap->max_lvl; ++k )
     Image_finish( MipMap_get_image( mipmap, k ) );
   mipmap->max_lvl = 0;
 }
@@ -209,6 +230,12 @@ Value moment011( Value data, int x, int y, int z )
   return (Value) data*y*z;
 }
 
+/*
+  Compute the exact integration of the mipmap \a M within the ball of
+  radius r and center (x0,y0,z0).
+  
+  The method is a simple scanning at the finest scale.
+*/
 Value computeExact( MipMap* M, int x0, int y0, int z0, Value r )
 {
   Image* img = MipMap_get_image( M, M->max_lvl );
@@ -276,21 +303,23 @@ int goNext( int xyzk[] )
   return 1;
 }
 
+/*
+  Compute the exact integration of the mipmap \a M within the ball of
+  radius r and center (x0,y0,z0).
+  
+  The method is an octree traversal which traverses only necessary
+  cells. It returns the same value as computeExact while exploring
+  less cells.
+*/
 Value computeHierarchy( MipMap* M, int x0, int y0, int z0, Value r )
 {
-  Value radii [ LVL+1 ];
   Value weight[ LVL+1 ];
   Value diag  [ LVL+1 ];
-  // int k           = 0;          // current level in the hierarchy
   int max_k       = M->max_lvl; // number of levels in the hierarchy
-  // int h           = max_k;      // height in hierarchy (max_k - k )
-  // int size        = 1 << max_k; // size of each cell
-  radii [ max_k ] = r;
   weight[ max_k ] = (Value) 1;
   diag  [ max_k ] = (Value) (sqrt(3.0)/2.0);
   for ( int i = max_k - 1; i >= 0; --i )
     {
-      radii [ i ] = radii [ i+1 ] / (Value) 2;
       weight[ i ] = weight[ i+1 ] * (Value) 8;
       diag  [ i ] = diag  [ i+1 ] * (Value) 2;
     }
@@ -302,11 +331,12 @@ Value computeHierarchy( MipMap* M, int x0, int y0, int z0, Value r )
       nb_iteration_hierarchy += 1;
       int k = xyzk[ 3 ];  // current level in the hierarchy
       int h = max_k - k;  // height in hierarchy (max_k - k )
+      // The distance must be computed in a kind of Khalimsky sense
+      // since centers of octree-cells are shifted from the origin (of
+      // (1<<h)/2.0)
       Value dK2    = distance2( ( 2*xyzk[ 0 ] + 1) << h, ( 2*xyzk[ 1 ] + 1) << h, ( 2*xyzk[ 2 ] + 1 ) << h, 
                                 2*x0+1, 2*y0+1, 2*z0+1 );
-      /* Value d2     = distance2( xyzk[ 0 ] << h, xyzk[ 1 ] << h, xyzk[ 2 ] << h,  */
-      /*                           x0, y0, z0 ); */
-      Value d2     = dK2 / (Value) 4;
+      Value d2     = dK2 / (Value) 4; // Divide by 4 to get back the distance.
       Value delta2 = square( diag[ k ] );
       Value upper2 = ( r2 >= delta2 ) ? r2 - 2.0*r*diag[ k ] + delta2 : -1.0; // (r-diag/2)^2
       Value lower2 = r2 + 2.0*r*diag[ k ] + delta2; // (r+diag/2)^2
@@ -345,12 +375,110 @@ Value computeHierarchy( MipMap* M, int x0, int y0, int z0, Value r )
   return acc;
 }
 
+
+
+/*
+  Compute the approximate integration of the mipmap \a M within the ball of
+  radius r and center (x0,y0,z0).
+  
+  The method is an octree traversal which traverses only necessary
+  cells. It stops at cells of height smaller than min_h, hence it
+  explores much less cells than computeHierarchy while computing only
+  an approximation of the result.
+
+  It should be noted that 2^min_h should be smaller than r.
+*/
+Value computeApproximateHierarchy( MipMap* M, int x0, int y0, int z0, Value r, int min_h )
+{
+  Value weight[ LVL+1 ];
+  Value diag  [ LVL+1 ];
+  int max_k       = M->max_lvl; // number of levels in the hierarchy
+  weight[ max_k ] = (Value) 1;
+  diag  [ max_k ] = (Value) (sqrt(3.0)/2.0);
+  for ( int i = max_k - 1; i >= 0; --i )
+    {
+      weight[ i ] = weight[ i+1 ] * (Value) 8;
+      diag  [ i ] = diag  [ i+1 ] * (Value) 2;
+    }
+  if ( min_h  > 0 )
+    for ( int i = max_k; i >= 0; --i )
+      diag  [ i ] -= (sqrt(3.0)/2.0) * (Value) ( 1 << (min_h) );
+
+  int xyzk[ 4 ] = { 0, 0, 0, 0 };
+  Value acc     = 0;
+  Value r2      = r*r;
+  do 
+    {
+      nb_iteration_approx[ min_h ] += 1;
+      int k = xyzk[ 3 ];  // current level in the hierarchy
+      int h = max_k - k;  // height in hierarchy (max_k - k )
+      // The distance must be computed in a kind of Khalimsky sense
+      // since centers of octree-cells are shifted from the origin (of
+      // (1<<h)/2.0)
+      Value dK2    = distance2( ( 2*xyzk[ 0 ] + 1) << h, ( 2*xyzk[ 1 ] + 1) << h, ( 2*xyzk[ 2 ] + 1 ) << h, 
+                                2*x0+1, 2*y0+1, 2*z0+1 );
+      Value d2     = dK2 / (Value) 4; // Divide by 4 to get back the distance.
+      Value delta2 = square( diag[ k ] );
+      Value upper2 = ( r2 >= delta2 ) ? r2 - 2.0*r*diag[ k ] + delta2 : -1.0; // (r-diag/2)^2
+      Value lower2 = r2 + 2.0*r*diag[ k ] + delta2; // (r+diag/2)^2
+      //printf( "[%d] %d %d %d | l2=%f d2=%f u2=%f\n", k, xyzk[ 0 ], xyzk[ 1 ], xyzk[ 2 ], lower2, d2, upper2 );
+      // Takes care of finest cells.
+      if ( h == 0 ) 
+        {
+          if ( d2 <= r2 ) 
+            { // cell is completely inside
+              // printf("[%d] %d %d %d\n", k, xyzk[ 0 ], xyzk[ 1 ], xyzk[ 2 ] );
+              acc += Image_get( MipMap_get_image( M, k ), 
+                                xyzk[ 0 ], xyzk[ 1 ], xyzk[ 2 ] ); 
+              nb_access_approx[ min_h ] += 1;
+              goNext( xyzk );
+            }
+          else // cell is completely outside
+            goNext( xyzk );
+        }
+      else
+        { // cell is completely inside
+          if ( d2 <= upper2 ) 
+            {
+              // printf("[%d] %d %d %d\n", k, xyzk[ 0 ], xyzk[ 1 ], xyzk[ 2 ] );
+              acc += weight[ k ] * Image_get( MipMap_get_image( M, k ), 
+                                              xyzk[ 0 ], xyzk[ 1 ], xyzk[ 2 ] );
+              nb_access_approx[ min_h ] += 1;
+              goNext( xyzk );
+            }
+          else if ( d2 > lower2 )
+            // cell is completely outside
+            goNext( xyzk );                 
+          else if ( h > min_h ) 
+            goDown( xyzk );
+          else
+            goNext( xyzk );                 
+        }
+    }
+  while ( xyzk[ 3 ] > 0 );
+  return acc;
+}
+
+
 int main( int argc, char* argv[] )
 {
+  if ( argc == 1 ) 
+    {
+      printf("Usage: %s <lvl> <R> <r>\n", argv[ 0 ] );
+      printf("       - computes the exact, hierarchical and approximate\n" );
+      printf("         volumes/moments of a big ball of radius <R> which\n" );
+      printf("         touches the center of the space, intersected by a\n" );
+      printf("         ball of radius <r> centered on the center of the\n" );
+      printf("         space. The discrete space has size 2^<lvl> in each\n" );
+      printf("         direction.\n");
+      printf("Example:\n");
+      printf("%s 6 15 5.5\n", argv[ 0 ] );
+      return 0;
+    }
   int lvl = argc > 1 ? atoi( argv[ 1 ] ) : 6;
   Value R = argc > 2 ? atof( argv[ 2 ] ) : 15.0;
   Value r = argc > 3 ? atof( argv[ 3 ] ) : 5.0;
-
+  
   Image I;
   Image_init( &I, lvl );
 
@@ -370,7 +498,11 @@ int main( int argc, char* argv[] )
   printf("     - exact discrete value = %f, iter/access %d/%d\n", exact, nb_iteration_exact, nb_access_exact );
   Value hier = computeHierarchy( &vol, x0, y0, z0, r );
   printf("     - hier. discrete value = %f, iter/access %d/%d\n", hier, nb_iteration_hierarchy, nb_access_hierarchy );
- 
+  for ( int i = 0; i < lvl; ++i )
+    {
+      Value hier_approx = computeApproximateHierarchy( &vol, x0, y0, z0, r, i );
+      printf("     - hier. approx value [%d] = %f, iter/access %d/%d\n", i, hier_approx, nb_iteration_approx[ i ], nb_access_approx[ i ] );
+    }
   printf("---- Freeing memory ----\n" );
   MipMap_finish( &vol );
   Image_finish( &I );
