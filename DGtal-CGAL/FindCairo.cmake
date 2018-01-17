@@ -6,8 +6,6 @@
 
 
 FIND_PATH(CAIRO_INCLUDE_DIRS cairo.h
-    $ENV{HOME}/local/include/cairo
-    $ENV{HOME}/local/include
     $ENV{CAIRODIR}/include
     $ENV{CAIRODIR}
     ~/Library/Frameworks
@@ -24,10 +22,7 @@ FIND_PATH(CAIRO_INCLUDE_DIRS cairo.h
     /usr/X11R6/include/cairo
 )
 
-set( LOCALLIBS $ENV{HOME}/local/lib )
-find_library(CAIRO_LIBRAIRIES
-             NAMES cairo
-             PATHS ${LOCALLIBS} NO_DEFAULT_PATH)
+
 find_library(CAIRO_LIBRAIRIES
              NAMES cairo
              PATHS /usr/lib

@@ -2730,12 +2730,12 @@ int main( int argc, char** argv )
   if ( vm.count( "image" ) )
     {
       typedef ImageSelector < Z2i::Domain, unsigned char>::Type Image;
-      typedef IntervalThresholder<Image::Value> Binarizer; 
+      typedef functors::IntervalThresholder<Image::Value> Binarizer; 
       typedef Image::Domain Domain;
       std::string imageFileName = vm[ "image" ].as<std::string>();
       Image image = GenericReader<Image>::import( imageFileName ); 
       Binarizer b( vm[ "min" ].as<int>(), vm[ "max" ].as<int>() ); 
-      PointFunctorPredicate<Image,Binarizer> predicate(image, b); 
+      functors::PointFunctorPredicate<Image,Binarizer> predicate(image, b); 
       insertBands( dac, image, predicate, 1 );
       for ( Domain::ConstIterator it = image.domain().begin(), ite = image.domain().end();
             it != ite; ++it )

@@ -4,6 +4,18 @@ project( DGtalCGAL )
 
 cmake_minimum_required (VERSION 2.6) 
 
+macro(use_cxx11)
+  if (CMAKE_VERSION VERSION_LESS "3.1")
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fext-numeric-literals")
+    endif ()
+  else ()
+    set (CMAKE_CXX_STANDARD 11)
+  endif ()
+endmacro(use_cxx11)
+
+use_cxx11()
+
 FIND_PACKAGE(DGtal 0.7 REQUIRED)
 INCLUDE_DIRECTORIES(${DGTAL_INCLUDE_DIRS})
 LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
@@ -123,7 +135,41 @@ INCLUDE_DIRECTORIES(${DGTAL_INCLUDE_DIRS})
 LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
 
 # Cairo
-FIND_PACKAGE(Cairo REQUIRED)
+
+FIND_PATH(CAIRO_INCLUDE_DIRS cairo.h
+    $ENV{CAIRODIR}/include
+    $ENV{CAIRODIR}
+    ~/Library/Frameworks
+    /Library/Frameworks
+    /usr/local/include
+    /usr/include
+    /usr/include/cairo # MT
+    /usr/local/include/cairo #brew, manual
+    /sw/include # Fink
+    /opt/local/include # DarwinPorts
+    /opt/local/include/cairo # DarwinPorts # MT
+    /opt/csw/include # Blastwave
+    /opt/include/cairo
+    /usr/X11R6/include/cairo
+)
+
+
+find_library(CAIRO_LIBRAIRIES
+             NAMES cairo
+             PATHS /usr/lib
+                  /usr/local/lib
+                 ENV CAIRO_ROOT
+                 ENV LD_LIBRARY_PATH
+                 ENV LIBRARY_PATH
+             PATH_SUFFIXES cairo
+            )
+
+SET(CAIRO_FOUND 0)
+IF(CAIRO_LIBRAIRIES AND CAIRO_INCLUDE_DIRS)
+  SET(CAIRO_FOUND 1)
+ENDIF(CAIRO_LIBRAIRIES AND CAIRO_INCLUDE_DIRS)
+
+#FIND_PACKAGE(Cairo REQUIRED)
 IF(CAIRO_FOUND)
     INCLUDE_DIRECTORIES(${CAIRO_INCLUDE_DIRS})
     LINK_DIRECTORIES(${CAIRO_LIBRAIRIES})
