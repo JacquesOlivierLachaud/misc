@@ -1102,7 +1102,7 @@ int affineValuedTriangulation( po::variables_map & vm )
   if ( vm.count( "image" ) )
     {
       typedef ImageSelector < Z2i::Domain, unsigned char>::Type Image;
-      typedef IntervalThresholder<Image::Value> Binarizer; 
+      typedef functors::IntervalThresholder<Image::Value> Binarizer; 
       typedef Image::Domain Domain;
       std::string imageFileName = vm[ "image" ].as<std::string>();
       Image image = GenericReader<Image>::import( imageFileName ); 
