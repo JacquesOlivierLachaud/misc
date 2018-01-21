@@ -160,7 +160,7 @@ public:
     _eFct.clear();
     _fFct.clear();
     _p2vhMap.clear();
-    setInfiniteValue( invalid );
+    setInfiniteValue( invalid() );
   }
 
   /**
