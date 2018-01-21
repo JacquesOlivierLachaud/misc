@@ -334,7 +334,7 @@ public:
     _eFct.clear();
     _fFct.clear();
     _p2vhMap.clear();
-    setInfiniteValue( invalid );
+    setInfiniteValue( invalid() );
   }
 
   /**
@@ -948,6 +948,7 @@ public:
       result = gradient( Edge( fh, li ) ); break;
     case Triangulation2::FACE:
       result = gradient( fh ); break;
+    default: break;
     }
     return result;
   }
