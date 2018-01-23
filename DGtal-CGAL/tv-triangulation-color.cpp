@@ -62,7 +62,7 @@ namespace DGtal {
   struct TVTriangulation
   {
     typedef Z2i::Integer               Integer;
-    typedef Z2i::Point                 Point;
+    typedef Z2i::RealPoint             Point;
     typedef Z2i::Domain                Domain;
     typedef TriangulatedSurface<Point> Triangulation;
     typedef Triangulation::VertexIndex VertexIndex;
@@ -77,8 +77,8 @@ namespace DGtal {
     Triangulation        T;
     /// The values at each vertex
     std::vector< Value > values;
-    /// The probability to flip an edge if energies are equal.
-    Scalar              _equal_flip_prob;
+    /// Initial vertices
+    Integer              nbV;
     
     static Scalar square( Scalar x ) { return x*x; }
     
@@ -106,6 +106,7 @@ namespace DGtal {
       const Scalar eb = square( Vb.crossProduct( Y ).dot( One ) )
 	+ square( X.crossProduct( Vb ).dot( One ) );
       return sqrt( er ) + sqrt( eg ) + sqrt( eb );
+      // return  er + eg + eb;
       // const Scalar er = fabs( Vr.crossProduct( Y ).dot( One ) )
       // 	+ fabs( X.crossProduct( Vr ).dot( One ) );
       // const Scalar eg = fabs( Vg.crossProduct( Y ).dot( One ) )
@@ -138,6 +139,7 @@ namespace DGtal {
       bool ok = T.build();
       trace.info() << "Build triangulation: "
 		   << ( ok ? "OK" : "ERROR" ) << std::endl;
+      nbV = T.nbVertices();
       // Creates values
       VertexIndex v = 0;
       values.resize( I.size() );
@@ -146,16 +148,15 @@ namespace DGtal {
 			       (Scalar) fgreen( val ),
 			       (Scalar) fblue ( val ) );
       }
-      _equal_flip_prob = 0.5;
     }
 
-    static Integer doesTurnLeft( const Point& p, const Point& q, const Point& r )
+    static Scalar doesTurnLeft( const Point& p, const Point& q, const Point& r )
     {
       const Point pq = q - p;
       const Point qr = r - q;
       return pq[ 0 ] * qr[ 1 ] - pq[ 1 ] * qr[ 0 ];
     }
-    static Integer doesTurnLeft( const Point& pq, const Point& qr )
+    static Scalar doesTurnLeft( const Point& pq, const Point& qr )
     {
       return pq[ 0 ] * qr[ 1 ] - pq[ 1 ] * qr[ 0 ];
     }
@@ -180,13 +181,20 @@ namespace DGtal {
       // 		     << ( cvx ? "CVX" : "CCV" ) << std::endl;
       return cvx;
     }
-    // NB: process only arcs (s,t) where ( t > s ).
-    bool updateArc( const Arc a, Scalar& energy ) {
+    /**
+       NB: process only arcs (s,t) where ( t > s ).
+       
+       @return 1 is energy is lowered (a has been flipped), 0 if arc
+       is flippable but it does not change the energy, negative
+       otherwise (-1: boundary, -2 s > t, -3 non convex, -4 increases
+       the energy.
+    */
+    int updateArc( const Arc a, Scalar& energy ) {
       energy        = 0;
       VertexRange P = T.verticesAroundArc( a );
-      if ( P.size() != 4 )   return false;
-      if ( P[ 0 ] < P[ 2 ] ) return false;
-      if ( ! isConvex( P ) ) return false;
+      if ( P.size() != 4 )   return -1;
+      if ( P[ 0 ] < P[ 2 ] ) return -2;
+      if ( ! isConvex( P ) ) return -3;
       // Computes energies
       const Scalar  E012 = energyTV( P[ 0 ], P[ 1 ], P[ 2 ] );
       const Scalar  E023 = energyTV( P[ 0 ], P[ 2 ], P[ 3 ] );
@@ -198,36 +206,116 @@ namespace DGtal {
       // 		   << "," << P[ 3 ] << ") ";
       // trace.info() << "Ecurr=" << Ecurr << " Eflip=" << Eflip << std::endl;
       // @todo Does not take into account equality for now.a
-      if ( ( Eflip < Ecurr )
-	   || ( ( Eflip == Ecurr )
-		&& ( randomUniform() < _equal_flip_prob ) ) )
+      if ( Eflip < Ecurr )
 	{
 	  T.flip( a );
 	  energy = Eflip;
-	  return true;
+	  return 1;
 	}
-      else 
+      else
 	{
 	  energy = Ecurr;
-	  return false;
+	  return ( Eflip == Ecurr ) ? 0 : -4;
 	}
     }
-    Integer onePass( Scalar& total_energy, Scalar equal_flip_prob )
+    // equal_strategy:
+    // 0: do nothing
+    // 1: subdivide all
+    // 2: flip all
+    // 3: flip all only if flipped = 0
+    // @return either (nbflip,0), (nbflip, nbsub_eq) or (nbflip, nbflip_eq).
+    std::pair<Integer,Integer>
+    onePass( Scalar& total_energy, int equal_strategy = 0 )
     {
-      _equal_flip_prob  = equal_flip_prob;
       Integer nbflipped = 0;
+      Integer   nbequal = 0;
       total_energy      = 0;
       Scalar energy     = 0;
+      std::vector<Arc> Q;
       for ( Arc a = 0; a < T.nbArcs(); ++a )
 	{
-	  if ( updateArc( a, energy ) )
-	    nbflipped++;
+	  int update = updateArc( a, energy );
+	  if ( update > 0 ) nbflipped++;
+	  else if ( update == 0 ) Q.push_back( a );
 	  total_energy += energy;
 	}
       trace.info() << "Energy = " << total_energy
 		   << " nbflipped=" << nbflipped
-		   << "/" << T.nbEdges() << std::endl;
-      return nbflipped;
+		   << "/" << T.nbEdges();
+      if ( equal_strategy == 1 ) {
+	nbequal = subdivide( Q );
+	trace.info() << " nbsubequal=" << nbequal
+		     << "/" << Q.size();
+      } else if ( equal_strategy == 2 ) {
+	nbequal = flipEqual( Q );
+	trace.info() << " nbflipequal=" << nbequal
+		     << "/" << Q.size();
+      } else if ( ( equal_strategy == 3 ) && ( nbflipped == 0 ) ) {
+	nbequal = flipEqual( Q );
+	trace.info() << " nbflipequal=" << nbequal
+		     << "/" << Q.size();
+      } else if ( ( ( equal_strategy == 4 ) || ( equal_strategy == 5 ) )
+		  && ( nbflipped == 0 ) ) {
+      nbequal = flipEqualWithProb( Q, 0.5 );
+	trace.info() << " nbflipequalP=" << nbequal
+		     << "/" << Q.size();
+      }
+      trace.info() << std::endl;
+      return std::make_pair( nbflipped, nbequal );
+    }
+    
+    template <typename Range>
+    Integer flipEqual( const Range& range )
+    {
+      Scalar  energy = 0.0;
+      Integer nbflip = 0;
+      for ( Arc a : range ) {
+	int update = updateArc( a, energy );
+	if ( update == 0 ) {
+	  T.flip( a );
+	  nbflip++;
+	}
+      }
+      return nbflip;
+    }
+    
+    template <typename Range>
+    Integer flipEqualWithProb( const Range& range, double p )
+    {
+      Scalar  energy = 0.0;
+      Integer nbflip = 0;
+      for ( Arc a : range ) {
+	int update = updateArc( a, energy );
+	if ( ( update == 0 ) && ( randomUniform() < p ) ) {
+	  T.flip( a );
+	  nbflip++;
+	}
+      }
+      return nbflip;
+    }
+    
+    template <typename Range>
+    Integer subdivide( const Range& range )
+    {
+      Scalar  energy = 0.0;
+      Integer nbsubdivided = 0;
+      for ( Arc a : range ) {
+	int update = updateArc( a, energy );
+	if ( update == 0 ) {
+	  VertexRange P = T.verticesAroundArc( a );
+	  // Allow one level of subdivision.
+	  if ( std::max( std::max( P[ 0 ], P[ 1 ] ),
+			 std::max( P[ 2 ], P[ 3 ] ) ) >= nbV ) continue;
+	  Point B = ( T.position( P[ 0 ] ) + T.position( P[ 1 ] )
+		      + T.position( P[ 2 ] ) + T.position( P[ 3 ] ) ) * 0.25;
+	  VertexIndex v = T.split( a, B );
+	  Value V = ( values[ P[ 0 ] ] + values[ P[ 1 ] ]
+		      + values[ P[ 2 ] ] + values[ P[ 3 ] ] ) * 0.25;
+	  values.push_back( V );
+	  ++nbsubdivided;
+	}
+      }
+      return nbsubdivided;
     }
     
   };
@@ -258,7 +346,7 @@ namespace DGtal {
     int _x0, _y0;
     int _width, _height;
     double _xf, _yf;
-    bool _gouraud;
+    int _shading;
     cairo_surface_t* _surface;
     cairo_t* _cr;
 
@@ -271,10 +359,10 @@ namespace DGtal {
     */
     CairoViewerTV( int x0, int y0, int width, int height, 
 		   double xfactor = 1.0, double yfactor = 1.0,
-		   bool gouraud = false )
+		   int shading = 0 )
       : _redf( 1.0/255.0f ), _greenf( 1.0/255.0f ), _bluef( 1.0/255.0f ),
 	_x0( x0 ), _y0( y0 ), _width( width ), _height( height ),
-	_xf( xfactor ), _yf( yfactor ), _gouraud( gouraud )
+	_xf( xfactor ), _yf( yfactor ), _shading( shading )
     {
       _surface = cairo_image_surface_create( CAIRO_FORMAT_ARGB32,
 					     width, height );
@@ -296,16 +384,163 @@ namespace DGtal {
       cairo_surface_write_to_png( _surface, file_name );
     }
 
-    inline int i( double x ) const
+    inline double i( double x ) const
     {
-      return (int)round( (x+0.5) * _xf ) - _x0;
+      return ( (x+0.5) * _xf ) - _x0;
     }
     
-    inline int j( double y ) const
+    inline double j( double y ) const
     {
-      return _height - (int)(round( (y+0.5) * _yf ) - _y0) - 1;
+      return _height - (( (y+0.5) * _yf ) - _y0) - 1;
+    }
+    // inline int i( double x ) const
+    // {
+    //   return (int)round( (x+0.5) * _xf ) - _x0;
+    // }
+    
+    // inline int j( double y ) const
+    // {
+    //   return _height - (int)(round( (y+0.5) * _yf ) - _y0) - 1;
+    // }
+
+    bool computeLinearGradient( RealPoint a, RealPoint b, RealPoint c,
+				Value Vmono,
+				RealPoint& s, RealPoint& mid, RealPoint& e,
+				Scalar& gs, Scalar& gmid, Scalar& ge )
+    {
+      const Value One = Value::diagonal( 1 );
+      const Value   X = Value( a[ 0 ], b[ 0 ], c[ 0 ] );
+      const Value   Y = Value( a[ 1 ], b[ 1 ], c[ 1 ] );
+      const RealPoint Gr = RealPoint( Vmono.crossProduct( Y ).dot( One ),
+				      X.crossProduct( Vmono ).dot( One ) );
+      if ( Gr == RealPoint::zero ) {
+	s   = RealPoint( i( a[ 0 ] ), j( a[ 1 ] ) );
+	mid = RealPoint( i( b[ 0 ] ), j( b[ 1 ] ) );
+	e   = RealPoint( i( c[ 0 ] ), j( c[ 1 ] ) );
+	gs  = Vmono[ 0 ];
+	gmid= Vmono[ 1 ];
+	ge  = Vmono[ 2 ];
+	return false;
+      }
+      const RealPoint Ur = Gr.getNormalized();
+      const Scalar    da = Ur.dot( a );
+      const Scalar    db = Ur.dot( b );
+      const Scalar    dc = Ur.dot( c );
+      Scalar td[ 3 ] = { da, db, dc };
+      const int middle[3][3] = { { -1, 2, 1 }, { 2, -1, 0 }, { 1, 0, -1 } }; 
+      int m = ( da < db ) ? ( ( da < dc ) ? 0 : 2 ) : ( db < dc ? 1 : 2 );
+      int M = ( da >= db ) ? ( ( da >= dc ) ? 0 : 2 ) : ( db >= dc ? 1 : 2 );
+      int k = middle[ m ][ M ];
+      if ( ( k == -1 ) || ( td[ m ] == td[ M ] ) )
+	trace.error() << "Invalid mid m=" << m << " k=" << k << " M=" << M
+		      << " da=" << da << " db=" << db << " dc=" << dc
+		      << " X=" << X << "Y=" << Y << " V=" << Vmono
+		      << " Gr=" << Gr << " Ur=" << Ur
+		      << std::endl;
+      const RealPoint pts[ 3 ] = { a, b, c };
+      const RealPoint d1( pts[ m ] );
+      s    = RealPoint( i( d1[ 0 ] ), j( d1[ 1 ] ) );
+      gs   = Vmono[ m ];
+      const RealPoint d2( pts[ m ] + ( pts[ k ] - pts[ m ] ).dot( Ur ) * Ur );
+      mid  = RealPoint( i( d2[ 0 ] ), j( d2[ 1 ] ) );
+      gmid = Vmono[ k ];
+      const RealPoint d3( pts[ m ] + ( pts[ M ] - pts[ m ] ).dot( Ur ) * Ur );
+      e    = RealPoint( i( d3[ 0 ] ), j( d3[ 1 ] ) );
+      ge   = Vmono[ M ];
+      return true;
     }
     
+    void viewLinearGradientTriangle( RealPoint a, RealPoint b, RealPoint c, 
+				     Value val_a, Value val_b, Value val_c ) 
+    {
+      const Value  Vr = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
+      const Value  Vg = Value( val_a[ 1 ], val_b[ 1 ], val_c[ 1 ] );
+      const Value  Vb = Value( val_a[ 2 ], val_b[ 2 ], val_c[ 2 ] );
+      RealPoint s, m, e;
+      Scalar  gs, gm, ge;
+      Scalar  t;
+      cairo_pattern_t *pat;
+      // RealPoint tl( i( a.inf( b.inf( c ) )[ 0 ] ),
+      // 		    j( a.inf( b.inf( c ) )[ 1 ] ) );
+      // RealPoint br( i( a.sup( b.sup( c ) )[ 0 ] ),
+      // 		    j( a.sup( b.sup( c ) )[ 1 ] ) );
+      // Draw red
+      if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
+	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	t = (m-s).norm() / (e-s).norm();
+	if ( ( t < 0 ) || ( t > 1 ) )
+	  trace.error() << "bad t=" << t << std::endl;
+	else if ( ( t == 0 ) || ( t == 1 ) )
+	  if ( ( ( gs != gm ) && ( gm != ge ) )
+	       || ( gm < std::min( ge, gs ) )
+	       || ( gm > std::max( ge, gs ) ) )
+	    trace.warning() << "t=" << t
+			    << "a=" << a
+			    << " gs=" << gs << " gm=" << gm << " ge=" << ge
+			    << std::endl;
+	cairo_pattern_add_color_stop_rgb (pat, 0, gs * _redf, 0, 0);
+	cairo_pattern_add_color_stop_rgb (pat, t, gm * _redf, 0, 0);
+	cairo_pattern_add_color_stop_rgb (pat, 1, ge * _redf, 0, 0);
+	cairo_set_source( _cr, pat );
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	cairo_fill( _cr );
+	cairo_pattern_destroy( pat );
+      } else {
+	cairo_set_source_rgb( _cr, gs * _redf, 0, 0 );
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	cairo_fill( _cr );
+      }
+      // Draw green
+      if ( computeLinearGradient( a, b, c, Vg, s, m, e, gs, gm, ge ) ) {
+	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	t = (m-s).norm() / (e-s).norm();
+	cairo_pattern_add_color_stop_rgb (pat, 0, 0, gs * _greenf, 0);
+	cairo_pattern_add_color_stop_rgb (pat, t, 0, gm * _greenf, 0);
+	cairo_pattern_add_color_stop_rgb (pat, 1, 0, ge * _greenf, 0);
+	cairo_set_source( _cr, pat );
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	cairo_fill( _cr );
+	cairo_pattern_destroy( pat );
+      } else {
+	cairo_set_source_rgb( _cr, 0, gs * _greenf, 0 );
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	cairo_fill( _cr );
+      }
+      // Draw blue
+      if ( computeLinearGradient( a, b, c, Vb, s, m, e, gs, gm, ge ) ) {
+	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	t = (m-s).norm() / (e-s).norm();
+	cairo_pattern_add_color_stop_rgb (pat, 0, 0, 0, gs * _bluef );
+	cairo_pattern_add_color_stop_rgb (pat, t, 0, 0, gm * _bluef );
+	cairo_pattern_add_color_stop_rgb (pat, 1, 0, 0, ge * _bluef );
+	cairo_set_source( _cr, pat );
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	cairo_fill( _cr );
+	cairo_pattern_destroy( pat );
+      } else {
+	cairo_set_source_rgb( _cr, 0, 0, gs * _bluef );
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	cairo_fill( _cr );
+      }
+    }
     void viewGouraudTriangle( RealPoint a, RealPoint b, RealPoint c, 
 			      Value val_a, Value val_b, Value val_c ) 
     {
@@ -351,6 +586,19 @@ namespace DGtal {
       cairo_fill( _cr );
     }
 
+    void viewTVTLinearGradientTriangle( TVT & tvT, Face f )
+    {
+      VertexRange V = tvT.T.verticesAroundFace( f );
+      Point a = tvT.T.position( V[ 0 ] );
+      Point b = tvT.T.position( V[ 1 ] );
+      Point c = tvT.T.position( V[ 2 ] );
+      viewLinearGradientTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
+				  RealPoint( b[ 0 ], b[ 1 ] ),
+				  RealPoint( c[ 0 ], c[ 1 ] ),
+				  tvT.values[ V[ 0 ] ],
+				  tvT.values[ V[ 1 ] ],
+				  tvT.values[ V[ 2 ] ] );
+    }
     void viewTVTGouraudTriangle( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
@@ -392,10 +640,11 @@ namespace DGtal {
       cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
 	{
-	  if ( f % 1000 == 0 )
-	    trace.info() << f << "/" << tvT.T.nbFaces() << std::endl;
-	  if ( _gouraud ) viewTVTGouraudTriangle( tvT, f );
-	  else            viewTVTFlatTriangle   ( tvT, f );
+	  // if ( f % 1000 == 0 )
+	  //   trace.info() << f << "/" << tvT.T.nbFaces() << std::endl;
+	  if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
+	  else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
+	  else                      viewTVTFlatTriangle   ( tvT, f );
 	}
       // cairo_operator_t op;
       // switch ( mode ) {
@@ -411,15 +660,16 @@ namespace DGtal {
     }
 
   };
-  
+
+  // shading; 0:flat, 1:gouraud, 2:linear gradient.
   void viewTVTriangulationColor
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
-    bool gouraud, std::string fname )
+    int shading, std::string fname )
   {
     CairoViewerTV cviewer
       ( (int) round( x0 ), (int) round( y0 ), 
 	(int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
-	b, b, gouraud );
+	b, b, shading );
     cviewer.view( tvT );
     cviewer.save( fname.c_str() );
   }
@@ -428,8 +678,9 @@ namespace DGtal {
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
     std::string fname )
   {
-    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, false, fname + ".png" );
-    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, true, fname + "-g.png" );
+    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 0, fname + ".png" );
+    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 1, fname + "-g.png" );
+    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 2, fname + "-lg.png" );
   }
   
 
@@ -450,11 +701,9 @@ int main( int argc, char** argv )
   general_opt.add_options()
     ("help,h", "display this message")
     ("input,i", po::value<std::string>(), "Specifies the input shape as a 2D image PPM filename.")
-    ("random,r", po::value<double>()->default_value(1.0), "Keep only a proportion [arg] (between 0 and 1) of the input data point.")  
-    ("limit,L", po::value<int>()->default_value(1000), "Gives the maximum number of passes (default is 10000).")  
+    ("limit,L", po::value<int>()->default_value(100), "Gives the maximum number of passes (default is 100).")  
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
-    ("gouraud,g", "Displays faces with Gouraud-like shading.")  
-    ("2ndorder,2", "Displays faces with 2nd order Gouraud-like shading.")  
+    ("strategy,s", po::value<int>()->default_value(4), "Strategy for quadrilatera with equal energy: 0: do nothing, 1: subdivide, 2: flip all, 3: flip all when #flipped normal = 0, 4: flip approximately half when #flipped normal = 0, 5: flip approximately half when #flipped normal = 0, subdivide if everything fails." )
     ;
 
   bool parseOK = true;
@@ -495,20 +744,27 @@ int main( int argc, char** argv )
   trace.endBlock();
 
   trace.beginBlock("Flipping triangulation");
-  int iter = 0;
-  int nb   = 0;
-  double equal_flip_prob = 0.0;
-  do {
-    if ( iter++ > 100 ) break;
+  int iter  = 0;
+  int miter = vm[ "limit" ].as<int>();
+  int strat = vm[ "strategy" ].as<int>();
+  std::pair<int,int> nbs;
+  int  last = 1;
+  bool subdivide = false;
+  while ( true ) {
+    if ( iter++ > miter ) break;
     double energy = 0.0;
-    nb = TVT.onePass( energy, equal_flip_prob );
-    equal_flip_prob *= 0.9;
-    TVT.T.isValid();
-  } while ( nb > 0 );
+    nbs = TVT.onePass( energy, strat );
+    // TVT.T.heds().isValid();
+    if ( ( last == 0 ) && ( nbs.first == 0 ) ) {
+      if ( subdivide || strat != 5 ) break;
+      subdivide = true;
+      nbs = TVT.onePass( energy, 1 );
+    }
+    last = nbs.first;
+  } 
   trace.endBlock();
 
   trace.beginBlock("Displaying triangulation");
-  bool gouraud = vm.count( "gouraud" );
   double     b = vm[ "bitmap" ].as<double>();
   double    x0 = 0.0;
   double    y0 = 0.0;
