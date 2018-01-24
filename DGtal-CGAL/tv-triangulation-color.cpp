@@ -72,11 +72,14 @@ namespace DGtal {
     typedef Triangulation::VertexRange VertexRange;
     typedef double                     Scalar;
     typedef PointVector< 3, Scalar >   Value;
-    
+    typedef std::array< Value, 2 >     VectorValue;
+    typedef std::vector<Value>         ScalarForm;
+    typedef std::vector<VectorValue>   VectorForm;
+
     /// The domain triangulation
     Triangulation        T;
     /// The values at each vertex
-    std::vector< Value > values;
+    ScalarForm           values;
     /// Initial vertices
     Integer              nbV;
     /// Tells if it is a color image (just for optimization).
@@ -88,38 +91,155 @@ namespace DGtal {
     /// List of arcs that may be flipped with the same energy.
     std::vector<Arc>     _Q_equal;
 
-    static Scalar square( Scalar x ) { return x*x; }
+    /// The norm used for the scalars induced by vector-value space (RGB)
+    std::function< Scalar( const Value& v ) >       _normX;
+    /// The norm used for the 2d vectors induced by vector-value space (RGB)
+    std::function< Scalar( const VectorValue& v ) > _normY;
     
+    static Scalar square( Scalar x ) { return x*x; }
+
+    // ------------- Discrete operators ---------------------
+    
+    // Definition of a global gradient operator that assigns vectors to triangles
+    VectorForm grad( const ScalarForm& u ) const
+    { // it suffices to traverse all (valid) triangles.
+      VectorForm G( T.nbFaces() );
+      for ( Face f = 0; f < G.size(); ++f ) {
+	G[ f ] = grad( f, u );
+      }
+      return G;
+    }
+
+    // Definition of a (local) gradient operator that assigns vectors to triangles
+    VectorValue grad( Face f, const ScalarForm& u ) const
+    {
+      VertexRange V = T.verticesAroundFace( f );
+      return grad( V[ 0 ], V[ 1 ], V[ 2 ], u );
+    }
+
+    // Definition of a (local) gradient operator that assigns vectors to triangles
+    VectorValue grad( VertexIndex i, VertexIndex j, VertexIndex k,
+		      const ScalarForm& u ) const
+    {
+      // [ yj-yk yk-yi yi-yk ] * [ ui ]
+      // [ xk-xj xi-xk xj-xi ]   [ uj ]
+      //                         [ uk ]
+      const Point& pi = T.position( i );
+      const Point& pj = T.position( j );
+      const Point& pk = T.position( k );
+      const Value& ui = u[ i ];
+      const Value& uj = u[ j ];
+      const Value& uk = u[ k ];
+      VectorValue G;
+      const int d = _color ? ui.size() : 1;
+      for ( int m = 0; m < d; ++m ) {
+	G[ 0 ][ m ] = ui[ m ] * ( pj[ 1 ] - pk[ 1 ] )
+	  +           uj[ m ] * ( pk[ 1 ] - pi[ 1 ] )
+	  +           uk[ m ] * ( pi[ 1 ] - pj[ 1 ] );
+	G[ 1 ][ m ] = ui[ m ] * ( pk[ 0 ] - pj[ 0 ] )
+	  +           uj[ m ] * ( pi[ 0 ] - pk[ 0 ] )
+	  +           uk[ m ] * ( pj[ 0 ] - pi[ 0 ] );
+      }
+      return G;
+    }
+
+    // Definition of a (global) divergence operator that assigns
+    // scalars to vertices from a vector field.
+    ScalarForm div( const VectorForm& G ) const
+    {
+      ScalarForm S( T.nbVertices() );
+      for ( VertexIndex v = 0; v < S.size(); ++v )
+	S[ v ] = div( v, G );
+      return S;
+    }
+
+    // Definition of a (local) divergence operator that assigns
+    // scalars to vertices from a vector field.
+    Value div( VertexIndex i,
+	       const VectorForm& G ) const
+    {
+      const int d = _color ? G[0].size() : 1;
+      Value z = { 0, 0, 0 };
+      auto faces = T.facesAroundVertex( i );
+      for ( Face f : faces ) {
+	auto V = T.verticesAroundFace( f );
+	const Point& pi = T.position( V[ 0 ] );
+	const Point& pj = T.position( V[ 1 ] );
+	const Point& pk = T.position( V[ 2 ] );
+	const VectorValue& Gf = G[ f ];
+	for ( int m = 0; m < d; ++m ) {
+	  z[ m ] -= ( pj[ 1 ] - pk[ 1 ] ) * Gf[ 0 ][ m ]
+	    +       ( pk[ 0 ] - pj[ 0 ] ) * Gf[ 1 ][ m ]
+	    +       ( pk[ 1 ] - pi[ 1 ] ) * Gf[ 0 ][ m ]
+	    +       ( pi[ 0 ] - pk[ 0 ] ) * Gf[ 1 ][ m ]
+	    +       ( pi[ 1 ] - pj[ 1 ] ) * Gf[ 0 ][ m ]
+	    +       ( pj[ 0 ] - pi[ 0 ] ) * Gf[ 1 ][ m ];
+	}
+      }
+      return z;
+    }
+
+    /// @return the scalar form lambda.u
+    ScalarForm multiply( Scalar lambda, const ScalarForm& u ) const
+    {
+      ScalarForm S( u.size() );
+      const int d = _color ? u.size() : 1;
+      for ( int m = 0; m < d; ++m ) {
+	for ( VertexIndex v = 0; v < S.size(); ++v )
+	  S[ m ][ v ] = lambda * u[ m ][ v ];
+      }
+      return S;
+    }
+    
+    /// @return the scalar form u - v
+    ScalarForm subtract( const ScalarForm& u, const ScalarForm& v ) const
+    {
+      ScalarForm S( u.size() );
+      const int d = _color ? u.size() : 1;
+      for ( int m = 0; m < d; ++m ) {
+	for ( VertexIndex i = 0; i < S.size(); ++i )
+	  S[ m ][ i ] = u[ m ][ i ] - v[ m ][ i ];
+      }
+      return S;
+    }
+
+    /// @return the scalar form a.u + b.v
+    ScalarForm combine( const Scalar a, const ScalarForm& u,
+			const Scalar b, const ScalarForm& v ) const
+    {
+      ScalarForm S( u.size() );
+      const int d = _color ? u.size() : 1;
+      for ( int m = 0; m < d; ++m ) {
+	for ( VertexIndex i = 0; i < S.size(); ++i )
+	  S[ m ][ i ] = a * u[ m ][ i ] + b * v[ m ][ i ];
+      }
+      return S;
+    }
+      
     /// The function that evaluates the energy at each triangle.
+    /// It is now just the norm of the gradient.
     Scalar energyTV( VertexIndex v1, VertexIndex v2, VertexIndex v3 ) const
     {
-      const Value One = Value::diagonal( 1 );
-      const Point& p1 = T.position( v1 );
-      const Point& p2 = T.position( v2 );
-      const Point& p3 = T.position( v3 );
-      const Value& f1 = values[ v1 ];
-      const Value& f2 = values[ v2 ];
-      const Value& f3 = values[ v3 ];
-      const Value   X = Value( p1[ 0 ], p2[ 0 ], p3[ 0 ] );
-      const Value   Y = Value( p1[ 1 ], p2[ 1 ], p3[ 1 ] );
-      if ( _color ) {
-	const Value  Vr = Value( f1[ 0 ], f2[ 0 ], f3[ 0 ] );
-	const Value  Vg = Value( f1[ 1 ], f2[ 1 ], f3[ 1 ] );
-	const Value  Vb = Value( f1[ 2 ], f2[ 2 ], f3[ 2 ] );
-	// TV on red
-	const Scalar er = square( Vr.crossProduct( Y ).dot( One ) )
-	  + square( X.crossProduct( Vr ).dot( One ) );
-	const Scalar eg = square( Vg.crossProduct( Y ).dot( One ) )
-	  + square( X.crossProduct( Vg ).dot( One ) );
-	const Scalar eb = square( Vb.crossProduct( Y ).dot( One ) )
-	  + square( X.crossProduct( Vb ).dot( One ) );
-	return pow( er, _power ) + pow( eg, _power ) + pow( eb, _power );
-      } else {
-	const Value  Vr = Value( f1[ 0 ], f2[ 0 ], f3[ 0 ] );
-	const Scalar er = square( Vr.crossProduct( Y ).dot( One ) )
-	  + square( X.crossProduct( Vr ).dot( One ) );
-	return pow( er, _power );
-      }
+      // const Value One = Value::diagonal( 1 );
+      // const Point& p1 = T.position( v1 );
+      // const Point& p2 = T.position( v2 );
+      // const Point& p3 = T.position( v3 );
+      // const Value& f1 = values[ v1 ];
+      // const Value& f2 = values[ v2 ];
+      // const Value& f3 = values[ v3 ];
+      // const Value   X = Value( p1[ 0 ], p2[ 0 ], p3[ 0 ] );
+      // const Value   Y = Value( p1[ 1 ], p2[ 1 ], p3[ 1 ] );
+      // const Value  Vr = Value( f1[ 0 ], f2[ 0 ], f3[ 0 ] );
+      // const Value  Vg = Value( f1[ 1 ], f2[ 1 ], f3[ 1 ] );
+      // const Value  Vb = Value( f1[ 2 ], f2[ 2 ], f3[ 2 ] );
+      // const VectorValue DI =
+      // 	{ Value( Vr.crossProduct( Y ).dot( One ),
+      // 		 Vg.crossProduct( Y ).dot( One ),
+      // 		 Vb.crossProduct( Y ).dot( One ) ),
+      // 	  Value( X.crossProduct( Vr ).dot( One ),
+      // 		 X.crossProduct( Vg ).dot( One ),
+      // 		 X.crossProduct( Vb ).dot( One ) ) };
+      return _normY( grad( v1, v2, v3, values ) );
     }
     
     // Constructor from color image.
@@ -129,6 +249,27 @@ namespace DGtal {
     {
       _color = color;
       _power = p;
+      if ( color ) {
+	_normX = [p] ( const Value& v ) -> Scalar
+	  {
+	    return pow( square( v[ 0 ] ) + square( v[ 1 ] ) + square( v[ 2 ] ), p);
+	  };
+	_normY = [p] ( const VectorValue& v ) -> Scalar
+	  {
+	    return pow( square( v[ 0 ][ 0 ] ) + square( v[ 1 ][ 0 ] ), p )
+	    + pow( square( v[ 0 ][ 1 ] ) + square( v[ 1 ][ 1 ] ), p )
+	    + pow( square( v[ 0 ][ 2 ] ) + square( v[ 1 ][ 2 ] ), p );
+	  };
+      } else {
+	_normX = [p] ( const Value& v ) -> Scalar
+	  {
+	    return pow( square( v[ 0 ] ), p );
+	  };
+	_normY = [p] ( const VectorValue& v ) -> Scalar
+	  {
+	    return pow( square( v[ 0 ][ 0 ] ) + square( v[ 1 ][ 0 ] ), p );
+	  };
+      }
       typedef std::function< int( int ) > ColorConverter;
       ColorConverter converters[ 4 ];
       converters[ 0 ] = ColorToRedFunctor();
@@ -145,8 +286,6 @@ namespace DGtal {
       for ( Integer y = 0; y < taille[ 1 ] - 1; ++y ) {
 	for ( Integer x = 0; x < taille[ 0 ] - 1; ++x ) {
 	  VertexIndex v = y * taille[ 0 ] + x;
-	  // T.addTriangle( v, v + taille[ 0 ], v + 1 );
-	  // T.addTriangle( v + taille[ 0 ], v + taille[ 0 ] + 1, v + 1 );
 	  T.addTriangle( v, v + taille[ 0 ], v + taille[ 0 ] + 1 );
 	  T.addTriangle( v, v + taille[ 0 ] + 1, v + 1 );
 	}
@@ -175,25 +314,17 @@ namespace DGtal {
     {
       return pq[ 0 ] * qr[ 1 ] - pq[ 1 ] * qr[ 0 ];
     }
+    // Check strict convexity of quadrilateron.
     bool isConvex( const VertexRange& V ) const
     {
       Point P[] = { T.position( V[ 1 ] ) - T.position( V[ 0 ] ),
 		    T.position( V[ 2 ] ) - T.position( V[ 1 ] ),
 		    T.position( V[ 3 ] ) - T.position( V[ 2 ] ),
 		    T.position( V[ 0 ] ) - T.position( V[ 3 ] ) };
-      // trace.info() << P[ 0 ] << P[ 1 ] << P[ 2 ] << P[ 3 ] << std::endl;
-      // trace.info() << " " << doesTurnLeft( P[ 0 ], P[ 1 ] )
-      // 		   << " " << doesTurnLeft( P[ 1 ], P[ 2 ] )
-      // 		   << " " << doesTurnLeft( P[ 2 ], P[ 3 ] )
-      // 		   << " " << doesTurnLeft( P[ 3 ], P[ 0 ] ) << std::endl;
       bool cvx = ( doesTurnLeft( P[ 0 ], P[ 1 ] ) < 0 )
 	&&       ( doesTurnLeft( P[ 1 ], P[ 2 ] ) < 0 )
 	&&       ( doesTurnLeft( P[ 2 ], P[ 3 ] ) < 0 )
 	&&       ( doesTurnLeft( P[ 3 ], P[ 0 ] ) < 0 );
-      // if ( ! cvx )
-      // 	trace.info() << "(" << V[ 0 ] << "," << V[ 1 ]
-      // 		     << "," << V[ 2 ] << "," << V[ 3 ] << ")"
-      // 		     << ( cvx ? "CVX" : "CCV" ) << std::endl;
       return cvx;
     }
     /**
