@@ -83,7 +83,11 @@ namespace DGtal {
     bool                 _color;
     /// Power for gradient computation
     Scalar               _power;
-    
+    /// List of arcs whose energy may have been changed by a surrounding flip.
+    std::vector<Arc>     _Queue;
+    /// List of arcs that may be flipped with the same energy.
+    std::vector<Arc>     _Q_equal;
+
     static Scalar square( Scalar x ) { return x*x; }
     
     /// The function that evaluates the energy at each triangle.
@@ -219,6 +223,8 @@ namespace DGtal {
       // @todo Does not take into account equality for now.a
       if ( Eflip < Ecurr )
 	{
+	  // Save arcs that may be affected.
+	  queueSurroundingArcs( a );
 	  T.flip( a );
 	  energy = Eflip;
 	  return 1;
@@ -229,6 +235,20 @@ namespace DGtal {
 	  return ( Eflip == Ecurr ) ? 0 : -4;
 	}
     }
+
+    void queueSurroundingArcs( const Arc a )
+    {
+      Arc around[ 4 ];
+      around[ 0 ] = T.next( a );
+      around[ 1 ] = T.next( around[ 0 ] );
+      around[ 2 ] = T.next( T.opposite( a ) );
+      around[ 3 ] = T.next( around[ 2 ] );
+      for ( int i = 0; i < 4; ++i ) {
+	_Queue.push_back( around[ i ] );
+	_Queue.push_back( T.opposite( around[ i ] ) );
+      }
+    }
+    
     // equal_strategy:
     // 0: do nothing
     // 1: subdivide all
@@ -242,34 +262,43 @@ namespace DGtal {
       Integer   nbequal = 0;
       total_energy      = 0;
       Scalar energy     = 0;
-      std::vector<Arc> Q;
-      for ( Arc a = 0; a < T.nbArcs(); ++a )
-	{
-	  int update = updateArc( a, energy );
-	  if ( update > 0 ) nbflipped++;
-	  else if ( update == 0 ) Q.push_back( a );
-	  total_energy += energy;
-	}
+      std::vector<Arc> Q_process;
+      std::swap( _Queue, Q_process );
+      // Taking care of first pass
+      if ( Q_process.size() == 0 )
+	for ( Arc a = 0; a < T.nbArcs(); ++a )
+	  Q_process.push_back( a );
+      // Processing arcs
+      for ( Arc a : Q_process ) {
+	int update = updateArc( a, energy );
+	if ( update > 0 ) nbflipped++;
+	else if ( update == 0 ) _Q_equal.push_back( a );
+	total_energy += energy;
+      }
       trace.info() << "Energy = " << total_energy
 		   << " nbflipped=" << nbflipped
-		   << "/" << T.nbEdges();
+		   << "/" << Q_process.size();
       if ( equal_strategy == 1 ) {
-	nbequal = subdivide( Q );
+	nbequal = subdivide( _Q_equal );
 	trace.info() << " nbsubequal=" << nbequal
-		     << "/" << Q.size();
+		     << "/" << _Q_equal.size();
+	_Q_equal.clear();
       } else if ( equal_strategy == 2 ) {
-	nbequal = flipEqual( Q );
+	nbequal = flipEqual( _Q_equal );
 	trace.info() << " nbflipequal=" << nbequal
-		     << "/" << Q.size();
+		     << "/" << _Q_equal.size();
+	_Q_equal.clear();
       } else if ( ( equal_strategy == 3 ) && ( nbflipped == 0 ) ) {
-	nbequal = flipEqual( Q );
+	nbequal = flipEqual( _Q_equal );
 	trace.info() << " nbflipequal=" << nbequal
-		     << "/" << Q.size();
+		     << "/" << _Q_equal.size();
+	_Q_equal.clear();
       } else if ( ( ( equal_strategy == 4 ) || ( equal_strategy == 5 ) )
 		  && ( nbflipped == 0 ) ) {
-      nbequal = flipEqualWithProb( Q, 0.5 );
+      nbequal = flipEqualWithProb( _Q_equal, 0.5 );
 	trace.info() << " nbflipequalP=" << nbequal
-		     << "/" << Q.size();
+		     << "/" << _Q_equal.size();
+	_Q_equal.clear();
       }
       trace.info() << std::endl;
       return std::make_pair( nbflipped, nbequal );
@@ -283,6 +312,8 @@ namespace DGtal {
       for ( Arc a : range ) {
 	int update = updateArc( a, energy );
 	if ( update == 0 ) {
+	  // Save arcs that may be affected.
+	  queueSurroundingArcs( a );
 	  T.flip( a );
 	  nbflip++;
 	}
@@ -297,9 +328,16 @@ namespace DGtal {
       Integer nbflip = 0;
       for ( Arc a : range ) {
 	int update = updateArc( a, energy );
-	if ( ( update == 0 ) && ( randomUniform() < p ) ) {
-	  T.flip( a );
-	  nbflip++;
+	if ( update == 0 ) {
+	  // Put arc back to potentially process it again.
+	  _Queue.push_back( a );
+	  _Queue.push_back( T.opposite( a ) );
+	  if ( randomUniform() < p ) {
+	    // Save arcs that may be affected.
+	    queueSurroundingArcs( a );
+	    T.flip( a );
+	    nbflip++;
+	  } 
 	}
       }
       return nbflip;
@@ -317,6 +355,8 @@ namespace DGtal {
 	  // Allow one level of subdivision.
 	  if ( std::max( std::max( P[ 0 ], P[ 1 ] ),
 			 std::max( P[ 2 ], P[ 3 ] ) ) >= nbV ) continue;
+	  // Save arcs that may be affected.
+	  queueSurroundingArcs( a );
 	  Point B = ( T.position( P[ 0 ] ) + T.position( P[ 1 ] )
 		      + T.position( P[ 2 ] ) + T.position( P[ 3 ] ) ) * 0.25;
 	  VertexIndex v = T.split( a, B );
@@ -479,7 +519,7 @@ namespace DGtal {
       if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
 	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
 	t = (m-s).norm() / (e-s).norm();
-	if ( ( t < 0 ) || ( t > 1 ) )
+	if ( ( t < -0.01 ) || ( t > 1.01 ) )
 	  trace.error() << "bad t=" << t << std::endl;
 	else if ( ( t == 0 ) || ( t == 1 ) )
 	  if ( ( ( gs != gm ) && ( gm != ge ) )
