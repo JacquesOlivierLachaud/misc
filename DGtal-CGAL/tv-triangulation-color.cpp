@@ -79,6 +79,10 @@ namespace DGtal {
     std::vector< Value > values;
     /// Initial vertices
     Integer              nbV;
+    /// Tells if it is a color image (just for optimization).
+    bool                 _color;
+    /// Power for gradient computation
+    Scalar               _power;
     
     static Scalar square( Scalar x ) { return x*x; }
     
@@ -92,37 +96,44 @@ namespace DGtal {
       const Value& f1 = values[ v1 ];
       const Value& f2 = values[ v2 ];
       const Value& f3 = values[ v3 ];
-      //trace.info() << p1 << p2 << p2 << f1 << f2 << f3 << std::endl;
       const Value   X = Value( p1[ 0 ], p2[ 0 ], p3[ 0 ] );
       const Value   Y = Value( p1[ 1 ], p2[ 1 ], p3[ 1 ] );
-      const Value  Vr = Value( f1[ 0 ], f2[ 0 ], f3[ 0 ] );
-      const Value  Vg = Value( f1[ 1 ], f2[ 1 ], f3[ 1 ] );
-      const Value  Vb = Value( f1[ 2 ], f2[ 2 ], f3[ 2 ] );
-      // TV on red
-      const Scalar er = square( Vr.crossProduct( Y ).dot( One ) )
-	+ square( X.crossProduct( Vr ).dot( One ) );
-      const Scalar eg = square( Vg.crossProduct( Y ).dot( One ) )
-	+ square( X.crossProduct( Vg ).dot( One ) );
-      const Scalar eb = square( Vb.crossProduct( Y ).dot( One ) )
-	+ square( X.crossProduct( Vb ).dot( One ) );
-      return sqrt( er ) + sqrt( eg ) + sqrt( eb );
-      // return  er + eg + eb;
-      // const Scalar er = fabs( Vr.crossProduct( Y ).dot( One ) )
-      // 	+ fabs( X.crossProduct( Vr ).dot( One ) );
-      // const Scalar eg = fabs( Vg.crossProduct( Y ).dot( One ) )
-      // 	+ fabs( X.crossProduct( Vg ).dot( One ) );
-      // const Scalar eb = fabs( Vb.crossProduct( Y ).dot( One ) )
-      // 	+ fabs( X.crossProduct( Vb ).dot( One ) );
-      // return sqrt( er*er+eg*eg+eb*eb );
+      if ( _color ) {
+	const Value  Vr = Value( f1[ 0 ], f2[ 0 ], f3[ 0 ] );
+	const Value  Vg = Value( f1[ 1 ], f2[ 1 ], f3[ 1 ] );
+	const Value  Vb = Value( f1[ 2 ], f2[ 2 ], f3[ 2 ] );
+	// TV on red
+	const Scalar er = square( Vr.crossProduct( Y ).dot( One ) )
+	  + square( X.crossProduct( Vr ).dot( One ) );
+	const Scalar eg = square( Vg.crossProduct( Y ).dot( One ) )
+	  + square( X.crossProduct( Vg ).dot( One ) );
+	const Scalar eb = square( Vb.crossProduct( Y ).dot( One ) )
+	  + square( X.crossProduct( Vb ).dot( One ) );
+	return pow( er, _power ) + pow( eg, _power ) + pow( eb, _power );
+      } else {
+	const Value  Vr = Value( f1[ 0 ], f2[ 0 ], f3[ 0 ] );
+	const Scalar er = square( Vr.crossProduct( Y ).dot( One ) )
+	  + square( X.crossProduct( Vr ).dot( One ) );
+	return pow( er, _power );
+      }
     }
     
     // Constructor from color image.
-    template <typename Image, typename Fred, typename Fgreen, typename Fblue>
-    TVTriangulation( const Image&  I,
-		     const Fred&   fred,
-		     const Fgreen& fgreen,
-		     const Fblue&  fblue )
+    template <typename Image>
+    TVTriangulation( const Image&  I, bool color,
+		     Scalar p = 0.5 )
     {
+      _color = color;
+      _power = p;
+      typedef std::function< int( int ) > ColorConverter;
+      ColorConverter converters[ 4 ];
+      converters[ 0 ] = ColorToRedFunctor();
+      converters[ 1 ] = ColorToGreenFunctor();
+      converters[ 2 ] = ColorToBlueFunctor();
+      converters[ 3 ] = GrayToGrayFunctor();
+      int   red = color ? 0 : 3;
+      int green = color ? 1 : 3;
+      int  blue = color ? 2 : 3;
       const Point taille = I.extent();
       // Creates vertices
       for ( auto p : I.domain() ) T.addVertex( p );
@@ -144,9 +155,9 @@ namespace DGtal {
       VertexIndex v = 0;
       values.resize( I.size() );
       for ( unsigned int val : I ) {
-	values[ v++ ] = Value( (Scalar) fred  ( val ),
-			       (Scalar) fgreen( val ),
-			       (Scalar) fblue ( val ) );
+	values[ v++ ] = Value( (Scalar) converters[ red ]  ( val ),
+			       (Scalar) converters[ green ]( val ),
+			       (Scalar) converters[ blue ] ( val ) );
       }
     }
 
@@ -704,6 +715,7 @@ int main( int argc, char** argv )
     ("limit,L", po::value<int>()->default_value(100), "Gives the maximum number of passes (default is 100).")  
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("strategy,s", po::value<int>()->default_value(4), "Strategy for quadrilatera with equal energy: 0: do nothing, 1: subdivide, 2: flip all, 3: flip all when #flipped normal = 0, 4: flip approximately half when #flipped normal = 0, 5: flip approximately half when #flipped normal = 0, subdivide if everything fails." )
+    ("tv-power,p", po::value<double>()->default_value( 0.5 ), "The power coefficient used to compute the gradient ie |Grad I|^{2p}. " )
     ;
 
   bool parseOK = true;
@@ -731,19 +743,22 @@ int main( int argc, char** argv )
 
   trace.beginBlock("Construction of the triangulation");
   typedef ImageSelector < Z2i::Domain, unsigned int>::Type Image;
-  ColorToRedFunctor c2r;
-  ColorToGreenFunctor c2g;
-  ColorToBlueFunctor c2b;
-  GrayToGrayFunctor g2g;
-
-  std::string imageFileName = vm[ "input" ].as<std::string>();
-  Image image = GenericReader<Image>::import( imageFileName ); 
-
-  TVTriangulation TVT( image, c2r, c2g, c2b );
+  
+  std::string img_fname = vm[ "input" ].as<std::string>();
+  Image image           = GenericReader<Image>::import( img_fname ); 
+  std::string extension = img_fname.substr(img_fname.find_last_of(".") + 1);
+  bool            color = false;
+  if ( extension == "ppm" ) color = true;
+  trace.info() << "Image <" << img_fname
+	       << "> size=" << image.extent()[ 0 ]
+	       << "x" << image.extent()[ 1 ]
+	       << " color=" << ( color ? "True" : "False" ) << std::endl;
+  double  p = vm[ "tv-power" ].as<double>();
+  TVTriangulation TVT( image, color, p );
   trace.info() << TVT.T << std::endl;
   trace.endBlock();
 
-  trace.beginBlock("Flipping triangulation");
+  trace.beginBlock("Optimizing the triangulation");
   int iter  = 0;
   int miter = vm[ "limit" ].as<int>();
   int strat = vm[ "strategy" ].as<int>();
@@ -754,6 +769,7 @@ int main( int argc, char** argv )
     if ( iter++ > miter ) break;
     double energy = 0.0;
     nbs = TVT.onePass( energy, strat );
+    // For Debug
     // TVT.T.heds().isValid();
     if ( ( last == 0 ) && ( nbs.first == 0 ) ) {
       if ( subdivide || strat != 5 ) break;
