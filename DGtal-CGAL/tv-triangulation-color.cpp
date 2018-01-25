@@ -72,16 +72,21 @@ namespace DGtal {
     typedef Triangulation::VertexRange VertexRange;
     typedef double                     Scalar;
     typedef PointVector< 3, Scalar >   Value;
-    typedef std::array< Value, 2 >     VectorValue;
-    typedef std::vector<Value>         ScalarForm;
-    typedef std::vector<VectorValue>   VectorForm;
+    // typedef std::array< Value, 2 >     VectorValue;
+    struct VectorValue {
+      Value x;
+      Value y;
+    };
+    typedef std::vector<Scalar>        ScalarForm;
+    typedef std::vector<Value>         ValueForm;
+    typedef std::vector<VectorValue>   VectorValueForm;
 
     /// The domain triangulation
     Triangulation        T;
-    /// The values at each vertex
-    ScalarForm           values;
+    /// The image values at each vertex
+    ValueForm            _I;
     /// Initial vertices
-    Integer              nbV;
+    Integer              _nbV;
     /// Tells if it is a color image (just for optimization).
     bool                 _color;
     /// Power for gradient computation
@@ -91,6 +96,15 @@ namespace DGtal {
     /// List of arcs that may be flipped with the same energy.
     std::vector<Arc>     _Q_equal;
 
+    /// The TV-regularized values
+    ValueForm            _u;
+    /// The TV-regularized vectors
+    VectorValueForm      _p;
+
+    /// @return the regularized value at vertex v.
+    const Value& u( const VertexIndex v ) const
+    { return _u[ v ]; }
+    
     /// The norm used for the scalars induced by vector-value space (RGB)
     std::function< Scalar( const Value& v ) >       _normX;
     /// The norm used for the 2d vectors induced by vector-value space (RGB)
@@ -99,19 +113,27 @@ namespace DGtal {
     static Scalar square( Scalar x ) { return x*x; }
 
     // ------------- Discrete operators ---------------------
-    
+
+    /// @return the vector of the norms of each vector in p (one per triangle). 
+    ScalarForm norm( const VectorValueForm& p ) const
+    {
+      ScalarForm S( T.nbFaces() );
+      for ( Face f = 0; f < T.nbFaces(); f++ )
+	S[ f ] = _normY( p[ f ] );
+      return S;
+    }
     // Definition of a global gradient operator that assigns vectors to triangles
-    VectorForm grad( const ScalarForm& u ) const
+    VectorValueForm grad( const ValueForm& u ) const
     { // it suffices to traverse all (valid) triangles.
-      VectorForm G( T.nbFaces() );
-      for ( Face f = 0; f < G.size(); ++f ) {
+      VectorValueForm G( T.nbFaces() );
+      for ( Face f = 0; f < T.nbFaces(); ++f ) {
 	G[ f ] = grad( f, u );
       }
       return G;
     }
 
     // Definition of a (local) gradient operator that assigns vectors to triangles
-    VectorValue grad( Face f, const ScalarForm& u ) const
+    VectorValue grad( Face f, const ValueForm& u ) const
     {
       VertexRange V = T.verticesAroundFace( f );
       return grad( V[ 0 ], V[ 1 ], V[ 2 ], u );
@@ -119,7 +141,7 @@ namespace DGtal {
 
     // Definition of a (local) gradient operator that assigns vectors to triangles
     VectorValue grad( VertexIndex i, VertexIndex j, VertexIndex k,
-		      const ScalarForm& u ) const
+		      const ValueForm& u ) const
     {
       // [ yj-yk yk-yi yi-yk ] * [ ui ]
       // [ xk-xj xi-xk xj-xi ]   [ uj ]
@@ -131,88 +153,109 @@ namespace DGtal {
       const Value& uj = u[ j ];
       const Value& uk = u[ k ];
       VectorValue G;
-      const int d = _color ? ui.size() : 1;
+      const int d = _color ? 3 : 1;
       for ( int m = 0; m < d; ++m ) {
-	G[ 0 ][ m ] = ui[ m ] * ( pj[ 1 ] - pk[ 1 ] )
-	  +           uj[ m ] * ( pk[ 1 ] - pi[ 1 ] )
-	  +           uk[ m ] * ( pi[ 1 ] - pj[ 1 ] );
-	G[ 1 ][ m ] = ui[ m ] * ( pk[ 0 ] - pj[ 0 ] )
-	  +           uj[ m ] * ( pi[ 0 ] - pk[ 0 ] )
-	  +           uk[ m ] * ( pj[ 0 ] - pi[ 0 ] );
+	G.x[ m ] = ui[ m ] * ( pj[ 1 ] - pk[ 1 ] )
+	  +        uj[ m ] * ( pk[ 1 ] - pi[ 1 ] )
+	  +        uk[ m ] * ( pi[ 1 ] - pj[ 1 ] );
+	G.y[ m ] = ui[ m ] * ( pk[ 0 ] - pj[ 0 ] )
+	  +        uj[ m ] * ( pi[ 0 ] - pk[ 0 ] )
+	  +        uk[ m ] * ( pj[ 0 ] - pi[ 0 ] );
       }
+      G.x *= 0.5;
+      G.y *= 0.5;
       return G;
     }
 
     // Definition of a (global) divergence operator that assigns
     // scalars to vertices from a vector field.
-    ScalarForm div( const VectorForm& G ) const
+    ValueForm div( const VectorValueForm& G ) const
     {
-      ScalarForm S( T.nbVertices() );
-      for ( VertexIndex v = 0; v < S.size(); ++v )
-	S[ v ] = div( v, G );
-      return S;
-    }
-
-    // Definition of a (local) divergence operator that assigns
-    // scalars to vertices from a vector field.
-    Value div( VertexIndex i,
-	       const VectorForm& G ) const
-    {
-      const int d = _color ? G[0].size() : 1;
-      Value z = { 0, 0, 0 };
-      auto faces = T.facesAroundVertex( i );
-      for ( Face f : faces ) {
-	auto V = T.verticesAroundFace( f );
+      const int d = _color ? 3 : 1;
+      ValueForm S( T.nbVertices() );
+      for ( VertexIndex v = 0; v < T.nbVertices(); ++v )
+	S[ v ] = Value{ 0, 0, 0 };
+      for ( Face f = 0; f < T.nbFaces(); ++f ) {
+	auto V          = T.verticesAroundFace( f );
 	const Point& pi = T.position( V[ 0 ] );
 	const Point& pj = T.position( V[ 1 ] );
 	const Point& pk = T.position( V[ 2 ] );
 	const VectorValue& Gf = G[ f ];
 	for ( int m = 0; m < d; ++m ) {
-	  z[ m ] -= ( pj[ 1 ] - pk[ 1 ] ) * Gf[ 0 ][ m ]
-	    +       ( pk[ 0 ] - pj[ 0 ] ) * Gf[ 1 ][ m ]
-	    +       ( pk[ 1 ] - pi[ 1 ] ) * Gf[ 0 ][ m ]
-	    +       ( pi[ 0 ] - pk[ 0 ] ) * Gf[ 1 ][ m ]
-	    +       ( pi[ 1 ] - pj[ 1 ] ) * Gf[ 0 ][ m ]
-	    +       ( pj[ 0 ] - pi[ 0 ] ) * Gf[ 1 ][ m ];
+	  S[ V[ 0 ] ][ m ] -= ( pj[ 1 ] - pk[ 1 ] ) * Gf.x[ m ]
+	    +                 ( pk[ 0 ] - pj[ 0 ] ) * Gf.y[ m ];
+	  S[ V[ 1 ] ][ m ] -= ( pk[ 1 ] - pi[ 1 ] ) * Gf.x[ m ]
+	    +                 ( pi[ 0 ] - pk[ 0 ] ) * Gf.y[ m ];
+	  S[ V[ 2 ] ][ m ] -= ( pi[ 1 ] - pj[ 1 ] ) * Gf.x[ m ]
+	    +                 ( pj[ 0 ] - pi[ 0 ] ) * Gf.y[ m ];
 	}
       }
-      return z;
+      for ( VertexIndex v = 0; v < T.nbVertices(); ++v )
+	S[ v ] *= 0.5;
+      return S;
     }
 
+    // Definition of a (local) divergence operator that assigns
+    // scalars to vertices from a vector field.
+    // Value div( VertexIndex i,
+    // 	       const VectorValueForm& G ) const
+    // {
+    //   const int d = _color ? 3 : 1;
+    //   Value     z = { 0, 0, 0 };
+    //   auto faces  = T.facesAroundVertex( i );
+    //   for ( Face f : faces ) {
+    // 	auto V          = T.verticesAroundFace( f );
+    // 	const Point& pi = T.position( V[ 0 ] );
+    // 	const Point& pj = T.position( V[ 1 ] );
+    // 	const Point& pk = T.position( V[ 2 ] );
+    // 	const VectorValue& Gf = G[ f ];
+    // 	for ( int m = 0; m < d; ++m ) {
+    // 	  z[ m ] -= ( pj[ 1 ] - pk[ 1 ] ) * Gf.x[ m ]
+    // 	    +       ( pk[ 0 ] - pj[ 0 ] ) * Gf.y[ m ];
+    // 	    // +       ( pk[ 1 ] - pi[ 1 ] ) * Gf[ 0 ][ m ]
+    // 	    // +       ( pi[ 0 ] - pk[ 0 ] ) * Gf[ 1 ][ m ]
+    // 	    // +       ( pi[ 1 ] - pj[ 1 ] ) * Gf[ 0 ][ m ]
+    // 	    // +       ( pj[ 0 ] - pi[ 0 ] ) * Gf[ 1 ][ m ];
+    // 	}
+    //   }
+    //   return z;
+    // }
+
     /// @return the scalar form lambda.u
-    ScalarForm multiply( Scalar lambda, const ScalarForm& u ) const
+    ValueForm multiplication( Scalar lambda, const ValueForm& u ) const
     {
-      ScalarForm S( u.size() );
-      const int d = _color ? u.size() : 1;
-      for ( int m = 0; m < d; ++m ) {
-	for ( VertexIndex v = 0; v < S.size(); ++v )
-	  S[ m ][ v ] = lambda * u[ m ][ v ];
-      }
+      ValueForm S( T.nbVertices() );
+      for ( VertexIndex v = 0; v < T.nbVertices(); ++v )
+	S[ v ] = lambda * u[ v ];
       return S;
     }
     
     /// @return the scalar form u - v
-    ScalarForm subtract( const ScalarForm& u, const ScalarForm& v ) const
+    ValueForm subtraction( const ValueForm& u, const ValueForm& v ) const
     {
-      ScalarForm S( u.size() );
-      const int d = _color ? u.size() : 1;
-      for ( int m = 0; m < d; ++m ) {
-	for ( VertexIndex i = 0; i < S.size(); ++i )
-	  S[ m ][ i ] = u[ m ][ i ] - v[ m ][ i ];
-      }
+      ValueForm S( T.nbVertices() );
+      for ( VertexIndex i = 0; i < T.nbVertices(); ++i )
+	  S[ i ] = u[ i ] - v[ i ];
       return S;
+    }
+    /// u -= v
+    void subtract( ValueForm& u, const ValueForm& v ) const
+    {
+      for ( VertexIndex i = 0; i < T.nbVertices(); ++i )
+	u[ i ] -= v[ i ];
     }
 
     /// @return the scalar form a.u + b.v
-    ScalarForm combine( const Scalar a, const ScalarForm& u,
-			const Scalar b, const ScalarForm& v ) const
+    ValueForm combination( const Scalar a, const ValueForm& u,
+			   const Scalar b, const ValueForm& v ) const
     {
-      ScalarForm S( u.size() );
-      const int d = _color ? u.size() : 1;
-      for ( int m = 0; m < d; ++m ) {
-	for ( VertexIndex i = 0; i < S.size(); ++i )
-	  S[ m ][ i ] = a * u[ m ][ i ] + b * v[ m ][ i ];
-      }
+      ValueForm S( T.nbVertices() );
+      trace.info() << "[combination] variation is ["
+		   << ( b * *( std::min_element( v.begin(), v.end() ) ) )
+		   << " " << ( b * *( std::max_element( v.begin(), v.end() ) ) )
+		   << std::endl;
+      for ( VertexIndex i = 0; i < T.nbVertices(); ++i )
+	S[ i ] = a * u[ i ] + b * v[ i ];
       return S;
     }
       
@@ -239,8 +282,10 @@ namespace DGtal {
       // 	  Value( X.crossProduct( Vr ).dot( One ),
       // 		 X.crossProduct( Vg ).dot( One ),
       // 		 X.crossProduct( Vb ).dot( One ) ) };
-      return _normY( grad( v1, v2, v3, values ) );
+      return _normY( grad( v1, v2, v3, _u ) );
     }
+
+    // -------------- Construction services -------------------------
     
     // Constructor from color image.
     template <typename Image>
@@ -249,6 +294,7 @@ namespace DGtal {
     {
       _color = color;
       _power = p;
+      // Defining norms.
       if ( color ) {
 	_normX = [p] ( const Value& v ) -> Scalar
 	  {
@@ -256,10 +302,17 @@ namespace DGtal {
 	  };
 	_normY = [p] ( const VectorValue& v ) -> Scalar
 	  {
-	    return pow( square( v[ 0 ][ 0 ] ) + square( v[ 1 ][ 0 ] ), p )
-	    + pow( square( v[ 0 ][ 1 ] ) + square( v[ 1 ][ 1 ] ), p )
-	    + pow( square( v[ 0 ][ 2 ] ) + square( v[ 1 ][ 2 ] ), p );
+	    return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] ), p )
+	    + pow( square( v.x[ 1 ] ) + square( v.y[ 1 ] ), p )
+	    + pow( square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
 	  };
+	// Standard ColorTV is
+	// _normY = [p] ( const VectorValue& v ) -> Scalar
+	// {
+	//   return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] )
+	// 		+ square( v.x[ 1 ] ) + square( v.y[ 1 ] )
+	// 		+ square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
+	// };
       } else {
 	_normX = [p] ( const Value& v ) -> Scalar
 	  {
@@ -267,9 +320,10 @@ namespace DGtal {
 	  };
 	_normY = [p] ( const VectorValue& v ) -> Scalar
 	  {
-	    return pow( square( v[ 0 ][ 0 ] ) + square( v[ 1 ][ 0 ] ), p );
+	    return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] ), p );
 	  };
       }
+      // Building triangulation
       typedef std::function< int( int ) > ColorConverter;
       ColorConverter converters[ 4 ];
       converters[ 0 ] = ColorToRedFunctor();
@@ -293,15 +347,17 @@ namespace DGtal {
       bool ok = T.build();
       trace.info() << "Build triangulation: "
 		   << ( ok ? "OK" : "ERROR" ) << std::endl;
-      nbV = T.nbVertices();
-      // Creates values
+      _nbV = T.nbVertices();
+      // Building forms.
       VertexIndex v = 0;
-      values.resize( I.size() );
+      _I.resize( I.size() );
       for ( unsigned int val : I ) {
-	values[ v++ ] = Value( (Scalar) converters[ red ]  ( val ),
-			       (Scalar) converters[ green ]( val ),
-			       (Scalar) converters[ blue ] ( val ) );
+	_I[ v++ ] = Value( (Scalar) converters[ red ]  ( val ),
+			   (Scalar) converters[ green ]( val ),
+			   (Scalar) converters[ blue ] ( val ) );
       }
+      _u = _I;                  // u = image at initialization
+      _p.resize( T.nbFaces() ); // p = 0     at initialization
     }
 
     static Scalar doesTurnLeft( const Point& p, const Point& q, const Point& r )
@@ -378,6 +434,46 @@ namespace DGtal {
 	_Queue.push_back( around[ i ] );
 	_Queue.push_back( T.opposite( around[ i ] ) );
       }
+    }
+
+    /// Does one pass of TV regularization (u, p and I must have the
+    /// meaning of the previous iteration).
+    Scalar tvPass( Scalar lambda, Scalar dt, Scalar tol )
+    {
+      trace.info() << "lambda.f" << std::endl;
+      VectorValueForm p( _p.size() ); // this is p^{n+1}
+      ValueForm      lf = multiplication( lambda, _I );
+      Scalar     diff_p = 0.0;
+      int             n = 0; // iteration number
+      do {
+	trace.info() << "div( p ) - lambda.f" << std::endl;
+	ValueForm        dp_lf = subtraction( div( _p ), lf );
+	trace.info() << "G := grad( div( p ) - lambda.f)" << std::endl;
+	VectorValueForm gdp_lf = grad( dp_lf );
+	trace.info() << "N := | G |" << std::endl;
+	ScalarForm     ngdp_lf = norm( gdp_lf );
+	trace.info() << "p^n+1 := ( p + dt * G ) / ( 1 + dt | G | )" << std::endl;
+	diff_p = 0.0;
+	for ( Face f = 0; f < T.nbFaces(); f++ ) {
+	  Scalar alpha = 1.0 / ( 1.0 + dt * ngdp_lf[ f ] );
+	  if ( alpha <= 0.0 )
+	    trace.warning() << "Face " << f << " alpha=" << alpha << std::endl;
+	  p[ f ].x  = alpha * ( _p[ f ].x + dt * gdp_lf[ f ].x );
+	  p[ f ].y  = alpha * ( _p[ f ].y + dt * gdp_lf[ f ].y );
+	  VectorValue delta = { p[ f ].x - _p[ f ].x,
+				p[ f ].y - _p[ f ].y };
+	  diff_p = std::max( diff_p, _normY( delta ) );
+	}
+	trace.info() << "Iter n=" << (n++) << " diff_p=" << diff_p
+		     << " tol=" << tol << std::endl;
+	std::swap( p, _p );
+      } while ( ( diff_p > tol ) && ( n < 10 ) );
+      _u = combination( 1.0, _I, -1.0/lambda, div( _p ) );
+      if ( ! _color ) {
+	for ( VertexIndex i = 0; i < _u.size(); ++i )
+	  _u[ i ][ 2 ] = _u[ i ][ 1 ] = _u[ i ][ 0 ];
+      }
+      return diff_p;
     }
     
     // equal_strategy:
@@ -485,15 +581,15 @@ namespace DGtal {
 	  VertexRange P = T.verticesAroundArc( a );
 	  // Allow one level of subdivision.
 	  if ( std::max( std::max( P[ 0 ], P[ 1 ] ),
-			 std::max( P[ 2 ], P[ 3 ] ) ) >= nbV ) continue;
+			 std::max( P[ 2 ], P[ 3 ] ) ) >= _nbV ) continue;
 	  // Save arcs that may be affected.
 	  queueSurroundingArcs( a );
 	  Point B = ( T.position( P[ 0 ] ) + T.position( P[ 1 ] )
 		      + T.position( P[ 2 ] ) + T.position( P[ 3 ] ) ) * 0.25;
 	  VertexIndex v = T.split( a, B );
-	  Value V = ( values[ P[ 0 ] ] + values[ P[ 1 ] ]
-		      + values[ P[ 2 ] ] + values[ P[ 3 ] ] ) * 0.25;
-	  values.push_back( V );
+	  Value V = ( _I[ P[ 0 ] ] + _I[ P[ 1 ] ]
+		      + _I[ P[ 2 ] ] + _I[ P[ 3 ] ] ) * 0.25;
+	  _I.push_back( V );
 	  ++nbsubdivided;
 	}
       }
@@ -650,16 +746,16 @@ namespace DGtal {
       if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
 	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
 	t = (m-s).norm() / (e-s).norm();
-	if ( ( t < -0.01 ) || ( t > 1.01 ) )
-	  trace.error() << "bad t=" << t << std::endl;
-	else if ( ( t == 0 ) || ( t == 1 ) )
-	  if ( ( ( gs != gm ) && ( gm != ge ) )
-	       || ( gm < std::min( ge, gs ) )
-	       || ( gm > std::max( ge, gs ) ) )
-	    trace.warning() << "t=" << t
-			    << "a=" << a
-			    << " gs=" << gs << " gm=" << gm << " ge=" << ge
-			    << std::endl;
+	// if ( ( t < -0.01 ) || ( t > 1.01 ) )
+	//   trace.error() << "bad t=" << t << std::endl;
+	// else if ( ( t == 0 ) || ( t == 1 ) )
+	//   if ( ( ( gs != gm ) && ( gm != ge ) )
+	//        || ( gm < std::min( ge, gs ) - 0.0001 )
+	//        || ( gm > std::max( ge, gs ) + 0.0001 ) )
+	//     trace.warning() << "t=" << t
+	// 		    << "a=" << a
+	// 		    << " gs=" << gs << " gm=" << gm << " ge=" << ge
+	// 		    << std::endl;
 	cairo_pattern_add_color_stop_rgb (pat, 0, gs * _redf, 0, 0);
 	cairo_pattern_add_color_stop_rgb (pat, t, gm * _redf, 0, 0);
 	cairo_pattern_add_color_stop_rgb (pat, 1, ge * _redf, 0, 0);
@@ -777,9 +873,9 @@ namespace DGtal {
       viewLinearGradientTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
 				  RealPoint( b[ 0 ], b[ 1 ] ),
 				  RealPoint( c[ 0 ], c[ 1 ] ),
-				  tvT.values[ V[ 0 ] ],
-				  tvT.values[ V[ 1 ] ],
-				  tvT.values[ V[ 2 ] ] );
+				  tvT.u( V[ 0 ] ),
+				  tvT.u( V[ 1 ] ),
+				  tvT.u( V[ 2 ] ) );
     }
     void viewTVTGouraudTriangle( TVT & tvT, Face f )
     {
@@ -790,9 +886,9 @@ namespace DGtal {
       viewGouraudTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
 			   RealPoint( b[ 0 ], b[ 1 ] ),
 			   RealPoint( c[ 0 ], c[ 1 ] ),
-			   tvT.values[ V[ 0 ] ],
-			   tvT.values[ V[ 1 ] ],
-			   tvT.values[ V[ 2 ] ] );
+			   tvT.u( V[ 0 ] ),
+			   tvT.u( V[ 1 ] ),
+			   tvT.u( V[ 2 ] ) );
     }
     void viewTVTFlatTriangle( TVT & tvT, Face f )
     {
@@ -800,8 +896,8 @@ namespace DGtal {
       Point       a = tvT.T.position( V[ 0 ] );
       Point       b = tvT.T.position( V[ 1 ] );
       Point       c = tvT.T.position( V[ 2 ] );
-      Value     val = tvT.values[ V[ 0 ] ]
-	+ tvT.values[ V[ 1 ] ] + tvT.values[ V[ 2 ] ];
+      Value     val = tvT.u( V[ 0 ] )
+	+ tvT.u( V[ 1 ] ) + tvT.u( V[ 2 ] );
       val          /= 3.0;
       viewFlatTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
 			RealPoint( b[ 0 ], b[ 1 ] ),
@@ -887,6 +983,9 @@ int main( int argc, char** argv )
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("strategy,s", po::value<int>()->default_value(4), "Strategy for quadrilatera with equal energy: 0: do nothing, 1: subdivide, 2: flip all, 3: flip all when #flipped normal = 0, 4: flip approximately half when #flipped normal = 0, 5: flip approximately half when #flipped normal = 0, subdivide if everything fails." )
     ("tv-power,p", po::value<double>()->default_value( 0.5 ), "The power coefficient used to compute the gradient ie |Grad I|^{2p}. " )
+    ("lambda,l", po::value<double>()->default_value( 0.0 ), "The data fidelity term in TV denoising (if lambda <= 0, then the data fidelity is exact" ) 
+    ("dt", po::value<double>()->default_value( 0.248 ), "The time step in TV denoising (should be lower than 0.25)" ) 
+    ("tolerance,t", po::value<double>()->default_value( 0.01 ), "The tolerance to stop the TV denoising." ) 
     ;
 
   bool parseOK = true;
@@ -929,6 +1028,26 @@ int main( int argc, char** argv )
   trace.info() << TVT.T << std::endl;
   trace.endBlock();
 
+  trace.beginBlock("TV regularization");
+  double lambda = vm[ "lambda" ].as<double>();
+  double     dt = vm[ "dt" ].as<double>();
+  double    tol = vm[ "tolerance" ].as<double>();
+  if ( lambda > 0.0 ) {
+    TVT.tvPass( lambda, dt, tol );
+  }
+  trace.endBlock();
+
+  trace.beginBlock("Displaying triangulation");
+  {
+    double     b = vm[ "bitmap" ].as<double>();
+    double    x0 = 0.0;
+    double    y0 = 0.0;
+    double    x1 = (double) image.domain().upperBound()[ 0 ];
+    double    y1 = (double) image.domain().upperBound()[ 1 ];
+    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv" );
+  }
+  trace.endBlock();
+  
   trace.beginBlock("Optimizing the triangulation");
   int iter  = 0;
   int miter = vm[ "limit" ].as<int>();
@@ -940,24 +1059,24 @@ int main( int argc, char** argv )
     if ( iter++ > miter ) break;
     double energy = 0.0;
     nbs = TVT.onePass( energy, strat );
-    // For Debug
-    // TVT.T.heds().isValid();
     if ( ( last == 0 ) && ( nbs.first == 0 ) ) {
       if ( subdivide || strat != 5 ) break;
       subdivide = true;
       nbs = TVT.onePass( energy, 1 );
     }
     last = nbs.first;
-  } 
+  }
   trace.endBlock();
 
   trace.beginBlock("Displaying triangulation");
-  double     b = vm[ "bitmap" ].as<double>();
-  double    x0 = 0.0;
-  double    y0 = 0.0;
-  double    x1 = (double) image.domain().upperBound()[ 0 ];
-  double    y1 = (double) image.domain().upperBound()[ 1 ];
-  viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "avt-after" );
+  {
+    double     b = vm[ "bitmap" ].as<double>();
+    double    x0 = 0.0;
+    double    y0 = 0.0;
+    double    x1 = (double) image.domain().upperBound()[ 0 ];
+    double    y1 = (double) image.domain().upperBound()[ 1 ];
+    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv-opt" );
+  }
   trace.endBlock();
 
   return 0;
