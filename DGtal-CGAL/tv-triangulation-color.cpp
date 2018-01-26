@@ -100,7 +100,11 @@ namespace DGtal {
     ValueForm            _u;
     /// The TV-regularized vectors
     VectorValueForm      _p;
-
+    /// The vector storing the tv energy of each triangle.
+    ScalarForm           _tv_per_triangle;
+    /// The total variation energy of T.
+    Scalar               _tv_energy;
+    
     /// @return the regularized value at vertex v.
     const Value& u( const VertexIndex v ) const
     { return _u[ v ]; }
@@ -195,31 +199,6 @@ namespace DGtal {
       return S;
     }
 
-    // Definition of a (local) divergence operator that assigns
-    // scalars to vertices from a vector field.
-    // Value div( VertexIndex i,
-    // 	       const VectorValueForm& G ) const
-    // {
-    //   const int d = _color ? 3 : 1;
-    //   Value     z = { 0, 0, 0 };
-    //   auto faces  = T.facesAroundVertex( i );
-    //   for ( Face f : faces ) {
-    // 	auto V          = T.verticesAroundFace( f );
-    // 	const Point& pi = T.position( V[ 0 ] );
-    // 	const Point& pj = T.position( V[ 1 ] );
-    // 	const Point& pk = T.position( V[ 2 ] );
-    // 	const VectorValue& Gf = G[ f ];
-    // 	for ( int m = 0; m < d; ++m ) {
-    // 	  z[ m ] -= ( pj[ 1 ] - pk[ 1 ] ) * Gf.x[ m ]
-    // 	    +       ( pk[ 0 ] - pj[ 0 ] ) * Gf.y[ m ];
-    // 	    // +       ( pk[ 1 ] - pi[ 1 ] ) * Gf[ 0 ][ m ]
-    // 	    // +       ( pi[ 0 ] - pk[ 0 ] ) * Gf[ 1 ][ m ]
-    // 	    // +       ( pi[ 1 ] - pj[ 1 ] ) * Gf[ 0 ][ m ]
-    // 	    // +       ( pj[ 0 ] - pi[ 0 ] ) * Gf[ 1 ][ m ];
-    // 	}
-    //   }
-    //   return z;
-    // }
 
     /// @return the scalar form lambda.u
     ValueForm multiplication( Scalar lambda, const ValueForm& u ) const
@@ -263,28 +242,40 @@ namespace DGtal {
     /// It is now just the norm of the gradient.
     Scalar energyTV( VertexIndex v1, VertexIndex v2, VertexIndex v3 ) const
     {
-      // const Value One = Value::diagonal( 1 );
-      // const Point& p1 = T.position( v1 );
-      // const Point& p2 = T.position( v2 );
-      // const Point& p3 = T.position( v3 );
-      // const Value& f1 = values[ v1 ];
-      // const Value& f2 = values[ v2 ];
-      // const Value& f3 = values[ v3 ];
-      // const Value   X = Value( p1[ 0 ], p2[ 0 ], p3[ 0 ] );
-      // const Value   Y = Value( p1[ 1 ], p2[ 1 ], p3[ 1 ] );
-      // const Value  Vr = Value( f1[ 0 ], f2[ 0 ], f3[ 0 ] );
-      // const Value  Vg = Value( f1[ 1 ], f2[ 1 ], f3[ 1 ] );
-      // const Value  Vb = Value( f1[ 2 ], f2[ 2 ], f3[ 2 ] );
-      // const VectorValue DI =
-      // 	{ Value( Vr.crossProduct( Y ).dot( One ),
-      // 		 Vg.crossProduct( Y ).dot( One ),
-      // 		 Vb.crossProduct( Y ).dot( One ) ),
-      // 	  Value( X.crossProduct( Vr ).dot( One ),
-      // 		 X.crossProduct( Vg ).dot( One ),
-      // 		 X.crossProduct( Vb ).dot( One ) ) };
       return _normY( grad( v1, v2, v3, _u ) );
     }
 
+    /// @return the tv energy stored at this face.
+    Scalar energyTV( const Face f ) const
+    {
+      return _tv_per_triangle[ f ];
+    }
+
+    /// @return the tv energy stored at this face.
+    const Scalar& energyTV( const Face f )
+    {
+      return _tv_per_triangle[ f ];
+    }
+
+    /// Compute (and store in _tv_per_triangle) the TV-energy per triangle.
+    Scalar computeEnergyTV()
+    {
+      Scalar E = 0;
+      for ( Face f = 0; f < T.nbFaces(); ++f )	{
+	VertexRange V = T.verticesAroundFace( f );
+	E += _tv_per_triangle[ f ] = energyTV( V[ 0 ], V[ 1 ], V[ 2 ] );
+      }
+      _tv_energy = E;
+      // trace.info() << "TV(u) = " << E << std::endl;
+      return E;
+    }
+
+    /// Gets the current TV energy of the triangulation.
+    Scalar getEnergyTV()
+    {
+      return _tv_energy;
+    }
+    
     // -------------- Construction services -------------------------
     
     // Constructor from color image.
@@ -306,7 +297,7 @@ namespace DGtal {
 	    + pow( square( v.x[ 1 ] ) + square( v.y[ 1 ] ), p )
 	    + pow( square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
 	  };
-	// Standard ColorTV is
+	// // Standard ColorTV is
 	// _normY = [p] ( const VectorValue& v ) -> Scalar
 	// {
 	//   return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] )
@@ -358,8 +349,28 @@ namespace DGtal {
       }
       _u = _I;                  // u = image at initialization
       _p.resize( T.nbFaces() ); // p = 0     at initialization
+      // TV-energy is computed and stored per face to speed-up computations.
+      _tv_per_triangle.resize( T.nbFaces() );
+      computeEnergyTV();
     }
 
+    template <typename Image>
+    bool outputU( Image& J ) const
+    {
+      VertexIndex v = 0;
+      for ( unsigned int & val : J ) {
+	val = _color
+	  ? ( ( (int) _u[ v ][ 0 ] ) << 16 )
+	  + ( ( (int) _u[ v ][ 1 ] ) << 8 )
+	  + ( (int) _u[ v ][ 2 ] )
+	  : ( ( (int) _u[ v ][ 0 ] ) << 16 )
+	  + ( ( (int) _u[ v ][ 0 ] ) << 8 )
+	  + ( (int) _u[ v ][ 0 ] );
+	v += 1;
+      }
+      return v == T.nbVertices();
+    }
+    
     static Scalar doesTurnLeft( const Point& p, const Point& q, const Point& r )
     {
       const Point pq = q - p;
@@ -391,15 +402,16 @@ namespace DGtal {
        otherwise (-1: boundary, -2 s > t, -3 non convex, -4 increases
        the energy.
     */
-    int updateArc( const Arc a, Scalar& energy ) {
-      energy        = 0;
+    int updateArc( const Arc a ) {
       VertexRange P = T.verticesAroundArc( a );
       if ( P.size() != 4 )   return -1;
       if ( P[ 0 ] < P[ 2 ] ) return -2;
       if ( ! isConvex( P ) ) return -3;
       // Computes energies
-      const Scalar  E012 = energyTV( P[ 0 ], P[ 1 ], P[ 2 ] );
-      const Scalar  E023 = energyTV( P[ 0 ], P[ 2 ], P[ 3 ] );
+      const Face    f012 = T.faceAroundArc( a );
+      const Face    f023 = T.faceAroundArc( T.opposite( a ) );
+      const Scalar  E012 = energyTV( f012 ); //P[ 0 ], P[ 1 ], P[ 2 ] );
+      const Scalar  E023 = energyTV( f023 ); //P[ 0 ], P[ 2 ], P[ 3 ] );
       const Scalar  E013 = energyTV( P[ 0 ], P[ 1 ], P[ 3 ] );
       const Scalar  E123 = energyTV( P[ 1 ], P[ 2 ], P[ 3 ] );
       const Scalar Ecurr = E012 + E023;
@@ -413,12 +425,13 @@ namespace DGtal {
 	  // Save arcs that may be affected.
 	  queueSurroundingArcs( a );
 	  T.flip( a );
-	  energy = Eflip;
+	  _tv_per_triangle[ f012 ] = E123; // f012 -> f123
+	  _tv_per_triangle[ f023 ] = E013; // f023 -> f013
+	  _tv_energy += Eflip - Ecurr;
 	  return 1;
 	}
       else
 	{
-	  energy = Ecurr;
 	  return ( Eflip == Ecurr ) ? 0 : -4;
 	}
     }
@@ -436,23 +449,36 @@ namespace DGtal {
       }
     }
 
+    /// Quantify the regularized image _u.
+    void quantify( const int level )
+    {
+      const Scalar factor = 255.0 / ( level - 1);  
+      for ( VertexIndex i = 0; i < T.nbVertices(); ++i )
+	for ( int m = 0; m < 3; ++m ) {
+	  _u[ i ][ m ] = round( ( _u[ i ][ m ] ) / factor ) * factor;
+	  _u[ i ][ m ] = std::min( 255.0, std::max( 0.0, _u[ i ][ m ] ) );
+	}
+      computeEnergyTV();
+    }
+    
     /// Does one pass of TV regularization (u, p and I must have the
     /// meaning of the previous iteration).
-    Scalar tvPass( Scalar lambda, Scalar dt, Scalar tol )
+    Scalar tvPass( Scalar lambda, Scalar dt, Scalar tol, int N = 10 )
     {
-      trace.info() << "lambda.f" << std::endl;
+      trace.info() << "TV( u ) = " << getEnergyTV() << std::endl;
+      //trace.info() << "lambda.f" << std::endl;
       VectorValueForm p( _p.size() ); // this is p^{n+1}
       ValueForm      lf = multiplication( lambda, _I );
       Scalar     diff_p = 0.0;
       int             n = 0; // iteration number
       do {
-	trace.info() << "div( p ) - lambda.f" << std::endl;
+	// trace.info() << "div( p ) - lambda.f" << std::endl;
 	ValueForm        dp_lf = subtraction( div( _p ), lf );
-	trace.info() << "G := grad( div( p ) - lambda.f)" << std::endl;
+	// trace.info() << "G := grad( div( p ) - lambda.f)" << std::endl;
 	VectorValueForm gdp_lf = grad( dp_lf );
-	trace.info() << "N := | G |" << std::endl;
+	// trace.info() << "N := | G |" << std::endl;
 	ScalarForm     ngdp_lf = norm( gdp_lf );
-	trace.info() << "p^n+1 := ( p + dt * G ) / ( 1 + dt | G | )" << std::endl;
+	// trace.info() << "p^n+1 := ( p + dt * G ) / ( 1 + dt | G | )" << std::endl;
 	diff_p = 0.0;
 	for ( Face f = 0; f < T.nbFaces(); f++ ) {
 	  Scalar alpha = 1.0 / ( 1.0 + dt * ngdp_lf[ f ] );
@@ -467,12 +493,13 @@ namespace DGtal {
 	trace.info() << "Iter n=" << (n++) << " diff_p=" << diff_p
 		     << " tol=" << tol << std::endl;
 	std::swap( p, _p );
-      } while ( ( diff_p > tol ) && ( n < 10 ) );
+      } while ( ( diff_p > tol ) && ( n < N ) );
       _u = combination( 1.0, _I, -1.0/lambda, div( _p ) );
       if ( ! _color ) {
 	for ( VertexIndex i = 0; i < _u.size(); ++i )
 	  _u[ i ][ 2 ] = _u[ i ][ 1 ] = _u[ i ][ 0 ];
       }
+      trace.info() << "TV( u ) = " << computeEnergyTV() << std::endl;
       return diff_p;
     }
     
@@ -488,7 +515,6 @@ namespace DGtal {
       Integer nbflipped = 0;
       Integer   nbequal = 0;
       total_energy      = 0;
-      Scalar energy     = 0;
       std::vector<Arc> Q_process;
       std::swap( _Queue, Q_process );
       // Taking care of first pass
@@ -497,12 +523,12 @@ namespace DGtal {
 	  Q_process.push_back( a );
       // Processing arcs
       for ( Arc a : Q_process ) {
-	int update = updateArc( a, energy );
+	int update = updateArc( a );
 	if ( update > 0 ) nbflipped++;
 	else if ( update == 0 ) _Q_equal.push_back( a );
-	total_energy += energy;
       }
-      trace.info() << "Energy = " << total_energy
+      total_energy = getEnergyTV();
+      trace.info() << "TV( u ) = " << total_energy
 		   << " nbflipped=" << nbflipped
 		   << "/" << Q_process.size();
       if ( equal_strategy == 1 ) {
@@ -534,10 +560,9 @@ namespace DGtal {
     template <typename Range>
     Integer flipEqual( const Range& range )
     {
-      Scalar  energy = 0.0;
       Integer nbflip = 0;
       for ( Arc a : range ) {
-	int update = updateArc( a, energy );
+	int update = updateArc( a );
 	if ( update == 0 ) {
 	  // Save arcs that may be affected.
 	  queueSurroundingArcs( a );
@@ -551,10 +576,9 @@ namespace DGtal {
     template <typename Range>
     Integer flipEqualWithProb( const Range& range, double p )
     {
-      Scalar  energy = 0.0;
       Integer nbflip = 0;
       for ( Arc a : range ) {
-	int update = updateArc( a, energy );
+	int update = updateArc( a );
 	if ( update == 0 ) {
 	  // Put arc back to potentially process it again.
 	  _Queue.push_back( a );
@@ -576,7 +600,7 @@ namespace DGtal {
       Scalar  energy = 0.0;
       Integer nbsubdivided = 0;
       for ( Arc a : range ) {
-	int update = updateArc( a, energy );
+	int update = updateArc( a );
 	if ( update == 0 ) {
 	  VertexRange P = T.verticesAroundArc( a );
 	  // Allow one level of subdivision.
@@ -587,9 +611,9 @@ namespace DGtal {
 	  Point B = ( T.position( P[ 0 ] ) + T.position( P[ 1 ] )
 		      + T.position( P[ 2 ] ) + T.position( P[ 3 ] ) ) * 0.25;
 	  VertexIndex v = T.split( a, B );
-	  Value V = ( _I[ P[ 0 ] ] + _I[ P[ 1 ] ]
-		      + _I[ P[ 2 ] ] + _I[ P[ 3 ] ] ) * 0.25;
-	  _I.push_back( V );
+	  Value V = ( _u[ P[ 0 ] ] + _u[ P[ 1 ] ]
+		      + _u[ P[ 2 ] ] + _u[ P[ 3 ] ] ) * 0.25;
+	  _u.push_back( V );
 	  ++nbsubdivided;
 	}
       }
@@ -738,41 +762,24 @@ namespace DGtal {
       Scalar  gs, gm, ge;
       Scalar  t;
       cairo_pattern_t *pat;
-      // RealPoint tl( i( a.inf( b.inf( c ) )[ 0 ] ),
-      // 		    j( a.inf( b.inf( c ) )[ 1 ] ) );
-      // RealPoint br( i( a.sup( b.sup( c ) )[ 0 ] ),
-      // 		    j( a.sup( b.sup( c ) )[ 1 ] ) );
+      // Draw path
+      cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+      cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+      cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+      cairo_close_path( _cr );
       // Draw red
       if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
 	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
 	t = (m-s).norm() / (e-s).norm();
-	// if ( ( t < -0.01 ) || ( t > 1.01 ) )
-	//   trace.error() << "bad t=" << t << std::endl;
-	// else if ( ( t == 0 ) || ( t == 1 ) )
-	//   if ( ( ( gs != gm ) && ( gm != ge ) )
-	//        || ( gm < std::min( ge, gs ) - 0.0001 )
-	//        || ( gm > std::max( ge, gs ) + 0.0001 ) )
-	//     trace.warning() << "t=" << t
-	// 		    << "a=" << a
-	// 		    << " gs=" << gs << " gm=" << gm << " ge=" << ge
-	// 		    << std::endl;
 	cairo_pattern_add_color_stop_rgb (pat, 0, gs * _redf, 0, 0);
 	cairo_pattern_add_color_stop_rgb (pat, t, gm * _redf, 0, 0);
 	cairo_pattern_add_color_stop_rgb (pat, 1, ge * _redf, 0, 0);
 	cairo_set_source( _cr, pat );
-	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
-	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
-	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
-	cairo_close_path( _cr );
-	cairo_fill( _cr );
+	cairo_fill_preserve( _cr );
 	cairo_pattern_destroy( pat );
       } else {
 	cairo_set_source_rgb( _cr, gs * _redf, 0, 0 );
-	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
-	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
-	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
-	cairo_close_path( _cr );
-	cairo_fill( _cr );
+	cairo_fill_preserve( _cr );
       }
       // Draw green
       if ( computeLinearGradient( a, b, c, Vg, s, m, e, gs, gm, ge ) ) {
@@ -782,19 +789,11 @@ namespace DGtal {
 	cairo_pattern_add_color_stop_rgb (pat, t, 0, gm * _greenf, 0);
 	cairo_pattern_add_color_stop_rgb (pat, 1, 0, ge * _greenf, 0);
 	cairo_set_source( _cr, pat );
-	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
-	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
-	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
-	cairo_close_path( _cr );
-	cairo_fill( _cr );
+	cairo_fill_preserve( _cr );
 	cairo_pattern_destroy( pat );
       } else {
 	cairo_set_source_rgb( _cr, 0, gs * _greenf, 0 );
-	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
-	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
-	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
-	cairo_close_path( _cr );
-	cairo_fill( _cr );
+	cairo_fill_preserve( _cr );
       }
       // Draw blue
       if ( computeLinearGradient( a, b, c, Vb, s, m, e, gs, gm, ge ) ) {
@@ -804,18 +803,10 @@ namespace DGtal {
 	cairo_pattern_add_color_stop_rgb (pat, t, 0, 0, gm * _bluef );
 	cairo_pattern_add_color_stop_rgb (pat, 1, 0, 0, ge * _bluef );
 	cairo_set_source( _cr, pat );
-	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
-	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
-	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
-	cairo_close_path( _cr );
 	cairo_fill( _cr );
 	cairo_pattern_destroy( pat );
       } else {
 	cairo_set_source_rgb( _cr, 0, 0, gs * _bluef );
-	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
-	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
-	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
-	cairo_close_path( _cr );
 	cairo_fill( _cr );
       }
     }
@@ -954,11 +945,14 @@ namespace DGtal {
   
   void viewTVTriangulationColorAll
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
-    std::string fname )
+    std::string fname, int display = 7 )
   {
-    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 0, fname + ".png" );
-    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 1, fname + "-g.png" );
-    viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 2, fname + "-lg.png" );
+    if ( display & 0x1 )
+      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 0, fname + ".png" );
+    if ( display & 0x2 )
+      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 1, fname + "-g.png" );
+    if ( display & 0x4 )
+      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 2, fname + "-lg.png" );
   }
   
 
@@ -986,6 +980,11 @@ int main( int argc, char** argv )
     ("lambda,l", po::value<double>()->default_value( 0.0 ), "The data fidelity term in TV denoising (if lambda <= 0, then the data fidelity is exact" ) 
     ("dt", po::value<double>()->default_value( 0.248 ), "The time step in TV denoising (should be lower than 0.25)" ) 
     ("tolerance,t", po::value<double>()->default_value( 0.01 ), "The tolerance to stop the TV denoising." ) 
+    ("quantify,q", po::value<int>()->default_value( 256 ), "The quantification for colors (number of levels, q=2 means binary." ) 
+    ("tv-max-iter,N", po::value<int>()->default_value( 10 ), "The maximum number of iteration in TV's algorithm." )
+    ("nb-alt-iter,A", po::value<int>()->default_value( 1 ), "The number of iteration for alternating TV and TV-flip." )
+    ("display-tv,d", po::value<int>()->default_value( 0 ), "Tells the display mode after TV of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
+    ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode after flips of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
     ;
 
   bool parseOK = true;
@@ -1013,6 +1012,7 @@ int main( int argc, char** argv )
 
   trace.beginBlock("Construction of the triangulation");
   typedef ImageSelector < Z2i::Domain, unsigned int>::Type Image;
+  typedef ImageSelector < Z2i::Domain, Color>::Type ColorImage;
   
   std::string img_fname = vm[ "input" ].as<std::string>();
   Image image           = GenericReader<Image>::import( img_fname ); 
@@ -1028,54 +1028,81 @@ int main( int argc, char** argv )
   trace.info() << TVT.T << std::endl;
   trace.endBlock();
 
+  trace.info() << std::fixed;
   trace.beginBlock("TV regularization");
   double lambda = vm[ "lambda" ].as<double>();
   double     dt = vm[ "dt" ].as<double>();
   double    tol = vm[ "tolerance" ].as<double>();
+  int     quant = vm[ "quantify" ].as<int>();
+  int         N = vm[ "tv-max-iter" ].as<int>();
   if ( lambda > 0.0 ) {
-    TVT.tvPass( lambda, dt, tol );
+    TVT.tvPass( lambda, dt, tol, N );
   }
+  if ( quant > 0 ) TVT.quantify( quant );
+  trace.endBlock();
+  
+  trace.beginBlock("Output TV image (possibly quantified)");
+  Image J( image.domain() );
+  bool ok = TVT.outputU( J );
+  struct UnsignedInt2Color {
+    Color operator()( unsigned int val ) const { return Color( val ); }
+  };
+  PPMWriter<Image, UnsignedInt2Color>::exportPPM( "output-tv.ppm", J );
   trace.endBlock();
 
   trace.beginBlock("Displaying triangulation");
   {
+    int  display = vm[ "display-tv" ].as<int>();
     double     b = vm[ "bitmap" ].as<double>();
     double    x0 = 0.0;
     double    y0 = 0.0;
     double    x1 = (double) image.domain().upperBound()[ 0 ];
     double    y1 = (double) image.domain().upperBound()[ 1 ];
-    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv" );
+    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv", display );
   }
   trace.endBlock();
   
   trace.beginBlock("Optimizing the triangulation");
-  int iter  = 0;
   int miter = vm[ "limit" ].as<int>();
   int strat = vm[ "strategy" ].as<int>();
+  int nbAlt = vm[ "nb-alt-iter" ].as<int>();
+  if ( quant != 256 && nbAlt != 1 ) {
+    nbAlt = 1;
+    trace.warning() << "Quantification is not compatible with alternating TV + flips" << std::endl;
+  }
   std::pair<int,int> nbs;
-  int  last = 1;
-  bool subdivide = false;
-  while ( true ) {
-    if ( iter++ > miter ) break;
-    double energy = 0.0;
-    nbs = TVT.onePass( energy, strat );
-    if ( ( last == 0 ) && ( nbs.first == 0 ) ) {
-      if ( subdivide || strat != 5 ) break;
-      subdivide = true;
-      nbs = TVT.onePass( energy, 1 );
+  for ( int n = 0; n < nbAlt; ++n ) {
+    if ( n > 0 && lambda > 0.0 ) {
+      TVT.tvPass( lambda, dt, tol, N );
     }
-    last = nbs.first;
+    int       iter = 0;
+    int       last = 1;
+    bool subdivide = false;
+    trace.info() << "TV( u ) = " << TVT.getEnergyTV() << std::endl;
+    while ( true ) {
+      if ( iter++ > miter ) break;
+      double energy = 0.0;
+      nbs = TVT.onePass( energy, strat );
+      if ( ( last == 0 ) && ( nbs.first == 0 ) ) {
+	if ( subdivide || strat != 5 ) break;
+	subdivide = true;
+	nbs = TVT.onePass( energy, 1 );
+      }
+      last = nbs.first;
+    }
   }
   trace.endBlock();
 
   trace.beginBlock("Displaying triangulation");
   {
+    int  display = vm[ "display-flip" ].as<int>();
     double     b = vm[ "bitmap" ].as<double>();
     double    x0 = 0.0;
     double    y0 = 0.0;
     double    x1 = (double) image.domain().upperBound()[ 0 ];
     double    y1 = (double) image.domain().upperBound()[ 1 ];
-    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv-opt" );
+    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv-opt",
+				 display );
   }
   trace.endBlock();
 
