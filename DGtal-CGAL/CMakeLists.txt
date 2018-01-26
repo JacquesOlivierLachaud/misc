@@ -186,6 +186,7 @@ SET(SRCs
   2d-triangulation-f
   2d-triangulation-color
   tv-triangulation-color
+  tv-image
   3d-triangulation
   3d-triangulation-2
   3d-triangulation-3
