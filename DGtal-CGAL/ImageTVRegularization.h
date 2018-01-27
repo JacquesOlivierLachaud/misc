@@ -55,9 +55,59 @@ namespace DGtal
   /////////////////////////////////////////////////////////////////////////////
   // class ImageTVRegularization
   /**
-     Description of class 'ImageTVRegularization' <p> \brief Aim:
-     This class regularizes an input image with respect to its total variation.
-     @tparam TSurface any type of digital surface.
+     Description of class 'ImageTVRegularization' <p> \brief Aim: This
+     class regularizes an input image with respect to its total
+     variation. More precisely, for $\Omega$ a domain, the total variation of \f$ u \in L^1(\Omega,\mathbb{R})\f$  is defined as
+
+     \f[
+     TV( u ) := \sup \left\{ \int_\Omega u \div \xi \text{d}x : \xi \in C_c^1(\Omega, \mathbb{R}), \|\xi\|_\infty \le 1 \right\}.
+     \f]
+
+     Note that \f$ TV(u) \f$ is finite iff its distributional
+     derivative \f$ Du \f$ is a finite Radon measure, and in this case
+     \f$ TV(u)=|Du|(\Omega) \f$. Also, if \f$ u \f$ has a gradient \f$
+     \nabla u \in L^1(\Omega,\R^2) \f$, then $TV(u) = \int_\Omega
+     |\nabla u | \f$. This expains why \f$ TV(u) \f$ is often
+     "defined" as such, by abuse of the notation. The space of
+     functions of \a bounded \a variations is thus defined as
+
+     \f[
+     BV( \Omega ) := \left\{ u \in L^1(\Omega) : \int_\Omega | \nabla u | < \infty \right\}.
+     \f]
+
+     We solve here the following unconstrained minimization problem,
+     where $\lamba$ is a parameter that tunes the fit to original data
+     \f$ f \f$:
+
+     \f[
+     \min_{u \in BV(\Omega)} \int_\Omega |\nabla u | +
+     \frac{\lambda}{2}\| u - f \|_2^2.
+     \f]
+
+     Assuming \f$ f \f$ is an input grey-level image, and \f$ g \f$ is
+     the output TV denoised image, the following code does the job:
+
+     \code
+     template <typename Image>
+     void TV( Image& g, const Image& f, double lambda ) {
+       typedef typename Image::Domain::Space Space;
+       typedef ImageTVRegularization<Space, 1> GrayLevelTV;
+       GrayLevelTV tv;
+       tv.init( f, GrayLevelTV::GrayLevel2ValueFunctor() );
+       tv.optimize( lambda );
+       tv.outputU( g, GrayLevelTV::Value2GrayLevelFunctor() );
+     }
+     \endcode
+
+     @see tv-image.cpp
+     
+     @tparam TSpace the digital space for images (choose Z2i::Space or
+     Z3i::Space according to the dimension of images you are
+     processing).
+     
+     @tparam M the number of scalar per pixel/voxel, generally 1 for
+     gray-level images and 3 for color images, but other choices are
+     possible.
   */
   template <typename TSpace, int M>
   class ImageTVRegularization
@@ -65,7 +115,7 @@ namespace DGtal
   public:
     typedef TSpace                            Space;
     typedef ImageTVRegularization< TSpace, M> Self;
-    // BOOST_CONCEPT_ASSERT(( concepts::CSpace< Space > ));
+    BOOST_CONCEPT_ASSERT(( concepts::CSpace< Space > ));
     BOOST_STATIC_ASSERT (( Space::dimension <= 3 ));
     BOOST_STATIC_ASSERT (( M >= 1 ));
 
