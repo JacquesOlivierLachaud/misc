@@ -63,7 +63,10 @@ namespace DGtal {
   {
     typedef Z2i::Integer               Integer;
     typedef Z2i::RealPoint             Point;
+<<<<<<< HEAD
     typedef Z2i::RealVector            Vector;
+=======
+>>>>>>> 677eea3946bd2b542e9eb00416e0166540e68549
     typedef Z2i::Domain                Domain;
     typedef TriangulatedSurface<Point> Triangulation;
     typedef Triangulation::VertexIndex VertexIndex;
@@ -253,6 +256,7 @@ namespace DGtal {
     }
 
     /// @return the tv energy stored at this face.
+
     Scalar& energyTV( const Face f )
     {
       return _tv_per_triangle[ f ];
@@ -914,6 +918,7 @@ namespace DGtal {
 			RealPoint( b[ 0 ], b[ 1 ] ),
 			RealPoint( c[ 0 ], c[ 1 ] ), val );
     }
+
     void viewTVTTriangleDiscontinuity( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
@@ -925,6 +930,7 @@ namespace DGtal {
 			RealPoint( b[ 0 ], b[ 1 ] ),
 			RealPoint( c[ 0 ], c[ 1 ] ), val );
     }
+
 
     /**
        Displays the AVT with flat or Gouraud shading.
