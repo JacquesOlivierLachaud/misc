@@ -63,6 +63,7 @@ namespace DGtal {
   {
     typedef Z2i::Integer               Integer;
     typedef Z2i::RealPoint             Point;
+    typedef Z2i::RealVector            Vector;
     typedef Z2i::Domain                Domain;
     typedef TriangulatedSurface<Point> Triangulation;
     typedef Triangulation::VertexIndex VertexIndex;
@@ -252,7 +253,7 @@ namespace DGtal {
     }
 
     /// @return the tv energy stored at this face.
-    const Scalar& energyTV( const Face f )
+    Scalar& energyTV( const Face f )
     {
       return _tv_per_triangle[ f ];
     }
@@ -275,7 +276,26 @@ namespace DGtal {
     {
       return _tv_energy;
     }
-    
+
+    /// @return the aspect ratio of a face (the greater, the most elongated it is.
+    Scalar aspectRatio( const Face f ) const
+    {
+      VertexRange P  = T.verticesAroundFace( f );
+      const Point& a = T.position( P[ 0 ] );
+      const Point& b = T.position( P[ 1 ] );
+      const Point& c = T.position( P[ 2 ] );
+      Vector     ab = b - a;
+      Vector     bc = c - b;
+      Vector     ca = a - c;
+      Scalar    dab = ab.norm();
+      Scalar    dbc = bc.norm();
+      Scalar    dca = ca.norm();
+      Scalar     ha = fabs( ( ab.dot( bc ) ) / dbc );
+      Scalar     hb = fabs( ( bc.dot( ca ) ) / dca );
+      Scalar     hc = fabs( ( ca.dot( ab ) ) / dab );
+      return std::max( dab / hc, std::max( dbc / ha, dca / hb ) );
+    }
+
     // -------------- Construction services -------------------------
     
     // Constructor from color image.
@@ -894,6 +914,17 @@ namespace DGtal {
 			RealPoint( b[ 0 ], b[ 1 ] ),
 			RealPoint( c[ 0 ], c[ 1 ] ), val );
     }
+    void viewTVTTriangleDiscontinuity( TVT & tvT, Face f )
+    {
+      VertexRange V = tvT.T.verticesAroundFace( f );
+      Point       a = tvT.T.position( V[ 0 ] );
+      Point       b = tvT.T.position( V[ 1 ] );
+      Point       c = tvT.T.position( V[ 2 ] );
+      Value     val = { 255, 0, 0 };
+      viewFlatTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
+			RealPoint( b[ 0 ], b[ 1 ] ),
+			RealPoint( c[ 0 ], c[ 1 ] ), val );
+    }
 
     /**
        Displays the AVT with flat or Gouraud shading.
@@ -901,31 +932,52 @@ namespace DGtal {
     void view( TVT & tvT )
     {
       cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
-      // _redf   = ( mode == Red )   || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
-      // _greenf = ( mode == Green ) || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
-      // _bluef  = ( mode == Blue )  || ( mode == Gray ) ? 1.0 / 255.0 : 0.0;
       cairo_set_line_width( _cr, 0.0 ); 
       cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
       cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
 	{
-	  // if ( f % 1000 == 0 )
-	  //   trace.info() << f << "/" << tvT.T.nbFaces() << std::endl;
 	  if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
 	  else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
 	  else                      viewTVTFlatTriangle   ( tvT, f );
 	}
-      // cairo_operator_t op;
-      // switch ( mode ) {
-      // case Red: 
-      // case Green:
-      // case Blue: 
-      //   op = CAIRO_OPERATOR_ADD; break;
-      // case Gray:
-      // default: op = CAIRO_OPERATOR_SOURCE; break;
-      // };
-      // op = CAIRO_OPERATOR_ADD;
-      // cairo_set_operator( _cr, op );
+    }
+
+    /**
+       Displays the AVT with flat or Gouraud shading, and displays a
+       set of discontinuities as a percentage of the total energy.
+    */
+    void view( TVT & tvT, Scalar discontinuities )
+    {
+      // We need first to sort faces according to their energyTV.
+      std::vector<Face> tv_faces( tvT.T.nbFaces() );
+      for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
+	tv_faces[ f ] = f;
+      std::sort( tv_faces.begin(), tv_faces.end(),
+		 [ & tvT ] ( Face f1, Face f2 ) -> bool
+		 { return ( tvT.energyTV( f1 ) * tvT.aspectRatio( f1 ) )
+		     > ( tvT.energyTV( f2 ) * tvT.aspectRatio( f2 ) ); } );
+      Scalar Etv = tvT.getEnergyTV();
+      Scalar Ctv = 0.0;
+      Scalar Otv = Etv * discontinuities;
+      
+      cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+      cairo_set_line_width( _cr, 0.0 ); 
+      cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+      cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+      for ( int i = 0; i < tv_faces.size(); ++i )
+	{
+	  Face f = tv_faces[ i ];
+	  Ctv   += tvT.energyTV( f );
+	  if ( Ctv < Otv ) { // display discontinuity
+	    viewTVTTriangleDiscontinuity( tvT, f );
+	  }
+	  else {
+	    if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
+	    else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
+	    else                      viewTVTFlatTriangle   ( tvT, f );
+	  }
+	}
     }
 
   };
@@ -933,26 +985,26 @@ namespace DGtal {
   // shading; 0:flat, 1:gouraud, 2:linear gradient.
   void viewTVTriangulationColor
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
-    int shading, std::string fname )
+    int shading, std::string fname, double discontinuities )
   {
     CairoViewerTV cviewer
       ( (int) round( x0 ), (int) round( y0 ), 
 	(int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
 	b, b, shading );
-    cviewer.view( tvT );
+    cviewer.view( tvT, discontinuities );
     cviewer.save( fname.c_str() );
   }
   
   void viewTVTriangulationColorAll
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
-    std::string fname, int display = 7 )
+    std::string fname, int display = 7, double discontinuities = 0.0 )
   {
     if ( display & 0x1 )
-      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 0, fname + ".png" );
+      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 0, fname + ".png", discontinuities );
     if ( display & 0x2 )
-      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 1, fname + "-g.png" );
+      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 1, fname + "-g.png", discontinuities );
     if ( display & 0x4 )
-      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 2, fname + "-lg.png" );
+      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 2, fname + "-lg.png", discontinuities );
   }
   
 
@@ -985,6 +1037,7 @@ int main( int argc, char** argv )
     ("nb-alt-iter,A", po::value<int>()->default_value( 1 ), "The number of iteration for alternating TV and TV-flip." )
     ("display-tv,d", po::value<int>()->default_value( 0 ), "Tells the display mode after TV of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
     ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode after flips of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
+    ("discontinuities", po::value<double>()->default_value( 0.0 ), "Tells to display a % of the TV discontinuities (the triangles with greatest energy)." ) 
     ;
 
   bool parseOK = true;
@@ -1054,11 +1107,12 @@ int main( int argc, char** argv )
   {
     int  display = vm[ "display-tv" ].as<int>();
     double     b = vm[ "bitmap" ].as<double>();
+    double  disc = vm[ "discontinuities" ].as<double>();
     double    x0 = 0.0;
     double    y0 = 0.0;
     double    x1 = (double) image.domain().upperBound()[ 0 ];
     double    y1 = (double) image.domain().upperBound()[ 1 ];
-    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv", display );
+    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv", display, disc );
   }
   trace.endBlock();
   
@@ -1097,12 +1151,13 @@ int main( int argc, char** argv )
   {
     int  display = vm[ "display-flip" ].as<int>();
     double     b = vm[ "bitmap" ].as<double>();
+    double  disc = vm[ "discontinuities" ].as<double>();
     double    x0 = 0.0;
     double    y0 = 0.0;
     double    x1 = (double) image.domain().upperBound()[ 0 ];
     double    y1 = (double) image.domain().upperBound()[ 1 ];
     viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv-opt",
-				 display );
+				 display, disc );
   }
   trace.endBlock();
 

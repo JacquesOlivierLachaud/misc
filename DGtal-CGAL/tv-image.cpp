@@ -100,7 +100,7 @@ int main( int argc, char** argv )
   }
   trace.endBlock();
   
-  trace.beginBlock("Output TV image (possibly quantified)");
+  trace.beginBlock("Output TV image");
   struct UnsignedInt2Color {
     Color operator()( unsigned int val ) const { return Color( val ); }
   };

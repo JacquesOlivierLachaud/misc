@@ -230,6 +230,7 @@ namespace DGtal
     template <typename Image, typename Functor>
     bool outputU( Image& J, Functor f ) const
     {
+      J      = Image( _domain ); 
       Size i = 0;
       for ( auto & val_J : J ) {
 	val_J = f( _u[ i ] );
@@ -438,7 +439,6 @@ namespace DGtal
       return diff_p;
     }
 
-    
     // ------------------------- Private Datas --------------------------------
   private:
 
@@ -452,6 +452,177 @@ namespace DGtal
 
   }; // end of class ImageTVRegularization
 
+
+
+  template <typename TSpace, int M>
+  class ImageTVZoom : public ImageTVRegularization< TSpace, M >
+  {
+  public:
+    typedef TSpace                            Space;
+    typedef ImageTVZoom< TSpace, M>           Self;
+    typedef ImageTVRegularization< TSpace, M> Base;
+    using typename Base::Point;
+    using typename Base::Vector;
+    using typename Base::RealPoint;
+    using typename Base::RealVector;
+    using typename Base::Size;
+    using typename Base::Domain;
+    using typename Base::Scalar;
+    using typename Base::Value;
+    using typename Base::VectorValue;
+    using typename Base::ScalarForm;
+    using typename Base::ValueForm;
+    using typename Base::VectorValueForm;
+    using Base::N;
+    using Base::_I;
+    using Base::_domain;
+    using Base::_extent;
+    using Base::_u;
+    using Base::_p;
+    using Base::grad;
+    using Base::div;
+    using Base::norm;
+    using Base::normX;
+    using Base::normY;
+    using Base::multiplication;
+    using Base::subtraction;
+    using Base::subtract;
+    using Base::combination;
+    using Base::energyTV;
+    using Base::index;
+    using Base::point;
+    
+    /// The zoom factor (2,3,...)
+    int        _zoom;
+    /// The unzoomed domain.
+    Domain     _uz_domain;
+    /// The unzoomed extent.
+    Vector     _uz_extent;
+    /// The scalar form v
+    ValueForm  _v;
+  public:
+    ImageTVZoom() : Base() {}
+
+    /// @tparam Functor the type of function: Image Value x int --> Scalar,
+    /// where int is the dimension in the Value.
+    /// @see Color2ValueFunctor
+    /// @see GrayLevel2ValueFunctor
+    template <typename Image, typename Functor>
+    void init( const Image& I, Functor f, int zoom = 2 )
+    {
+      _zoom = zoom;
+      ASSERT( _zoom >= 2 );
+      _I.reserve( I.size() );
+      _uz_domain = I.domain();
+      _uz_extent = I.extent();
+      _domain    = Domain( Point::zero, I.domain().upperBound() * zoom );
+      _extent    = I.domain().upperBound() * zoom + Point::diagonal( 1 );
+      const Size z_size = _domain.size();
+      _p.resize( z_size ); // p = vec(0)
+      _v.resize( z_size ); // v = 0  at initialization
+      _u.resize( z_size ); // u = f at sampled points.
+      Value v;
+      Domain zd( Point::zero, Point::diagonal( zoom - 1 ) );
+      for ( auto p : I.domain() ) {
+	auto val_I = I( p );
+	for ( unsigned int m = 0; m < M; ++m )
+	  v[ m ] = f( val_I, m );
+	_I.push_back( v );
+	Point b = zoom * p;
+	for ( Point q : zd ) {
+	  Point r = b + q;
+	  if ( r.sup( _domain.upperBound() ) == _domain.upperBound() )
+	    _u[ index( b + q ) ] = v;
+	}
+      }
+    }
+
+    /// Does one pass of TV regularization (u, p and I must have the
+    /// meaning of the previous iteration).
+    ///
+    /// @note Li, Bao, Liu, and Zhang algorithm, adaptation of Pock
+    /// primal-dual algorithm 1
+    Scalar optimize( Scalar lambda, Scalar theta,
+		     Scalar dt = 0.248, Scalar tol = 0.01, int max_iter = 15 )
+    {
+      trace.info() << "TV( u ) = " << energyTV() << std::endl;
+      //trace.info() << "lambda.f" << std::endl;
+      VectorValueForm p( _p.size() ); // this is p^{n+1}
+      Scalar          lt = lambda * theta;
+      Scalar      diff_p = 0.0;
+      int           iter = 0; // iteration number
+      Scalar           h = 1.0 / (Scalar) _zoom;
+      ValueForm       dp = multiplication( 1.0/h, div( _p ) );
+      do {
+	// Computing p^{k+1}
+	ValueForm        dp_ut = combination( 1.0, dp,
+					      1.0/(theta), _u );
+	VectorValueForm gdp_ut = grad( dp_ut );
+	ScalarForm     ngdp_ut = norm( gdp_ut );
+	diff_p = 0.0;
+	for ( Size i = 0; i < p.size(); i++ ) {
+	  Scalar alpha = 1.0 / ( 1.0 + dt * ngdp_ut[ i ] );
+	  if ( alpha <= 0.0 )
+	    trace.warning() << "Face " << i << " alpha=" << alpha << std::endl;
+	  VectorValue delta;
+	  for ( unsigned int n = 0; n < N; ++n ) {
+	    p[ i ][ n ] = alpha * ( _p[ i ][ n ] + dt * gdp_ut[ i ][ n ] );
+	    delta[ n ]  = p[ i ][ n ] - _p[ i ][ n ];
+	  }
+	  diff_p = std::max( diff_p, normY( delta ) );
+	}
+	trace.info() << "Iter n=" << (iter++) << " diff_p=" << diff_p
+		     << " tol=" << tol << std::endl;
+	dp = div( p );
+	// Computing v^{k+1}
+	_v = combination( 1.0, _u, -theta, dp );
+	// Computing u^{k+1}
+	Size i = 0;
+	for ( Point p : _domain ) {
+	  Point q = p / _zoom;
+	  if ( ( q * _zoom ) == p )
+	    // Sample point
+	    _u[ i ] = ( lt * _I[ uzindex( q ) ] + _v[ i ] ) / ( 1.0 + lt );
+	  else
+	    _u[ i ] = _v[ i ];
+	  i++;
+	}
+	// Preparing next iteration
+	std::swap( p, _p );
+      } while ( ( diff_p > tol ) && ( iter < max_iter ) );
+      trace.info() << "TV( u ) = " << energyTV() << std::endl;
+      return diff_p;
+    }
+
+    
+    /// @see Value2ColorFunctor
+    /// @see Value2GrayLevelFunctor
+    template <typename Image, typename Functor>
+    bool outputU( Image& J, Functor f ) const
+    {
+      J      = Image( _domain ); 
+      Size i = 0;
+      for ( auto & val_J : J ) {
+	val_J = f( _u[ i ] );
+	i++;
+      }
+      return i == _u.size();
+    }
+
+    /// Linearize the point to an index.
+    Size uzindex( const Point &aPoint ) const
+    {
+      return Linearizer<Domain, ColMajorStorage>::getIndex( aPoint, _uz_extent );
+    }
+    /// Delinearize the index to a point.
+    Point uzpoint( const Size index ) const
+    {
+      return Linearizer<Domain, ColMajorStorage>::getPoint( index, _uz_extent );
+    }
+
+    
+    
+  };
 } // namespace DGtal
 
 
