@@ -63,10 +63,7 @@ namespace DGtal {
   {
     typedef Z2i::Integer               Integer;
     typedef Z2i::RealPoint             Point;
-<<<<<<< HEAD
     typedef Z2i::RealVector            Vector;
-=======
->>>>>>> 677eea3946bd2b542e9eb00416e0166540e68549
     typedef Z2i::Domain                Domain;
     typedef TriangulatedSurface<Point> Triangulation;
     typedef Triangulation::VertexIndex VertexIndex;
@@ -294,10 +291,29 @@ namespace DGtal {
       Scalar    dab = ab.norm();
       Scalar    dbc = bc.norm();
       Scalar    dca = ca.norm();
-      Scalar     ha = fabs( ( ab.dot( bc ) ) / dbc );
-      Scalar     hb = fabs( ( bc.dot( ca ) ) / dca );
-      Scalar     hc = fabs( ( ca.dot( ab ) ) / dab );
+      Vector    uab = ab / dab;
+      Vector    ubc = bc / dbc;
+      Vector    uca = ca / dca;
+      Scalar     ha = ( ab - ab.dot( ubc ) * ubc  ).norm();
+      Scalar     hb = ( bc - bc.dot( uca ) * uca  ).norm();
+      Scalar     hc = ( ca - ca.dot( uab ) * uab  ).norm();
       return std::max( dab / hc, std::max( dbc / ha, dca / hb ) );
+    }
+
+    /// @return the diameter of a face (the greater, the most elongated it is.
+    Scalar diameter( const Face f ) const
+    {
+      VertexRange P  = T.verticesAroundFace( f );
+      const Point& a = T.position( P[ 0 ] );
+      const Point& b = T.position( P[ 1 ] );
+      const Point& c = T.position( P[ 2 ] );
+      Vector     ab = b - a;
+      Vector     bc = c - b;
+      Vector     ca = a - c;
+      Scalar    dab = ab.norm();
+      Scalar    dbc = bc.norm();
+      Scalar    dca = ca.norm();
+      return std::max( dab, std::max( dbc, dca ) );
     }
 
     // -------------- Construction services -------------------------
@@ -961,8 +977,14 @@ namespace DGtal {
 	tv_faces[ f ] = f;
       std::sort( tv_faces.begin(), tv_faces.end(),
 		 [ & tvT ] ( Face f1, Face f2 ) -> bool
-		 { return ( tvT.energyTV( f1 ) * tvT.aspectRatio( f1 ) )
-		     > ( tvT.energyTV( f2 ) * tvT.aspectRatio( f2 ) ); } );
+		 // { return ( tvT.energyTV( f1 ) ) > ( tvT.energyTV( f2 ) ); } 
+		 // { return ( tvT.aspectRatio( f1 ) )
+                 //     > ( tvT.aspectRatio( f2 ) ); } 
+		 { return ( tvT.energyTV( f1 ) * tvT.diameter( f1 ) )
+		     > ( tvT.energyTV( f2 ) * tvT.diameter( f2 ) ); } 
+		 // { return ( tvT.energyTV( f1 ) * tvT.aspectRatio( f1 ) )
+		 //     > ( tvT.energyTV( f2 ) * tvT.aspectRatio( f2 ) ); } 
+                 );
       Scalar Etv = tvT.getEnergyTV();
       Scalar Ctv = 0.0;
       Scalar Otv = Etv * discontinuities;
