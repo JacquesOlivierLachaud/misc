@@ -188,6 +188,7 @@ SET(SRCs
   tv-triangulation-color
   tv-image
   tv-zoom-image
+  testBezierTriangle2
   3d-triangulation
   3d-triangulation-2
   3d-triangulation-3

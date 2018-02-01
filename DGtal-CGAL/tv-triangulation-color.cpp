@@ -688,10 +688,13 @@ namespace DGtal {
     int _x0, _y0;
     int _width, _height;
     double _xf, _yf;
-    int _shading;
+    int _shading; // 0: flat, 1: Gouraud, 2: LinearGradient, 3: Discontinuities
+    bool _color;
     cairo_surface_t* _surface;
     cairo_t* _cr;
-
+    double _st;        ///< discontinuity stiffness.
+    double _am;        ///< discontinuity amplitude.
+    double _s0, _sm, _s1; ///< precomputed abscissae from stiffness.
   public:
 
     // enum Mode { Gray, Red, Green, Blue };
@@ -701,10 +704,14 @@ namespace DGtal {
     */
     CairoViewerTV( int x0, int y0, int width, int height, 
 		   double xfactor = 1.0, double yfactor = 1.0,
-		   int shading = 0 )
+		   int shading = 0,
+		   bool color = true,
+		   double disc_stiffness = 0.5,
+		   double disc_amplitude = 0.75 )
       : _redf( 1.0/255.0f ), _greenf( 1.0/255.0f ), _bluef( 1.0/255.0f ),
 	_x0( x0 ), _y0( y0 ), _width( width ), _height( height ),
-	_xf( xfactor ), _yf( yfactor ), _shading( shading )
+	_xf( xfactor ), _yf( yfactor ), _shading( shading ),
+	_color( color ), _st( disc_stiffness ), _am( disc_amplitude )
     {
       _surface = cairo_image_surface_create( CAIRO_FORMAT_ARGB32,
 					     width, height );
@@ -713,6 +720,9 @@ namespace DGtal {
       cairo_set_source_rgba( _cr, 0.0, 0.0, 0.0, 1.0 );
       cairo_rectangle ( _cr, 0, 0, _width, _height );
       cairo_fill( _cr );
+      _s0 = _st * 0.5;
+      _sm = 0.5;
+      _s1 = 1.0 - _st * 0.5;
     }
     /// Destructor.
     ~CairoViewerTV()
@@ -728,12 +738,16 @@ namespace DGtal {
 
     inline double i( double x ) const
     {
-      return ( (x+0.5) * _xf ) - _x0;
+      //return ( (x+0.5) * _xf ) - _x0;
+      // Avoids bad approximations around 1/(_xf*_yf) pixels
+      return x * _xf - _x0 + 0.5;
     }
     
     inline double j( double y ) const
     {
-      return _height - (( (y+0.5) * _yf ) - _y0) - 1;
+      //return _height - (( (y+0.5) * _yf ) - _y0) - 1;
+      // Avoids bad approximations around 1/(_xf*_yf) pixels
+      return _height - ( y * _yf - _y0) - 0.5;
     }
     // inline int i( double x ) const
     // {
@@ -795,59 +809,177 @@ namespace DGtal {
     void viewLinearGradientTriangle( RealPoint a, RealPoint b, RealPoint c, 
 				     Value val_a, Value val_b, Value val_c ) 
     {
-      const Value  Vr = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
-      const Value  Vg = Value( val_a[ 1 ], val_b[ 1 ], val_c[ 1 ] );
-      const Value  Vb = Value( val_a[ 2 ], val_b[ 2 ], val_c[ 2 ] );
       RealPoint s, m, e;
       Scalar  gs, gm, ge;
       Scalar  t;
       cairo_pattern_t *pat;
-      // Draw path
-      cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
-      cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
-      cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
-      cairo_close_path( _cr );
-      // Draw red
-      if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
-	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
-	t = (m-s).norm() / (e-s).norm();
-	cairo_pattern_add_color_stop_rgb (pat, 0, gs * _redf, 0, 0);
-	cairo_pattern_add_color_stop_rgb (pat, t, gm * _redf, 0, 0);
-	cairo_pattern_add_color_stop_rgb (pat, 1, ge * _redf, 0, 0);
-	cairo_set_source( _cr, pat );
-	cairo_fill_preserve( _cr );
-	cairo_pattern_destroy( pat );
-      } else {
-	cairo_set_source_rgb( _cr, gs * _redf, 0, 0 );
-	cairo_fill_preserve( _cr );
+      if ( _color ) {
+	const Value  Vr = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
+	const Value  Vg = Value( val_a[ 1 ], val_b[ 1 ], val_c[ 1 ] );
+	const Value  Vb = Value( val_a[ 2 ], val_b[ 2 ], val_c[ 2 ] );
+	// Draw path
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	// Draw red
+	if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  t = (m-s).norm() / (e-s).norm();
+	  cairo_pattern_add_color_stop_rgb (pat, 0, gs * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, t, gm * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, 1, ge * _redf, 0, 0);
+	  cairo_set_source( _cr, pat );
+	  cairo_fill_preserve( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, gs * _redf, 0, 0 );
+	  cairo_fill_preserve( _cr );
+	}
+	// Draw green
+	if ( computeLinearGradient( a, b, c, Vg, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  t = (m-s).norm() / (e-s).norm();
+	  cairo_pattern_add_color_stop_rgb (pat, 0, 0, gs * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, t, 0, gm * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, 1, 0, ge * _greenf, 0);
+	  cairo_set_source( _cr, pat );
+	  cairo_fill_preserve( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, 0, gs * _greenf, 0 );
+	  cairo_fill_preserve( _cr );
+	}
+	// Draw blue
+	if ( computeLinearGradient( a, b, c, Vb, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  t = (m-s).norm() / (e-s).norm();
+	  cairo_pattern_add_color_stop_rgb (pat, 0, 0, 0, gs * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, t, 0, 0, gm * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, 1, 0, 0, ge * _bluef );
+	  cairo_set_source( _cr, pat );
+	  cairo_fill( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, 0, 0, gs * _bluef );
+	  cairo_fill( _cr );
+	}
+      } else { // monochrome
+	const Value  Vm = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
+	// Draw path
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	// Draw gray-level
+	if ( computeLinearGradient( a, b, c, Vm, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  t = (m-s).norm() / (e-s).norm();
+	  cairo_pattern_add_color_stop_rgb (pat, 0, gs * _redf, gs * _greenf, gs * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, t, gm * _redf, gm * _greenf, gm * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, 1, ge * _redf, ge * _greenf, ge * _bluef );
+	  cairo_set_source( _cr, pat );
+	  cairo_fill( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, gs * _redf, gs * _greenf, gs * _bluef );
+	  cairo_fill( _cr );
+	}
       }
-      // Draw green
-      if ( computeLinearGradient( a, b, c, Vg, s, m, e, gs, gm, ge ) ) {
-	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
-	t = (m-s).norm() / (e-s).norm();
-	cairo_pattern_add_color_stop_rgb (pat, 0, 0, gs * _greenf, 0);
-	cairo_pattern_add_color_stop_rgb (pat, t, 0, gm * _greenf, 0);
-	cairo_pattern_add_color_stop_rgb (pat, 1, 0, ge * _greenf, 0);
-	cairo_set_source( _cr, pat );
-	cairo_fill_preserve( _cr );
-	cairo_pattern_destroy( pat );
-      } else {
-	cairo_set_source_rgb( _cr, 0, gs * _greenf, 0 );
-	cairo_fill_preserve( _cr );
-      }
-      // Draw blue
-      if ( computeLinearGradient( a, b, c, Vb, s, m, e, gs, gm, ge ) ) {
-	pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
-	t = (m-s).norm() / (e-s).norm();
-	cairo_pattern_add_color_stop_rgb (pat, 0, 0, 0, gs * _bluef );
-	cairo_pattern_add_color_stop_rgb (pat, t, 0, 0, gm * _bluef );
-	cairo_pattern_add_color_stop_rgb (pat, 1, 0, 0, ge * _bluef );
-	cairo_set_source( _cr, pat );
-	cairo_fill( _cr );
-	cairo_pattern_destroy( pat );
-      } else {
-	cairo_set_source_rgb( _cr, 0, 0, gs * _bluef );
-	cairo_fill( _cr );
+    }
+
+    double disY0( double gs, double ge ) const {
+      return std::max( 0.0, std::min( 255.0, _am * gs + (1.0 - _am ) * ge ) );
+    }
+    double disYm( double gs, double ge ) const {
+      return 0.5 * ( gs + ge );
+    }
+    double disY1( double gs, double ge ) const {
+      return std::max( 0.0, std::min( 255.0, _am * ge + (1.0 - _am ) * gs ) );
+    }
+      
+    void viewNonLinearGradientTriangle( RealPoint a, RealPoint b, RealPoint c, 
+					Value val_a, Value val_b, Value val_c )
+    {
+      RealPoint s, m, e;
+      Scalar  gs, gm, ge;
+      cairo_pattern_t *pat;
+      if ( _color ) {
+	const Value  Vr = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
+	const Value  Vg = Value( val_a[ 1 ], val_b[ 1 ], val_c[ 1 ] );
+	const Value  Vb = Value( val_a[ 2 ], val_b[ 2 ], val_c[ 2 ] );
+	// Draw path
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	// Draw red
+	if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb (pat, 0.0, gs           * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, disY0(gs,ge) * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, disYm(gs,ge) * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, disY1(gs,ge) * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, ge           * _redf, 0, 0);
+	  cairo_set_source( _cr, pat );
+	  cairo_fill_preserve( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, gs * _redf, 0, 0 );
+	  cairo_fill_preserve( _cr );
+	}
+	// Draw green
+	if ( computeLinearGradient( a, b, c, Vg, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb (pat, 0.0, 0, gs           * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, 0, disY0(gs,ge) * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, 0, disYm(gs,ge) * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, 0, disY1(gs,ge) * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, 0, ge           * _greenf, 0);
+	  cairo_set_source( _cr, pat );
+	  cairo_fill_preserve( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, 0, gs * _greenf, 0 );
+	  cairo_fill_preserve( _cr );
+	}
+	// Draw blue
+	if ( computeLinearGradient( a, b, c, Vb, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb (pat, 0.0, 0, 0, gs           * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, 0, 0, disY0(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, 0, 0, disYm(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, 0, 0, disY1(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, 0, 0, ge           * _bluef );
+	  cairo_set_source( _cr, pat );
+	  cairo_fill( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, 0, 0, gs * _bluef );
+	  cairo_fill( _cr );
+	}
+      } else { // monochrome
+	const Value  Vm = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
+	// Draw path
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	// Draw gray-level
+	if ( computeLinearGradient( a, b, c, Vm, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb(pat, 0.0, gs * _redf, gs * _greenf, gs * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, disY0(gs,ge) * _redf, disY0(gs,ge) * _greenf, disY0(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, disYm(gs,ge) * _redf, disYm(gs,ge) * _greenf, disYm(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, disY1(gs,ge) * _redf, disY1(gs,ge) * _greenf, disY1(gs,ge) * _bluef);
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, ge * _redf, ge * _greenf, ge * _bluef );
+	  cairo_set_source( _cr, pat );
+	  cairo_fill( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, gs * _redf, gs * _greenf, gs * _bluef );
+	  cairo_fill( _cr );
+	}
       }
     }
     void viewGouraudTriangle( RealPoint a, RealPoint b, RealPoint c, 
@@ -907,6 +1039,19 @@ namespace DGtal {
 				  tvT.u( V[ 0 ] ),
 				  tvT.u( V[ 1 ] ),
 				  tvT.u( V[ 2 ] ) );
+    }
+    void viewTVTNonLinearGradientTriangle( TVT & tvT, Face f )
+    {
+      VertexRange V = tvT.T.verticesAroundFace( f );
+      Point a = tvT.T.position( V[ 0 ] );
+      Point b = tvT.T.position( V[ 1 ] );
+      Point c = tvT.T.position( V[ 2 ] );
+      viewNonLinearGradientTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
+				     RealPoint( b[ 0 ], b[ 1 ] ),
+				     RealPoint( c[ 0 ], c[ 1 ] ),
+				     tvT.u( V[ 0 ] ),
+				     tvT.u( V[ 1 ] ),
+				     tvT.u( V[ 2 ] ) );
     }
     void viewTVTGouraudTriangle( TVT & tvT, Face f )
     {
@@ -998,7 +1143,8 @@ namespace DGtal {
 	  Face f = tv_faces[ i ];
 	  Ctv   += tvT.energyTV( f );
 	  if ( Ctv < Otv ) { // display discontinuity
-	    viewTVTTriangleDiscontinuity( tvT, f );
+	    // viewTVTTriangleDiscontinuity( tvT, f );
+	    viewTVTNonLinearGradientTriangle( tvT, f );
 	  }
 	  else {
 	    if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
@@ -1006,33 +1152,48 @@ namespace DGtal {
 	    else                      viewTVTFlatTriangle   ( tvT, f );
 	  }
 	}
+      // cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
+      // for ( int idx = 0; idx < tvT.T.nbVertices(); ++idx ) {
+      // 	Point       a = tvT.T.position( idx );
+      // 	Value     val = tvT.u( idx );
+      // 	//cairo_set_source_rgb( _cr, 1.0, 0.0, 0.0 );
+      // 	cairo_set_source_rgb( _cr, val[ 0 ] * _redf, val[ 1 ] * _greenf, val[ 2 ] * _bluef );
+      // 	cairo_set_line_width( _cr, 0.0 );
+      // 	cairo_rectangle( _cr, i( a[ 0 ] ), j( a[ 1 ] )-1, 1.0, 1.0 );
+      // 	cairo_fill( _cr );
+      // }
     }
 
   };
-
+  
   // shading; 0:flat, 1:gouraud, 2:linear gradient.
-  void viewTVTriangulationColor
+  void viewTVTriangulation
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
-    int shading, std::string fname, double discontinuities )
+	int shading, bool color, std::string fname, double discontinuities,
+    double stiffness, double amplitude )
   {
     CairoViewerTV cviewer
       ( (int) round( x0 ), (int) round( y0 ), 
 	(int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
-	b, b, shading );
+	b, b, shading, color, stiffness, amplitude );
     cviewer.view( tvT, discontinuities );
     cviewer.save( fname.c_str() );
   }
   
-  void viewTVTriangulationColorAll
+  void viewTVTriangulationAll
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
-    std::string fname, int display = 7, double discontinuities = 0.0 )
+    bool color, std::string fname, int display, double discontinuities,
+    double stiffness, double amplitude )
   {
     if ( display & 0x1 )
-      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 0, fname + ".png", discontinuities );
+      viewTVTriangulation( tvT, b, x0, y0, x1, y1, 0, color, fname + ".png",
+			   discontinuities, stiffness, amplitude );
     if ( display & 0x2 )
-      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 1, fname + "-g.png", discontinuities );
+      viewTVTriangulation( tvT, b, x0, y0, x1, y1, 1, color, fname + "-g.png",
+			   discontinuities, stiffness, amplitude );
     if ( display & 0x4 )
-      viewTVTriangulationColor( tvT, b, x0, y0, x1, y1, 2, fname + "-lg.png", discontinuities );
+      viewTVTriangulation( tvT, b, x0, y0, x1, y1, 2, color, fname + "-lg.png",
+			   discontinuities, stiffness, amplitude );
   }
   
 
@@ -1066,6 +1227,8 @@ int main( int argc, char** argv )
     ("display-tv,d", po::value<int>()->default_value( 0 ), "Tells the display mode after TV of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
     ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode after flips of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
     ("discontinuities", po::value<double>()->default_value( 0.0 ), "Tells to display a % of the TV discontinuities (the triangles with greatest energy)." ) 
+    ("stiffness", po::value<double>()->default_value( 0.9 ), "Tells how to stiff the gradient around discontinuities (amplitude value is changed at stiffness * middle)." ) 
+    ("amplitude", po::value<double>()->default_value( 0.75 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." ) 
     ;
 
   bool parseOK = true;
@@ -1136,11 +1299,14 @@ int main( int argc, char** argv )
     int  display = vm[ "display-tv" ].as<int>();
     double     b = vm[ "bitmap" ].as<double>();
     double  disc = vm[ "discontinuities" ].as<double>();
+    double    st = vm[ "stiffness" ].as<double>();
+    double    am = vm[ "amplitude" ].as<double>();
     double    x0 = 0.0;
     double    y0 = 0.0;
     double    x1 = (double) image.domain().upperBound()[ 0 ];
     double    y1 = (double) image.domain().upperBound()[ 1 ];
-    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv", display, disc );
+    viewTVTriangulationAll( TVT, b, x0, y0, x1, y1, color, "after-tv",
+			    display, disc, st, am );
   }
   trace.endBlock();
   
@@ -1180,12 +1346,14 @@ int main( int argc, char** argv )
     int  display = vm[ "display-flip" ].as<int>();
     double     b = vm[ "bitmap" ].as<double>();
     double  disc = vm[ "discontinuities" ].as<double>();
+    double    st = vm[ "stiffness" ].as<double>();
+    double    am = vm[ "amplitude" ].as<double>();
     double    x0 = 0.0;
     double    y0 = 0.0;
     double    x1 = (double) image.domain().upperBound()[ 0 ];
     double    y1 = (double) image.domain().upperBound()[ 1 ];
-    viewTVTriangulationColorAll( TVT, b, x0, y0, x1, y1, "after-tv-opt",
-				 display, disc );
+    viewTVTriangulationAll( TVT, b, x0, y0, x1, y1, color, "after-tv-opt",
+			    display, disc, st, am );
   }
   trace.endBlock();
 
