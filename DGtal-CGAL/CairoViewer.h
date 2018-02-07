@@ -59,6 +59,9 @@ namespace DGtal
      Description of class 'CairoViewer' <p> \brief Aim: This class
      gives functions to draw triangles in images.
 
+     In this class, colors are represented as a 3-vector with
+     components in 0..255.
+
      @tparam TSpace the digital space for images (choose Z2i::Space).
   */
   template <typename TSpace>
@@ -79,6 +82,7 @@ namespace DGtal
     typedef PointVector< 3, Scalar>               RealPoint3;
     typedef PointVector< 3, Scalar>               RealVector3;
     typedef PointVector< 3, Scalar >              Value; // Color
+    typedef PointVector< 3, Scalar >              Color;
     
   private:
     const double _redf, _greenf, _bluef;
@@ -301,8 +305,37 @@ namespace DGtal
     }
 
     template <typename BezierTriangle>
-    void drawBezierTriangle( const BezierTriangle& BT )
+    void drawColorBezierTriangle( const BezierTriangle& BT )
     {
+      // Scans all pixels in triangle
+      RealPoint low = ij( BT.vertex(0) ).inf( ij( BT.vertex(1) ) ).inf( ij( BT.vertex(2) ) ); 
+      RealPoint sup = ij( BT.vertex(0) ).sup( ij( BT.vertex(1) ) ).sup( ij( BT.vertex(2) ) ); 
+      Point   ijlow = Point( (int) low[ 0 ], (int) low[ 1 ] );
+      Point   ijsup = Point( (int) sup[ 0 ], (int) sup[ 1 ] );
+      Domain domain( ijlow, ijsup );
+      for ( Point p : domain ) {
+	RealPoint q = { x( p[ 0 ] ), y( p[ 1 ] ) };
+	auto bary_q = BT.barycentric( q );
+	std::cout << "p=" << p << " q=" << q << " bary_q=" << bary_q << std::endl;
+	if ( BT.isInTriangle( bary_q ) ) {
+	  Value val = BT( bary_q );
+	  std::cout << "   Inside val=" << val << std::endl;
+          // cairo_set_source_rgb( _cr, 255.0 * _redf,
+	  // 			0.0 * _greenf, 0.0 * _bluef );
+          cairo_set_source_rgb( _cr, val[ 0 ] * _redf,
+	  			val[ 1 ] * _greenf, val[ 2 ] * _bluef );
+	  cairo_rectangle( _cr, p[ 0 ], p[ 1 ], 1, 1 );
+	  cairo_fill( _cr );
+	}
+      }
+    }
+
+    template <typename BezierTriangle>
+    void drawMonochromeBezierTriangle( const BezierTriangle& BT, int channel )
+    {
+      Scalar   red = ( channel == 0 || channel == 3 ) ? 1.0 : 0.0;
+      Scalar green = ( channel == 1 || channel == 3 ) ? 1.0 : 0.0;
+      Scalar  blue = ( channel == 2 || channel == 3 ) ? 1.0 : 0.0;
       // Scans all pixels in triangle
       RealPoint low = ij( BT.b(0) ).inf( ij( BT.b(1) ) ).inf( ij( BT.b(2) ) ); 
       RealPoint sup = ij( BT.b(0) ).sup( ij( BT.b(1) ) ).sup( ij( BT.b(2) ) ); 
@@ -316,8 +349,10 @@ namespace DGtal
 	if ( BT.isInTriangle( bary_q ) ) {
 	  Value val = BT( bary_q );
 	  std::cout << "   Inside val=" << val << std::endl;
-          cairo_set_source_rgb( _cr, val[ 0 ] * _redf,
-				val[ 1 ] * _greenf, val[ 2 ] * _bluef );
+          cairo_set_source_rgb( _cr,
+				red   * val[ 0 ] * _redf,
+				green * val[ 0 ] * _greenf,
+				blue  * val[ 0 ] * _bluef );
 	  cairo_rectangle( _cr, p[ 0 ], p[ 1 ], 1, 1 );
 	  cairo_fill( _cr );
 	}

@@ -246,11 +246,18 @@ namespace DGtal {
       
     /// The function that evaluates the energy at each triangle.
     /// It is now just the norm of the gradient.
-    Scalar energyTV( VertexIndex v1, VertexIndex v2, VertexIndex v3 ) const
+    Scalar computeEnergyTV( VertexIndex v1, VertexIndex v2, VertexIndex v3 ) const
     {
       return _normY( grad( v1, v2, v3, _u ) );
     }
 
+    /// @return the tv energy stored at this face.
+    Scalar computeEnergyTV( const Face f )
+    {
+      VertexRange V = T.verticesAroundFace( f );
+      return ( _tv_per_triangle[ f ] = computeEnergyTV( V[ 0 ], V[ 1 ], V[ 2 ] ));
+    }
+    
     /// @return the tv energy stored at this face.
     Scalar energyTV( const Face f ) const
     {
@@ -269,8 +276,7 @@ namespace DGtal {
     {
       Scalar E = 0;
       for ( Face f = 0; f < T.nbFaces(); ++f )	{
-	VertexRange V = T.verticesAroundFace( f );
-	E += _tv_per_triangle[ f ] = energyTV( V[ 0 ], V[ 1 ], V[ 2 ] );
+	E += computeEnergyTV( f );
       }
       _tv_energy = E;
       // trace.info() << "TV(u) = " << E << std::endl;
@@ -457,8 +463,8 @@ namespace DGtal {
       const Face    f023 = T.faceAroundArc( T.opposite( a ) );
       const Scalar  E012 = energyTV( f012 ); //P[ 0 ], P[ 1 ], P[ 2 ] );
       const Scalar  E023 = energyTV( f023 ); //P[ 0 ], P[ 2 ], P[ 3 ] );
-      const Scalar  E013 = energyTV( P[ 0 ], P[ 1 ], P[ 3 ] );
-      const Scalar  E123 = energyTV( P[ 1 ], P[ 2 ], P[ 3 ] );
+      const Scalar  E013 = computeEnergyTV( P[ 0 ], P[ 1 ], P[ 3 ] );
+      const Scalar  E123 = computeEnergyTV( P[ 1 ], P[ 2 ], P[ 3 ] );
       const Scalar Ecurr = E012 + E023;
       const Scalar Eflip = E013 + E123;
       // trace.info() << "(" << P[ 0 ] << "," << P[ 1 ] << "," << P[ 2 ]
@@ -653,12 +659,28 @@ namespace DGtal {
 			 std::max( P[ 2 ], P[ 3 ] ) ) >= _nbV ) continue;
 	  // Save arcs that may be affected.
 	  queueSurroundingArcs( a );
+	  // Remember faces.
+	  const Face    f012 = T.faceAroundArc( a );
+	  const Face    f023 = T.faceAroundArc( T.opposite( a ) );
+	  Scalar     Ebefore = energyTV( f012 ) + energyTV( f023 );
+	  Scalar      Eafter = 0.0; 
 	  Point B = ( T.position( P[ 0 ] ) + T.position( P[ 1 ] )
 		      + T.position( P[ 2 ] ) + T.position( P[ 3 ] ) ) * 0.25;
 	  VertexIndex v = T.split( a, B );
+	  FaceRange   F = T.facesAroundVertex( v );
+	  Face    new_f = _tv_per_triangle.size();
+	  _tv_per_triangle.resize( new_f + 2 );
+	  _p.resize( new_f + 2 );
+	  for ( Face f : F )
+	    Eafter    += computeEnergyTV( f );
+	  _tv_energy   += Eafter - Ebefore;
+	  
 	  Value V = ( _u[ P[ 0 ] ] + _u[ P[ 1 ] ]
 		      + _u[ P[ 2 ] ] + _u[ P[ 3 ] ] ) * 0.25;
+	  Value VI = ( _I[ P[ 0 ] ] + _I[ P[ 1 ] ]
+		       + _I[ P[ 2 ] ] + _I[ P[ 3 ] ] ) * 0.25;
 	  _u.push_back( V );
+	  _I.push_back( VI );
 	  ++nbsubdivided;
 	}
       }
@@ -1521,21 +1543,28 @@ int main( int argc, char** argv )
 			    display, disc, st, am );
   }
   trace.endBlock();
-  trace.beginBlock("Export base triangulation");
-  if(vm.count("exportEPSMesh"))
+    trace.beginBlock("Export base triangulation");
+    if(vm.count("exportEPSMesh"))
+    {
+        unsigned int w = image.extent()[ 0 ];
+        unsigned int h = image.extent()[ 1 ];
+        std::string name = vm["exportEPSMesh"].as<std::string>();
+        exportEPSMesh(TVT, name, w, h ,vm.count("displayMesh"));
+        
+    }
+    if(vm.count("exportEPSMeshDual"))
+    {
+        unsigned int w = image.extent()[ 0 ];
+        unsigned int h = image.extent()[ 1 ];
+        std::string name = vm["exportEPSMeshDual"].as<std::string>();
+        exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"));
+        
+    }
+    trace.endBlock();
+
+  
+  trace.beginBlock("Merging triangles");
   {
-    unsigned int w = image.extent()[ 0 ];
-    unsigned int h = image.extent()[ 1 ];
-    std::string name = vm["exportEPSMesh"].as<std::string>();
-    exportEPSMesh(TVT, name, w, h ,vm.count("displayMesh"));
-    
-  }
-  if(vm.count("exportEPSMeshDual"))
-  {
-    unsigned int w = image.extent()[ 0 ];
-    unsigned int h = image.extent()[ 1 ];
-    std::string name = vm["exportEPSMeshDual"].as<std::string>();
-    exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"));
     
   }
   trace.endBlock();
