@@ -64,7 +64,7 @@ namespace DGtal {
   struct TVTriangulation
   {
 
-    typedef std::map<DGtal::Color, > 
+    typedef std::map<DGtal::Color, std::vector<unsigned int> >  MapColorContours;
     typedef Z2i::Integer               Integer;
     typedef Z2i::RealPoint             Point;
     typedef Z2i::RealVector            Vector;
@@ -1309,9 +1309,10 @@ namespace DGtal {
   }
   
   
-  std::vector<std::vector<TVTriangulation::Point> > trackBorders(TVTriangulation& tvT)
+  std::vector<std::vector<TVTriangulation::Point> > trackBorders(TVTriangulation& tvT, unsigned int num)
   {
-    std::vector<std::vector<TVTriangulation::Point> > res;
+    TVTriangulation::MapColorContours mapContours;
+    std::vector<std::vector<TVTriangulation::Point> > resAll;
     std::vector<bool> markedArcs(tvT.T.nbArcs());
     for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
     bool found = true;
@@ -1328,11 +1329,26 @@ namespace DGtal {
         found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]);
         if(found)
         {
-          res.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
+          resAll.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
+          if (mapContours.count(DGtal::Color(valH[0], valH[1], valH[2]))==0)
+          {
+            std::vector<unsigned int> indexC;
+            indexC.push_back(resAll.size()-1);
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])]=indexC;
+          }
+          else
+          {
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])].push_back(resAll.size()-1);
+          }
         }
       }
     }
-    
+    auto itMap = mapContours.begin();
+      for(unsigned int i=0;i < num; i++)  itMap++;
+    std::vector<std::vector<TVTriangulation::Point> > res;
+    for(unsigned int i=0; i< (itMap->second).size(); i++){
+      res.push_back(resAll[(itMap->second)[i]]);
+    }
     return res;
   }
 
@@ -1340,7 +1356,7 @@ namespace DGtal {
 
   
   void exportEPSMeshDual(TVTriangulation& tvT, const std::string &name, unsigned int width,
-                         unsigned int height, bool displayMesh)
+                         unsigned int height, bool displayMesh, unsigned int numColor)
   {
     BasicVectoImageExporter exp( name, width, height, displayMesh, 100);    
     for(TVTriangulation::VertexIndex v = 0; v < tvT.T.nbVertices(); v++)
@@ -1371,7 +1387,7 @@ namespace DGtal {
  
           exp.addContour(tr, DGtal::Color(0, 200, 200), 0.01);        
       }
-        std::vector<std::vector<TVTriangulation::Point> > contour = trackBorders(tvT);
+        std::vector<std::vector<TVTriangulation::Point> > contour = trackBorders(tvT, numColor);
         for (auto c: contour){ exp.addContour(c, (c.size()%2==0)? DGtal::Color(200, 20, 200): DGtal::Color(20, 100, 200), 0.1);}        
       }
     
@@ -1379,7 +1395,7 @@ namespace DGtal {
   }
 
 
-  } // namespace DGtal
+} // namespace DGtal
 
 
 
@@ -1415,7 +1431,8 @@ int main( int argc, char** argv )
     ("amplitude", po::value<double>()->default_value( 0.75 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." )
     ("displayMesh", "display mesh of the eps display." )
     ("exportEPSMesh,e", po::value<std::string>(), "Export the triangle mesh." )
-    ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." );
+    ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." )
+    ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." );
   
 
   bool parseOK = true;
@@ -1557,7 +1574,8 @@ int main( int argc, char** argv )
         unsigned int w = image.extent()[ 0 ];
         unsigned int h = image.extent()[ 1 ];
         std::string name = vm["exportEPSMeshDual"].as<std::string>();
-        exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"));
+        unsigned int numColor = vm["numColorExportEPSDual"].as<unsigned int>();
+        exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor);
         
     }
     trace.endBlock();
