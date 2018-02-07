@@ -3,6 +3,7 @@
 project( DGtalCGAL ) 
 
 cmake_minimum_required (VERSION 2.6) 
+include_directories ("${PROJECT_SOURCE_DIR}/")
 
 macro(use_cxx11)
   if (CMAKE_VERSION VERSION_LESS "3.1")
@@ -54,13 +55,7 @@ LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
 # -----------------------------------------------------------------------------
 # Define variables and cmake parameters, and display some information
 # -----------------------------------------------------------------------------
-SET(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-SET(DGtalTools_VERSION_MAJOR 0)
-SET(DGtalTools_VERSION_MINOR 8)
-SET(DGtalTools_VERSION_PATCH beta)
-SET(DGTALTOOLS_VERSION "${DGtalTools_VERSION_MAJOR}.${DGtalTools_VERSION_MINOR}.${DGtalTools_VERSION_PATCH}")
-SET(PROJECT_VERSION "${DGtalTools_VERSION_MAJOR}.${DGtalTools_VERSION_MINOR}.${DGtalTools_VERSION_PATCH}")
-SET(VERSION ${DGtalTools_VERSION_MAJOR}.${DGtalTools_VERSION_MINOR}.${DGtalTools_VERSION_PATCH})
+
 
 SET(Boost_USE_STATIC_LIBS   ON)
 SET(Boost_USE_MULTITHREADED ON)
@@ -125,14 +120,16 @@ endif( Boost_FOUND )
 #   message(STATUS "NOTICE: This demo requires CGAL  and will not be compiled.")
 # endif ( WITH_CGAL )
 
-find_package(CGAL COMPONENTS Core )
-include( ${CGAL_USE_FILE} )
-include_directories(${CGAL_INCLUDE_DIR})
+#find_package(CGAL COMPONENTS Core )
+#include( ${CGAL_USE_FILE} )
+#include_directories(${CGAL_INCLUDE_DIR})
 
 # DGtal
 FIND_PACKAGE(DGtal REQUIRED)
 INCLUDE_DIRECTORIES(${DGTAL_INCLUDE_DIRS})
 LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
+SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
 
 # Cairo
 
@@ -181,30 +178,15 @@ ENDIF(CAIRO_FOUND)
 
 
 SET(SRCs
-  simpleExample
-  2d-triangulation
-  2d-triangulation-f
-  2d-triangulation-color
   tv-triangulation-color
   tv-image
   tv-zoom-image
-  testBezierTriangle2
-  3d-triangulation
-  3d-triangulation-2
-  3d-triangulation-3
-  2d-patterns-v2
-  3d-patterns
-  3d-patterns-v2)
+)
 
-if ( CGAL_FOUND )
+
   
   FOREACH(FILE ${SRCs})
-    add_executable(${FILE} ${FILE})
+    add_executable(${FILE} ${FILE} BasicVectoImageExporter)
     target_link_libraries( ${FILE}  ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${CAIRO_LIBRAIRIES} ${DGTAL_LIBRARIES} ${Boost_LIBRAIRIES} ${Boost_PROGRAM_OPTIONS_LIBRARY})
   ENDFOREACH(FILE)
   
-else()
-
-  message(STATUS "NOTICE: This demo requires CGAL  and will not be compiled.")
-
-endif()

@@ -6,7 +6,7 @@
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
 
-#include <QtGui/qapplication.h>
+#include <qapplication.h>
 
 #include <DGtal/base/Common.h>
 #include <DGtal/helpers/StdDefs.h>
