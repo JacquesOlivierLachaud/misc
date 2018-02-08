@@ -17,6 +17,8 @@
 #include <DGtal/io/colormaps/GrayscaleColorMap.h>
 #include "DGtal/io/readers/GenericReader.h"
 #include "DGtal/io/writers/PPMWriter.h"
+#include "BasicVectoImageExporter.h"
+
 
 // #include <CGAL/Delaunay_triangulation_2.h>
 // #include <CGAL/Constrained_Delaunay_triangulation_2.h>
@@ -61,6 +63,8 @@ namespace DGtal {
   
   struct TVTriangulation
   {
+
+    typedef std::map<DGtal::Color, std::vector<unsigned int> >  MapColorContours;
     typedef Z2i::Integer               Integer;
     typedef Z2i::RealPoint             Point;
     typedef Z2i::RealVector            Vector;
@@ -1218,9 +1222,182 @@ namespace DGtal {
       viewTVTriangulation( tvT, b, x0, y0, x1, y1, 2, color, fname + "-lg.png",
 			   discontinuities, stiffness, amplitude );
   }
+
+  void exportEPSMesh(TVTriangulation& tvT, const std::string &name, unsigned int width,
+                     unsigned int height, bool displayMesh=true)
+  {
+    BasicVectoImageExporter exp( name, width, height, displayMesh, 100);
+    BasicVectoImageExporter expMean( "mean.eps", width, height, displayMesh, 100);
+    
+    for(TVTriangulation::Face f = 0; f < tvT.T.nbFaces(); f++)
+    {
+      TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( f );
+      std::vector<TVTriangulation::Point> tr;
+      tr.push_back(tvT.T.position(V[0]));
+      tr.push_back(tvT.T.position(V[1]));
+      tr.push_back(tvT.T.position(V[2]));
+      tr.push_back(tvT.T.position(V[0]));
+      TVTriangulation::Value   valMedian;
+      TVTriangulation::Value   valMean = tvT.u( V[ 0 ] )+ tvT.u( V[ 1 ] ) + tvT.u( V[ 2 ] );
+      valMean /= 3.0;
+      double val1 = sqrt(tvT.u( V[ 0 ] )[0]*tvT.u( V[ 0 ] )[0]+
+                         tvT.u( V[ 0 ] )[1]*tvT.u( V[ 0 ] )[1]+
+                         tvT.u( V[ 0 ] )[2]*tvT.u( V[ 0 ] )[2]);
+      double val2 = sqrt(tvT.u( V[ 1 ] )[0]*tvT.u( V[ 1 ] )[0]+
+                         tvT.u( V[ 1 ] )[1]*tvT.u( V[ 1 ] )[1]+
+                         tvT.u( V[ 1 ] )[2]*tvT.u( V[ 1 ] )[2]);
+      double val3 = sqrt(tvT.u( V[ 2 ] )[0]*tvT.u( V[ 2 ] )[0]+
+                         tvT.u( V[ 2 ] )[1]*tvT.u( V[ 2 ] )[1]+
+                         tvT.u( V[ 2 ] )[2]*tvT.u( V[ 2 ] )[2]);
+      if ((val1>=val2 && val1 <= val3) ||
+         (val1<=val2 && val1 >= val3))
+      {
+        valMedian = tvT.u( V[ 0 ] );
+      }
+      else if ((val2<=val1 && val2 >= val3)||
+               (val2>=val1 && val2 <= val3))
+      {
+        valMedian = tvT.u( V[ 1 ] );
+      }else{
+         valMedian = tvT.u( V[ 2 ] );
+      }
+
+      exp.addRegion(tr, DGtal::Color(valMedian[0], valMedian[1], valMedian[2]), 0.001);
+      expMean.addRegion(tr, DGtal::Color(valMean[0], valMean[1], valMean[2]), 0.001);  
+    }
+    
+    
+  }
+
+  TVTriangulation::Arc pivotNext(TVTriangulation& tvT, TVTriangulation::Arc a,
+                 const TVTriangulation::Value &valTrack)
+  {
+    TVTriangulation::Value currentHead =  tvT.u(tvT.T.head(a));
+    while( currentHead[0] == valTrack[0] && currentHead[1] == valTrack[1]  && currentHead[2] == valTrack[2]  )
+      {
+        a = tvT.T.next(a); 
+        currentHead =  tvT.u(tvT.T.head(a));
+      }
+      return tvT.T.opposite(a);
+  }
+
+
+
+  std::vector<TVTriangulation::Point> trackBorderFromFace(TVTriangulation& tvT,  TVTriangulation::Face startArc,
+                                                          TVTriangulation::Value valInside, std::vector<bool> &markedArcs)
+  {
+    std::vector<TVTriangulation::Point> res;
+    
+    // starting ext point: arc tail
+    TVTriangulation::Face faceIni = tvT.T.faceAroundArc(startArc);
+
+    
+    TVTriangulation::Arc currentArc = startArc;
+    TVTriangulation::Face currentFace = faceIni;
+    markedArcs[startArc] = true;
+    
+    do 
+    {          
+      TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( currentFace );
+      TVTriangulation::Point center = (tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
+      res.push_back(center);
+      currentArc = pivotNext(tvT, currentArc, valInside);          
+      currentFace = tvT.T.faceAroundArc(currentArc);
+      markedArcs[currentArc] = true;
+    } while(currentFace != faceIni);
+    return res;
+  }
   
+  
+  std::vector<std::vector<TVTriangulation::Point> > trackBorders(TVTriangulation& tvT, unsigned int num)
+  {
+    TVTriangulation::MapColorContours mapContours;
+    std::vector<std::vector<TVTriangulation::Point> > resAll;
+    std::vector<bool> markedArcs(tvT.T.nbArcs());
+    for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
+    bool found = true;
+    while(found){
+      found = false;
+      for(unsigned int a = 0; a< markedArcs.size(); a++)
+      {
+        // starting ext point: arc tail
+        TVTriangulation::Face faceIni = tvT.T.faceAroundArc(a);
+        // tracking Head color
+        TVTriangulation::Value valH = tvT.u(tvT.T.head(a));
+        TVTriangulation::Value valT = tvT.u(tvT.T.tail(a));
+        
+        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]);
+        if(found)
+        {
+          resAll.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
+          if (mapContours.count(DGtal::Color(valH[0], valH[1], valH[2]))==0)
+          {
+            std::vector<unsigned int> indexC;
+            indexC.push_back(resAll.size()-1);
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])]=indexC;
+          }
+          else
+          {
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])].push_back(resAll.size()-1);
+          }
+        }
+      }
+    }
+    auto itMap = mapContours.begin();
+      for(unsigned int i=0;i < num; i++)  itMap++;
+    std::vector<std::vector<TVTriangulation::Point> > res;
+    for(unsigned int i=0; i< (itMap->second).size(); i++){
+      res.push_back(resAll[(itMap->second)[i]]);
+    }
+    return res;
+  }
+
+
+
+  
+  void exportEPSMeshDual(TVTriangulation& tvT, const std::string &name, unsigned int width,
+                         unsigned int height, bool displayMesh, unsigned int numColor)
+  {
+    BasicVectoImageExporter exp( name, width, height, displayMesh, 100);    
+    for(TVTriangulation::VertexIndex v = 0; v < tvT.T.nbVertices(); v++)
+    {
+      std::vector<TVTriangulation::Point> tr;
+      TVTriangulation::FaceRange F = tvT.T.facesAroundVertex( v );
+      for(auto f: F)
+      {
+        TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( f );
+        TVTriangulation::Point center = tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]);
+        center /= 3.0;
+        tr.push_back(center);
+      }
+      TVTriangulation::Value val = tvT.u(v);
+      exp.addRegion(tr, DGtal::Color(val[0], val[1], val[2]), 0.001);        
+      
+    }
+    if(displayMesh)
+      {
+        for(TVTriangulation::Face f = 0; f < tvT.T.nbFaces(); f++)
+        {
+          TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( f );
+          std::vector<TVTriangulation::Point> tr;
+          tr.push_back(tvT.T.position(V[0]));
+          tr.push_back(tvT.T.position(V[1]));
+          tr.push_back(tvT.T.position(V[2]));
+          tr.push_back(tvT.T.position(V[0]));
+ 
+          exp.addContour(tr, DGtal::Color(0, 200, 200), 0.01);        
+      }
+        std::vector<std::vector<TVTriangulation::Point> > contour = trackBorders(tvT, numColor);
+        for (auto c: contour){ exp.addContour(c, (c.size()%2==0)? DGtal::Color(200, 20, 200): DGtal::Color(20, 100, 200), 0.1);}        
+      }
+    
+    
+  }
+
 
 } // namespace DGtal
+
+
 
 
 
@@ -1251,8 +1428,12 @@ int main( int argc, char** argv )
     ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode after flips of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
     ("discontinuities", po::value<double>()->default_value( 0.0 ), "Tells to display a % of the TV discontinuities (the triangles with greatest energy)." ) 
     ("stiffness", po::value<double>()->default_value( 0.9 ), "Tells how to stiff the gradient around discontinuities (amplitude value is changed at stiffness * middle)." ) 
-    ("amplitude", po::value<double>()->default_value( 0.75 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." ) 
-    ;
+    ("amplitude", po::value<double>()->default_value( 0.75 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." )
+    ("displayMesh", "display mesh of the eps display." )
+    ("exportEPSMesh,e", po::value<std::string>(), "Export the triangle mesh." )
+    ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." )
+    ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." );
+  
 
   bool parseOK = true;
   po::variables_map vm;
@@ -1379,6 +1560,25 @@ int main( int argc, char** argv )
 			    display, disc, st, am );
   }
   trace.endBlock();
+    trace.beginBlock("Export base triangulation");
+    if(vm.count("exportEPSMesh"))
+    {
+        unsigned int w = image.extent()[ 0 ];
+        unsigned int h = image.extent()[ 1 ];
+        std::string name = vm["exportEPSMesh"].as<std::string>();
+        exportEPSMesh(TVT, name, w, h ,vm.count("displayMesh"));
+        
+    }
+    if(vm.count("exportEPSMeshDual"))
+    {
+        unsigned int w = image.extent()[ 0 ];
+        unsigned int h = image.extent()[ 1 ];
+        std::string name = vm["exportEPSMeshDual"].as<std::string>();
+        unsigned int numColor = vm["numColorExportEPSDual"].as<unsigned int>();
+        exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor);
+        
+    }
+    trace.endBlock();
 
   
   trace.beginBlock("Merging triangles");
