@@ -181,6 +181,7 @@ SET(SRCs
   tv-triangulation-color
   tv-image
   tv-zoom-image
+  testBezierTriangle2
 )
 
 

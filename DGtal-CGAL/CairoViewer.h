@@ -84,7 +84,7 @@ namespace DGtal
     typedef PointVector< 3, Scalar >              Value; // Color
     typedef PointVector< 3, Scalar >              Color;
     
-  private:
+  protected:
     const double _redf, _greenf, _bluef;
     int _x0, _y0;
     int _width, _height;
@@ -304,6 +304,146 @@ namespace DGtal
       }
     }
 
+    double disY0( double gs, double ge ) const {
+      return std::max( 0.0, std::min( 255.0, _am * gs + (1.0 - _am ) * ge ) );
+    }
+    double disYm( double gs, double ge ) const {
+      return 0.5 * ( gs + ge );
+    }
+    double disY1( double gs, double ge ) const {
+      return std::max( 0.0, std::min( 255.0, _am * ge + (1.0 - _am ) * gs ) );
+    }
+      
+    void drawNonLinearGradientTriangle( RealPoint a, RealPoint b, RealPoint c, 
+					Value val_a, Value val_b, Value val_c )
+    {
+      RealPoint s, m, e;
+      Scalar  gs, gm, ge;
+      cairo_pattern_t *pat;
+      if ( _color ) {
+	const Value  Vr = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
+	const Value  Vg = Value( val_a[ 1 ], val_b[ 1 ], val_c[ 1 ] );
+	const Value  Vb = Value( val_a[ 2 ], val_b[ 2 ], val_c[ 2 ] );
+	// Draw path
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	// Draw red
+	if ( computeLinearGradient( a, b, c, Vr, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb (pat, 0.0, gs           * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, disY0(gs,ge) * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, disYm(gs,ge) * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, disY1(gs,ge) * _redf, 0, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, ge           * _redf, 0, 0);
+	  cairo_set_source( _cr, pat );
+	  cairo_fill_preserve( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, gs * _redf, 0, 0 );
+	  cairo_fill_preserve( _cr );
+	}
+	// Draw green
+	if ( computeLinearGradient( a, b, c, Vg, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb (pat, 0.0, 0, gs           * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, 0, disY0(gs,ge) * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, 0, disYm(gs,ge) * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, 0, disY1(gs,ge) * _greenf, 0);
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, 0, ge           * _greenf, 0);
+	  cairo_set_source( _cr, pat );
+	  cairo_fill_preserve( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, 0, gs * _greenf, 0 );
+	  cairo_fill_preserve( _cr );
+	}
+	// Draw blue
+	if ( computeLinearGradient( a, b, c, Vb, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb (pat, 0.0, 0, 0, gs           * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, 0, 0, disY0(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, 0, 0, disYm(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, 0, 0, disY1(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, 0, 0, ge           * _bluef );
+	  cairo_set_source( _cr, pat );
+	  cairo_fill( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, 0, 0, gs * _bluef );
+	  cairo_fill( _cr );
+	}
+      } else { // monochrome
+	const Value  Vm = Value( val_a[ 0 ], val_b[ 0 ], val_c[ 0 ] );
+	// Draw path
+	cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+	cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+	cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+	cairo_close_path( _cr );
+	// Draw gray-level
+	if ( computeLinearGradient( a, b, c, Vm, s, m, e, gs, gm, ge ) ) {
+	  pat = cairo_pattern_create_linear(s[0],s[1],e[0],e[1]);
+	  cairo_pattern_add_color_stop_rgb(pat, 0.0, gs * _redf, gs * _greenf, gs * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s0, disY0(gs,ge) * _redf, disY0(gs,ge) * _greenf, disY0(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _sm, disYm(gs,ge) * _redf, disYm(gs,ge) * _greenf, disYm(gs,ge) * _bluef );
+	  cairo_pattern_add_color_stop_rgb (pat, _s1, disY1(gs,ge) * _redf, disY1(gs,ge) * _greenf, disY1(gs,ge) * _bluef);
+	  cairo_pattern_add_color_stop_rgb (pat, 1.0, ge * _redf, ge * _greenf, ge * _bluef );
+	  cairo_set_source( _cr, pat );
+	  cairo_fill( _cr );
+	  cairo_pattern_destroy( pat );
+	} else {
+	  cairo_set_source_rgb( _cr, gs * _redf, gs * _greenf, gs * _bluef );
+	  cairo_fill( _cr );
+	}
+      }
+    }
+    void drawGouraudTriangle( RealPoint a, RealPoint b, RealPoint c, 
+			      Value val_a, Value val_b, Value val_c ) 
+    {
+      cairo_pattern_t * pattern = cairo_pattern_create_mesh();
+      /* Add a Gouraud-shaded triangle */
+      cairo_mesh_pattern_begin_patch (pattern);
+      cairo_mesh_pattern_move_to (pattern, i( a[ 0 ] ), j( a[ 1 ] ) );
+      cairo_mesh_pattern_line_to (pattern, i( b[ 0 ] ), j( b[ 1 ] ) );
+      cairo_mesh_pattern_line_to (pattern, i( c[ 0 ] ), j( c[ 1 ] ) );
+      cairo_mesh_pattern_set_corner_color_rgb (pattern, 0,
+					       val_a[ 0 ] * _redf,
+					       val_a[ 1 ] * _greenf,
+					       val_a[ 2 ] * _bluef );
+      cairo_mesh_pattern_set_corner_color_rgb (pattern, 1,
+					       val_b[ 0 ] * _redf,
+					       val_b[ 1 ] * _greenf,
+					       val_b[ 2 ] * _bluef );
+      cairo_mesh_pattern_set_corner_color_rgb (pattern, 2,
+					       val_c[ 0 ] * _redf,
+					       val_c[ 1 ] * _greenf,
+					       val_c[ 2 ] * _bluef );
+      cairo_mesh_pattern_end_patch (pattern);
+      cairo_set_source( _cr, pattern );
+      cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+      cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+      cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+      cairo_close_path( _cr );
+      cairo_fill( _cr );
+      cairo_pattern_destroy( pattern );
+    }
+
+    void drawFlatTriangle( RealPoint a, RealPoint b, RealPoint c, 
+			   Value val )
+    {
+      cairo_set_source_rgb( _cr,
+			    val[ 0 ] * _redf,
+			    val[ 1 ] * _greenf,
+			    val[ 2 ] * _bluef );
+      cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+      cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+      cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+      cairo_close_path( _cr );
+      cairo_fill( _cr );
+    }
+
+    
     template <typename BezierTriangle>
     void drawColorBezierTriangle( const BezierTriangle& BT )
     {
