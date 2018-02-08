@@ -17,6 +17,7 @@
 #include <DGtal/io/colormaps/GrayscaleColorMap.h>
 #include "DGtal/io/readers/GenericReader.h"
 #include "DGtal/io/writers/PPMWriter.h"
+#include <DGtal/geometry/helpers/ContourHelper.h>
 #include "BasicVectoImageExporter.h"
 
 
@@ -1388,7 +1389,17 @@ namespace DGtal {
           exp.addContour(tr, DGtal::Color(0, 200, 200), 0.01);        
       }
         std::vector<std::vector<TVTriangulation::Point> > contour = trackBorders(tvT, numColor);
-        for (auto c: contour){ exp.addContour(c, (c.size()%2==0)? DGtal::Color(200, 20, 200): DGtal::Color(20, 100, 200), 0.1);}        
+        for (auto c: contour){
+            DGtal::Color col;
+            if(ContourHelper::isCounterClockWise(c) )
+            {
+                col = DGtal::Color(200, 20, 200);
+            }
+            else
+            {
+                col = DGtal::Color(200, 200, 20);
+            }
+            exp.addContour(c, col, 0.1);}
       }
     
     
