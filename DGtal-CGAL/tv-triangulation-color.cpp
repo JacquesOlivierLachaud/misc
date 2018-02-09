@@ -18,6 +18,7 @@
 #include "DGtal/io/readers/GenericReader.h"
 #include "DGtal/io/writers/PPMWriter.h"
 #include "CairoViewer.h"
+#include <DGtal/geometry/helpers/ContourHelper.h>
 #include "BasicVectoImageExporter.h"
 
 
@@ -1026,19 +1027,26 @@ namespace DGtal {
     // starting ext point: arc tail
     TVTriangulation::Face faceIni = tvT.T.faceAroundArc(startArc);
 
-    
+      if(faceIni == TVTriangulation::Triangulation::INVALID_FACE )
+      {
+          return res;
+      }
     TVTriangulation::Arc currentArc = startArc;
     TVTriangulation::Face currentFace = faceIni;
     markedArcs[startArc] = true;
     
     do 
-    {          
+    {
       TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( currentFace );
       TVTriangulation::Point center = (tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
       res.push_back(center);
       currentArc = pivotNext(tvT, currentArc, valInside);          
       currentFace = tvT.T.faceAroundArc(currentArc);
-      markedArcs[currentArc] = true;
+     if(currentFace == TVTriangulation::Triangulation::INVALID_FACE )
+        {
+            break;
+        }
+        markedArcs[currentArc] = true;
     } while(currentFace != faceIni);
     return res;
   }
@@ -1056,9 +1064,7 @@ namespace DGtal {
       found = false;
       for(unsigned int a = 0; a< markedArcs.size(); a++)
       {
-        // starting ext point: arc tail
-        TVTriangulation::Face faceIni = tvT.T.faceAroundArc(a);
-        // tracking Head color
+          // tracking Head color
         TVTriangulation::Value valH = tvT.u(tvT.T.head(a));
         TVTriangulation::Value valT = tvT.u(tvT.T.tail(a));
         
@@ -1124,7 +1130,17 @@ namespace DGtal {
 	    exp.addContour(tr, DGtal::Color(0, 200, 200), 0.01);        
 	  }
         std::vector<std::vector<TVTriangulation::Point> > contour = trackBorders(tvT, numColor);
-        for (auto c: contour){ exp.addContour(c, (c.size()%2==0)? DGtal::Color(200, 20, 200): DGtal::Color(20, 100, 200), 0.1);}        
+        for (auto c: contour){
+            DGtal::Color col;
+            if(ContourHelper::isCounterClockWise(c) )
+            {
+                col = DGtal::Color(200, 20, 200);
+            }
+            else
+            {
+                col = DGtal::Color(200, 200, 20);
+            }
+            exp.addContour(c, col, 0.1);}
       }
     
     
