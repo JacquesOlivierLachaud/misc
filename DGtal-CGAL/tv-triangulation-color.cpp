@@ -69,6 +69,8 @@ namespace DGtal {
     typedef Z2i::Integer               Integer;
     typedef Z2i::RealPoint             Point;
     typedef Z2i::RealVector            Vector;
+    typedef Z2i::RealPoint             RealPoint;
+    typedef Z2i::RealVector            RealVector;
     typedef Z2i::Domain                Domain;
     typedef TriangulatedSurface<Point> Triangulation;
     typedef Triangulation::VertexIndex VertexIndex;
@@ -117,10 +119,32 @@ namespace DGtal {
     Value                _upflip;
     /// true iff some edges cannot be flipped.
     bool                 _check_edge;
+
+    // Data needed for vectorization. Each contour is a succession of
+    // arc, where head points outside.
+    
+    /// Contains the relative positions of the contour at each arc.
+    /// A value between 0 and 1: 0 is tail and 1 is head of arc
+    std::vector<Scalar>     _t;
+    /// Contains the coordinates of the barycenter of each face.
+    std::vector<RealPoint>  _b;
+    /// Contains the area for each vertex.
+    std::vector<Scalar>     _A; 
     
     /// @return the regularized value at vertex v.
     const Value& u( const VertexIndex v ) const
     { return _u[ v ]; }
+
+    /// @return the regularized barycenter at face f.
+    const RealPoint& barycenter( const Face f ) const
+    { return _b[ f ]; }
+    /// @return the contour point at arc \a a.
+    RealPoint contourPoint( const Arc a ) const
+    {
+      RealPoint B = T.position( T.head( a ) );
+      RealPoint A = T.position( T.tail( a ) );
+      return ( 1.0 - _t[ a ] ) * A + _t[ a ] * B;
+    }
     
     /// The norm used for the scalars induced by vector-value space (RGB)
     std::function< Scalar( const Value& v ) >       _normX;
@@ -456,17 +480,24 @@ namespace DGtal {
       }
       return v == T.nbVertices();
     }
-    
+
+    // @return the determinant of \a pq and \a qr.
+    static Scalar det( const Point& pq, const Point& qr )
+    {
+      return pq[ 0 ] * qr[ 1 ] - pq[ 1 ] * qr[ 0 ];
+    }
+
     static Scalar doesTurnLeft( const Point& p, const Point& q, const Point& r )
     {
       const Point pq = q - p;
       const Point qr = r - q;
-      return pq[ 0 ] * qr[ 1 ] - pq[ 1 ] * qr[ 0 ];
+      return det( pq, qr );
     }
     static Scalar doesTurnLeft( const Point& pq, const Point& qr )
     {
-      return pq[ 0 ] * qr[ 1 ] - pq[ 1 ] * qr[ 0 ];
+      return det( pq, qr );
     }
+    
     // Check strict convexity of quadrilateron.
     bool isConvex( const VertexRange& V ) const
     {
@@ -744,7 +775,187 @@ namespace DGtal {
       }
       return nbsubdivided;
     }
+
+    // -------------------------- Regularization services --------------------
+  public:
+
+    /// Initializes the regularization process for vectorization.
+    void regularizeContours( Scalar max_dt = 0.001, int max_iter = 10 )
+    {
+      initContours();
+      for ( int n = 0; n < max_iter; ++n ) {
+	std::vector<Scalar> former_t = _t;
+	updateBarycenters();
+	updateContours();
+	Scalar dt = enforceContoursArea( former_t );
+	if ( dt < max_dt ) break;
+	std::cout << n << " dt = " << dt << " max_dt = " << max_dt << std::endl;
+      }
+    }
+
+    /// Initializes the regularization process for vectorization.
+    void initContours()
+    {
+      // Computes the barycenter for each valid face.
+      _b.resize( T.nbFaces() );
+      for ( Face f = 0; f < T.nbFaces(); ++f )	{
+	VertexRange V = T.verticesAroundFace( f );
+	_b[ f ] = ( T.position( V[ 0 ] )
+		    + T.position( V[ 1 ] )
+		    + T.position( V[ 2 ] ) ) / 3.0;
+      }
+      // Computes the contour intersections at each arc.
+      _t.resize( T.nbArcs() );
+      for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+	Arc    opp_a = T.opposite( a );
+	if ( T.isArcBoundary( a ) || T.isArcBoundary( opp_a ) ) {
+	  _t[ a ] = 0.5;
+	  continue;
+	}
+	Face     f_a = T.faceAroundArc( a );
+	Face f_opp_a = T.faceAroundArc( opp_a );
+	RealPoint  B = T.position( T.head( a ) );
+	RealPoint  A = T.position( T.head( opp_a ) );
+	auto       I = intersect( A, B, _b[ f_a ], _b[ f_opp_a ] );
+	_t[ a ]      = std::min( 1.0, std::max( 0.0, I.first ) );
+	// std::cout << "t[" << a << "]=" << _t[ a ] << std::endl;
+      }
+      // Computes the areas associated with each vertex
+      _A.resize( T.nbVertices() );
+      for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
+	// std::cout << v << " area=" << areaAtVertex( v ) << std::endl;
+	_A[ v ] = areaAtVertex( v );
+      }
+    }
+
+    bool isArcContour( const Arc a ) const {
+      return _u[ T.head( a ) ] != _u[ T.tail( a ) ];
+    }
+    Scalar arcSimilarity( const Arc a ) const {
+      Value diff = _u[ T.head( a ) ] - _u[ T.tail( a ) ];
+      return diff.dot( diff ); //( _u[ T.head( a ) ] - _u[ T.tail( a ) ] ).norm();
+    }
+
     
+    /// Computes the barycenters for each triangle. The idea is to
+    /// count only arcs with different values.
+    void updateBarycenters()
+    {
+      for ( Face f = 0; f < T.nbFaces(); ++f )	{
+	VertexRange V = T.verticesAroundFace( f );
+	Scalar      w = 0.0;
+	Point       B = Point::zero;
+	Point       P[ 3 ] = { T.position( V[ 0 ] ), T.position( V[ 1 ] ),
+			       T.position( V[ 2 ] ) };
+	Arc    a = T.arc( V[ 0 ], V[ 1 ] );
+	Scalar s = arcSimilarity( a );
+	B       += s * ( ( 1 - _t[ a ] ) * P[ 0 ] + _t[ a ] * P[ 1 ] );
+	w       += s;
+	a        = T.next( a );
+	s        = arcSimilarity( a );
+	B       += s * ( ( 1 - _t[ a ] ) * P[ 1 ] + _t[ a ] * P[ 2 ] );
+	w       += s;
+	a        = T.next( a );
+	s        = arcSimilarity( a );
+	B       += s * ( ( 1 - _t[ a ] ) * P[ 2 ] + _t[ a ] * P[ 0 ] );
+	w       += s;
+	if ( w  > 0.0 ) _b[ f ] = B / w;
+      }
+    }
+
+    /// Computes the contour points for each arc from the barycenters.
+    /// @return the maximum displacement.
+    void updateContours()
+    {
+      for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+	Arc    opp_a = T.opposite( a );
+	// if ( T.isArcBoundary( a ) || T.isArcBoundary( opp_a ) ) continue;
+	Face     f_a = T.faceAroundArc( a );
+	Face f_opp_a = T.faceAroundArc( opp_a );
+	RealPoint  B = T.position( T.head( a ) );
+	RealPoint  A = T.position( T.head( opp_a ) );
+	if ( ( f_a != T.INVALID_FACE ) && ( f_opp_a != T.INVALID_FACE ) ) {
+	  auto       I = intersect( A, B, _b[ f_a ], _b[ f_opp_a ] );
+	  Scalar     t = std::min( 1.0, std::max( 0.0, I.first ) );
+	  _t[ a ]	     = t;
+	} else {
+	  _t[ a ]	     = 0.5;
+	}
+      }
+    }
+
+    /// Moves contour points to keep constant areas
+    /// @return the maximum displacement.
+    Scalar enforceContoursArea( const std::vector<Scalar>& prev_t )
+    {
+      Scalar max_t = 0.0;
+      // Update t to keep volume constant
+      for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
+	// Checks the evolution of the vertex area.
+	Scalar ratio = areaAtVertex( v ) / _A[ v ];
+	// Rescale all points to recover the correct area.
+	auto  out_arcs = T.outArcs( v );
+	// Todo: not the right formula
+	for ( Arc a : out_arcs ) _t[ a ] /= ratio;
+      }
+      // Averages movements on each edge.
+      for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+	const Arc opp_a = T.opposite( a );
+	// if ( T.isArcBoundary( a ) || T.isArcBoundary( opp_a ) ) continue;
+	if ( T.head( a ) < T.head( opp_a ) ) continue;
+	Scalar     t = 0.5 * ( _t[ a ] + ( 1.0 - _t[ opp_a ] ) );
+	t            = std::min( 1.0, std::max( 0.0, t ) );
+	max_t        = std::max( max_t, fabs( t - prev_t[ a ] ) );
+	// max_t        = std::max( max_t, fabs( 1.0 - t - _t[ opp_a ] ) );
+	_t[ a ]      = t;
+	_t[ opp_a ]  = 1.0 - t;
+      }
+      return max_t;
+    }
+    
+    
+    /// The area at an arc \a a is the area associated to the vertex
+    /// tail of \a a within the face of \a a. It corresponds to the
+    /// zone between the tail, the barycenter and the two intersection
+    /// points at the edges containing the tail vertex.
+    Scalar areaAtArc( Arc a ) const {
+      const Face   f = T.faceAroundArc( a );
+      const Arc   an = T.next( a );
+      const Arc  ann = T.next( an );
+      const Point  B = T.position( T.head( a ) );
+      const Point  C = T.position( T.head( an ) );
+      const Point  A = T.position( T.head( ann ) );
+      const Arc   a2 = T.opposite( ann );
+      const Scalar t = _t[ a ];
+      const Scalar u = _t[ a2 ];
+      return - 0.5 * ( det( t * ( B - A ), _b[ f ] - A )
+		       +  det( _b[ f ] - A , u * ( C - A ) ) );
+    }
+
+    Scalar areaAtVertex( const Vertex v ) const {
+      auto  out_arcs = T.outArcs( v );
+      Scalar    area = 0;
+      for ( Arc a : out_arcs )
+	area += areaAtArc( a );
+      return area;
+    }
+
+    /// Given two straight lines (AB) and (CD), returns their
+    /// intersection point as two scalars (t,u) such that:
+    /// I = A + t AB = C + u CD
+    static 
+    std::pair<Scalar,Scalar> intersect( const Point& A, const Point& B,
+					const Point& C, const Point& D )
+    {
+      Vector AB = B - A;
+      Vector DC = C - D;
+      Vector AC = C - A;
+      Scalar  d = det( AB, DC );
+      if ( d == 0 ) return std::make_pair( 0.5, 0.5 );
+      Scalar  t = ( DC[ 1 ] * AC[ 0 ] - DC[ 0 ] * AC[ 1 ] ) / d;
+      Scalar  u = ( AB[ 0 ] * AC[ 1 ] - AB[ 1 ] * AC[ 0 ] ) / d;
+      return std::make_pair( t, u );
+    }
   };
 
   // Useful function for viewing triangulations.
@@ -1103,15 +1314,29 @@ namespace DGtal {
     BasicVectoImageExporter exp( name, width, height, displayMesh, 100);    
     for(TVTriangulation::VertexIndex v = 0; v < tvT.T.nbVertices(); v++)
     {
-      std::vector<TVTriangulation::Point> tr;
-      TVTriangulation::FaceRange F = tvT.T.facesAroundVertex( v );
-      for(auto f: F)
-      {
-        TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( f );
-        TVTriangulation::Point center = tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]);
-        center /= 3.0;
-        tr.push_back(center);
+      std::vector<TVTriangulation::RealPoint> tr;
+      auto outArcs = tvT.T.outArcs( v );
+      for ( auto rit = outArcs.rbegin(), ritEnd = outArcs.rend();
+	    rit != ritEnd; ++rit ) {
+	auto a = *rit;
+	tr.push_back( tvT.contourPoint( a ) );
+	if ( tvT.T.isArcBoundary( a ) ) {
+	  trace.warning() << "Boundary arc" << std::endl;
+	} else {
+	  auto f = tvT.T.faceAroundArc( a );
+	  tr.push_back( tvT.barycenter( f ) );
+	}
       }
+      // TVTriangulation::FaceRange F = tvT.T.facesAroundVertex( v );
+      // for(auto f: F)
+      // {
+      //   TVTriangulation::Point center = tvT.barycenter( f );
+	
+      //   // TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( f );
+      //   // TVTriangulation::Point center = tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]);
+      //   // center /= 3.0;
+      //   tr.push_back(center);
+      // }
       TVTriangulation::Value val = tvT.u(v);
       exp.addRegion(tr, DGtal::Color(val[0], val[1], val[2]), 0.001);        
       
@@ -1187,6 +1412,7 @@ int main( int argc, char** argv )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
     ("fixDarkEdges", po::value<int>()->default_value( 0 ), "if [v] greater than zero, then do not flip edges whose values are lower than [v]." )
     ("fixBrightEdges", po::value<int>()->default_value( 255 ), "if [v] lower than 255, then do not flip edges whose values are greater than [v]." )
+    ("regularizeContour,R", po::value<int>()->default_value( 0 ), "regularizes the dual contours for <nb> iterations." )
     ;
 
   bool parseOK = true;
@@ -1316,31 +1542,38 @@ int main( int argc, char** argv )
 			    display, disc, st, am );
   }
   trace.endBlock();
-    trace.beginBlock("Export base triangulation");
-    if(vm.count("exportEPSMesh"))
-    {
-        unsigned int w = image.extent()[ 0 ];
-        unsigned int h = image.extent()[ 1 ];
-        std::string name = vm["exportEPSMesh"].as<std::string>();
-        exportEPSMesh(TVT, name, w, h ,vm.count("displayMesh"));
-        
-    }
-    if(vm.count("exportEPSMeshDual"))
-    {
-        unsigned int w = image.extent()[ 0 ];
-        unsigned int h = image.extent()[ 1 ];
-        std::string name = vm["exportEPSMeshDual"].as<std::string>();
-        unsigned int numColor = vm["numColorExportEPSDual"].as<unsigned int>();
-        exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor);
-        
-    }
-    trace.endBlock();
 
-  
-  trace.beginBlock("Merging triangles");
+  trace.beginBlock("regularizing contours");
   {
-    
+    int         N = vm[ "regularizeContour" ].as<int>();
+    TVT.regularizeContours( 0.01, N );
   }
   trace.endBlock();
+  trace.beginBlock("Export base triangulation");
+  if(vm.count("exportEPSMesh"))
+    {
+      unsigned int w = image.extent()[ 0 ];
+      unsigned int h = image.extent()[ 1 ];
+      std::string name = vm["exportEPSMesh"].as<std::string>();
+      exportEPSMesh(TVT, name, w, h ,vm.count("displayMesh"));
+      
+    }
+  if(vm.count("exportEPSMeshDual"))
+    {
+      unsigned int w = image.extent()[ 0 ];
+      unsigned int h = image.extent()[ 1 ];
+      std::string name = vm["exportEPSMeshDual"].as<std::string>();
+      unsigned int numColor = vm["numColorExportEPSDual"].as<unsigned int>();
+      exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor);
+      
+    }
+  trace.endBlock();
+
+  
+  // trace.beginBlock("Merging triangles");
+  // {
+    
+  // }
+  // trace.endBlock();
   return 0;
 }
