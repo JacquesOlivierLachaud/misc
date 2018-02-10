@@ -817,7 +817,7 @@ namespace DGtal {
 	RealPoint  B = T.position( T.head( a ) );
 	RealPoint  A = T.position( T.head( opp_a ) );
 	auto       I = intersect( A, B, _b[ f_a ], _b[ f_opp_a ] );
-	_t[ a ]      = std::min( 1.0, std::max( 0.0, I.first ) );
+	_t[ a ]      = std::min( 0.999, std::max( 0.001, I.first ) );
 	// std::cout << "t[" << a << "]=" << _t[ a ] << std::endl;
       }
       // Computes the areas associated with each vertex
@@ -833,9 +833,9 @@ namespace DGtal {
       return _u[ T.head( a ) ] != _u[ T.tail( a ) ];
     }
     Scalar arcSimilarity( const Arc a ) const {
-      // Value diff = _u[ T.head( a ) ] - _u[ T.tail( a ) ];
-      // return diff.dot( diff );
-      return ( _u[ T.head( a ) ] - _u[ T.tail( a ) ] ).norm();
+      Value diff = _u[ T.head( a ) ] - _u[ T.tail( a ) ];
+      return diff.dot( diff );
+      // return ( _u[ T.head( a ) ] - _u[ T.tail( a ) ] ).norm();
     }
 
     
@@ -847,21 +847,39 @@ namespace DGtal {
 	VertexRange V = T.verticesAroundFace( f );
 	Scalar      w = 0.0;
 	Point       B = Point::zero;
-	Point       P[ 3 ] = { T.position( V[ 0 ] ), T.position( V[ 1 ] ),
-			       T.position( V[ 2 ] ) };
-	Arc    a = T.arc( V[ 0 ], V[ 1 ] );
-	Scalar s = arcSimilarity( a );
-	B       += s * ( ( 1 - _t[ a ] ) * P[ 0 ] + _t[ a ] * P[ 1 ] );
-	w       += s;
-	a        = T.next( a );
-	s        = arcSimilarity( a );
-	B       += s * ( ( 1 - _t[ a ] ) * P[ 1 ] + _t[ a ] * P[ 2 ] );
-	w       += s;
-	a        = T.next( a );
-	s        = arcSimilarity( a );
-	B       += s * ( ( 1 - _t[ a ] ) * P[ 2 ] + _t[ a ] * P[ 0 ] );
-	w       += s;
+	// Point       P[ 3 ] = { T.position( V[ 0 ] ), T.position( V[ 1 ] ),
+	// 		       T.position( V[ 2 ] ) };
+	Arc arcs[ 3 ];
+	Scalar s[ 3 ];
+	// Sort similarities...
+	arcs[ 0 ] = T.arc( V[ 0 ], V[ 1 ] );
+	arcs[ 1 ] = T.next( arcs[ 0 ] );
+	arcs[ 2 ] = T.next( arcs[ 1 ] );
+	for ( int i = 0; i < 3; ++i ) {
+	  s[ i ] = arcSimilarity( arcs[ i ] );
+	}
+	int  m  = std::min_element( s, s + 3 ) - s;
+	bool id = ( ( 2*s[ m ] ) < s[ (m+1)%3 ] )
+	  &&      ( ( 2*s[ m ] ) < s[ (m+2)%3 ] );
+	if ( id ) s[ m ] = 0;
+	for ( int i = 0; i < 3; ++i ) {
+	  B += s[ i ] * contourPoint ( arcs[ i ] );
+	  w += s[ i ];
+	}
 	if ( w  > 0.0 ) _b[ f ] += 0.5 * ( B / w - _b[ f ] );
+	// Arc    a = T.arc( V[ 0 ], V[ 1 ] );
+	// Scalar s = arcSimilarity( a );
+	// B       += s * ( ( 1 - _t[ a ] ) * P[ 0 ] + _t[ a ] * P[ 1 ] );
+	// w       += s;
+	// a        = T.next( a );
+	// s        = arcSimilarity( a );
+	// B       += s * ( ( 1 - _t[ a ] ) * P[ 1 ] + _t[ a ] * P[ 2 ] );
+	// w       += s;
+	// a        = T.next( a );
+	// s        = arcSimilarity( a );
+	// B       += s * ( ( 1 - _t[ a ] ) * P[ 2 ] + _t[ a ] * P[ 0 ] );
+	// w       += s;
+	// if ( w  > 0.0 ) _b[ f ] += 0.5 * ( B / w - _b[ f ] );
       }
     }
 
@@ -878,7 +896,7 @@ namespace DGtal {
 	RealPoint  A = T.position( T.head( opp_a ) );
 	if ( ( f_a != T.INVALID_FACE ) && ( f_opp_a != T.INVALID_FACE ) ) {
 	  auto       I = intersect( A, B, _b[ f_a ], _b[ f_opp_a ] );
-	  Scalar     t = std::min( 1.0, std::max( 0.0, I.first ) );
+	  Scalar     t = std::min( 0.999, std::max( 0.001, I.first ) );
 	  _t[ a ]     += 0.5 * ( t - _t[ a ] );
 	} else {
 	  _t[ a ]      = 0.5;
@@ -897,11 +915,16 @@ namespace DGtal {
 	for ( Arc a : out_arcs ) {
 	   // Checks the evolution of the arc area.
 	  Scalar ratio = areaAtArc( a ) / ( _A[ v ] / T.degree( v ) );
-	  _t[ a ] /= ( 0.5 + 0.5 * ratio );
-	  if ( ratio <= 0.0 )
+	  if ( ratio <= 0.0 ) {
 	    trace.warning() << "Negative ratio " << ratio
-			    << " for area[ " << v << " ]="
-			    << _A[ v ] << std::endl;
+			    << " for area[ " << v << " ]=" << _A[ v ]
+			    << " at_arc=" << areaAtArc( a )
+			    << " d=" << T.degree( v )
+			    << " A/d=" << ( _A[ v ] / T.degree( v ) )
+			    << std::endl;
+	    ratio = 0.1;
+	  }
+	  _t[ a ] /= ( 0.2 + 0.8 * ratio );
 	}
 	// // Checks the evolution of the vertex area.
 	// Scalar ratio = areaAtVertex( v ) / _A[ v ];
@@ -920,7 +943,7 @@ namespace DGtal {
 	// if ( T.isArcBoundary( a ) || T.isArcBoundary( opp_a ) ) continue;
 	if ( T.head( a ) < T.head( opp_a ) ) continue;
 	Scalar     t = 0.5 * ( _t[ a ] + ( 1.0 - _t[ opp_a ] ) );
-	t            = std::min( 1.0, std::max( 0.0, t ) );
+	t            = std::min( 0.999, std::max( 0.001, t ) );
 	max_t        = std::max( max_t, fabs( t - prev_t[ a ] ) );
 	// max_t        = std::max( max_t, fabs( 1.0 - t - _t[ opp_a ] ) );
 	_t[ a ]      = t;
@@ -935,17 +958,28 @@ namespace DGtal {
     /// zone between the tail, the barycenter and the two intersection
     /// points at the edges containing the tail vertex.
     Scalar areaAtArc( Arc a ) const {
-      const Face   f = T.faceAroundArc( a );
-      const Arc   an = T.next( a );
-      const Arc  ann = T.next( an );
-      const Point  B = T.position( T.head( a ) );
-      const Point  C = T.position( T.head( an ) );
-      const Point  A = T.position( T.head( ann ) );
-      const Arc   a2 = T.opposite( ann );
-      const Scalar t = _t[ a ];
-      const Scalar u = _t[ a2 ];
-      return - 0.5 * ( det( t * ( B - A ), _b[ f ] - A )
-		       +  det( _b[ f ] - A , u * ( C - A ) ) );
+      const Face    f = T.faceAroundArc( a );
+      const Arc opp_a = T.opposite( a );
+      if ( T.isArcBoundary( a ) || T.isArcBoundary( opp_a ) ) return 1.0/6.0;
+      
+      const Arc    a2 = T.next( opp_a );
+      const Face   f2 = T.faceAroundArc( a2 );
+      const Point   B = T.position( T.head( a ) );
+      const Point   A = T.position( T.head( opp_a ) );
+      const Scalar  t = _t[ a ];
+      return -0.5 * ( det( t * ( B - A ), _b[ f ] - A )
+		     + det( _b[ f2 ] - A , t * ( B - A ) ) );
+      // const Face   f = T.faceAroundArc( a );
+      // const Arc   an = T.next( a );
+      // const Arc  ann = T.next( an );
+      // const Point  B = T.position( T.head( a ) );
+      // const Point  C = T.position( T.head( an ) );
+      // const Point  A = T.position( T.head( ann ) );
+      // const Arc   a2 = T.opposite( ann );
+      // const Scalar t = _t[ a ];
+      // const Scalar u = _t[ a2 ];
+      // return - 0.5 * ( det( t * ( B - A ), _b[ f ] - A )
+      // 		       +  det( _b[ f ] - A , u * ( C - A ) ) );
     }
 
     Scalar areaAtVertex( const Vertex v ) const {
