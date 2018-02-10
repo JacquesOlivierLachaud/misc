@@ -560,20 +560,17 @@ namespace DGtal {
       // 		   << "," << P[ 3 ] << ") ";
       // trace.info() << "Ecurr=" << Ecurr << " Eflip=" << Eflip << std::endl;
       // @todo Does not take into account equality for now.a
-      if ( Eflip < Ecurr ) //  || force_flip )
-	{
-	  // Save arcs that may be affected.
-	  queueSurroundingArcs( a );
-	  T.flip( a );
-	  _tv_per_triangle[ f012 ] = E123; // f012 -> f123
-	  _tv_per_triangle[ f023 ] = E013; // f023 -> f013
-	  _tv_energy += Eflip - Ecurr;
-	  return 1;
-	}
-      else
-	{
-	  return ( Eflip == Ecurr ) ? 0 : -4;
-	}
+      if ( Eflip < Ecurr ) {
+	// Save arcs that may be affected.
+	queueSurroundingArcs( a );
+	T.flip( a );
+	_tv_per_triangle[ f012 ] = E123; // f012 -> f123
+	_tv_per_triangle[ f023 ] = E013; // f023 -> f013
+	_tv_energy += Eflip - Ecurr;
+	return 1;
+      } else if ( Eflip == Ecurr ) {
+	return ( Eflip > 0.0 ) ? 0 : -6;
+      } else return -7;
     }
 
     void queueSurroundingArcs( const Arc a )
