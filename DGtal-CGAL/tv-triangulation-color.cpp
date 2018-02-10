@@ -824,7 +824,8 @@ namespace DGtal {
       _A.resize( T.nbVertices() );
       for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
 	// std::cout << v << " area=" << areaAtVertex( v ) << std::endl;
-	_A[ v ] = areaAtVertex( v );
+	// _A[ v ] = areaAtVertex( v );
+	_A[ v ] = (Scalar) T.degree( v ) / 6.0;//areaAtVertex( v );
       }
     }
 
@@ -832,8 +833,9 @@ namespace DGtal {
       return _u[ T.head( a ) ] != _u[ T.tail( a ) ];
     }
     Scalar arcSimilarity( const Arc a ) const {
-      Value diff = _u[ T.head( a ) ] - _u[ T.tail( a ) ];
-      return diff.dot( diff ); //( _u[ T.head( a ) ] - _u[ T.tail( a ) ] ).norm();
+      // Value diff = _u[ T.head( a ) ] - _u[ T.tail( a ) ];
+      // return diff.dot( diff );
+      return ( _u[ T.head( a ) ] - _u[ T.tail( a ) ] ).norm();
     }
 
     
@@ -859,7 +861,7 @@ namespace DGtal {
 	s        = arcSimilarity( a );
 	B       += s * ( ( 1 - _t[ a ] ) * P[ 2 ] + _t[ a ] * P[ 0 ] );
 	w       += s;
-	if ( w  > 0.0 ) _b[ f ] = B / w;
+	if ( w  > 0.0 ) _b[ f ] += 0.5 * ( B / w - _b[ f ] );
       }
     }
 
@@ -877,9 +879,9 @@ namespace DGtal {
 	if ( ( f_a != T.INVALID_FACE ) && ( f_opp_a != T.INVALID_FACE ) ) {
 	  auto       I = intersect( A, B, _b[ f_a ], _b[ f_opp_a ] );
 	  Scalar     t = std::min( 1.0, std::max( 0.0, I.first ) );
-	  _t[ a ]	     = t;
+	  _t[ a ]     += 0.5 * ( t - _t[ a ] );
 	} else {
-	  _t[ a ]	     = 0.5;
+	  _t[ a ]      = 0.5;
 	}
       }
     }
@@ -891,12 +893,26 @@ namespace DGtal {
       Scalar max_t = 0.0;
       // Update t to keep volume constant
       for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
-	// Checks the evolution of the vertex area.
-	Scalar ratio = areaAtVertex( v ) / _A[ v ];
-	// Rescale all points to recover the correct area.
 	auto  out_arcs = T.outArcs( v );
-	// Todo: not the right formula
-	for ( Arc a : out_arcs ) _t[ a ] /= ratio;
+	for ( Arc a : out_arcs ) {
+	   // Checks the evolution of the arc area.
+	  Scalar ratio = areaAtArc( a ) / ( _A[ v ] / T.degree( v ) );
+	  _t[ a ] /= ( 0.5 + 0.5 * ratio );
+	  if ( ratio <= 0.0 )
+	    trace.warning() << "Negative ratio " << ratio
+			    << " for area[ " << v << " ]="
+			    << _A[ v ] << std::endl;
+	}
+	// // Checks the evolution of the vertex area.
+	// Scalar ratio = areaAtVertex( v ) / _A[ v ];
+	// if ( ratio <= 0.0 )
+	//   trace.warning() << "Negative ratio " << ratio
+	// 		  << " for area[ " << v << " ]="
+	// 		  << _A[ v ] << std::endl;
+	// // Rescale all points to recover the correct area.
+	// auto  out_arcs = T.outArcs( v );
+	// // Todo: not the right formula
+	// for ( Arc a : out_arcs ) _t[ a ] /= ( 0.5 + 0.5 * ratio );
       }
       // Averages movements on each edge.
       for ( Arc a = 0; a < T.nbArcs(); ++a ) {
@@ -1546,7 +1562,7 @@ int main( int argc, char** argv )
   trace.beginBlock("regularizing contours");
   {
     int         N = vm[ "regularizeContour" ].as<int>();
-    TVT.regularizeContours( 0.01, N );
+    TVT.regularizeContours( 0.001, N );
   }
   trace.endBlock();
   trace.beginBlock("Export base triangulation");
