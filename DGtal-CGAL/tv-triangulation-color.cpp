@@ -912,16 +912,17 @@ namespace DGtal {
 	for ( Arc a : out_arcs ) {
 	   // Checks the evolution of the arc area.
 	  Scalar ratio = areaAtArc( a ) / ( _A[ v ] / T.degree( v ) );
-	  if ( ratio <= 0.0 ) {
+	  if ( ratio <= 0.001 ) {
 	    trace.warning() << "Negative ratio " << ratio
 			    << " for area[ " << v << " ]=" << _A[ v ]
 			    << " at_arc=" << areaAtArc( a )
 			    << " d=" << T.degree( v )
 			    << " A/d=" << ( _A[ v ] / T.degree( v ) )
 			    << std::endl;
-	    ratio = 0.1;
+	    ratio = 0.001;
 	  }
-	  _t[ a ] /= ( 0.2 + 0.8 * ratio );
+	  // _t[ a ] /= ( 0.2 + 0.8 * ratio );
+	  _t[ a ] = 0.5 * _t[ a ] * ( 1.0 + 1.0 / ratio );
 	}
 	// // Checks the evolution of the vertex area.
 	// Scalar ratio = areaAtVertex( v ) / _A[ v ];
