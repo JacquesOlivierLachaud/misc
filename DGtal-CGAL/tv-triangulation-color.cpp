@@ -79,6 +79,8 @@ namespace DGtal {
     typedef Triangulation::FaceRange   FaceRange;
     typedef double                     Scalar;
     typedef PointVector< 3, Scalar >   Value;
+    typedef std::pair<DGtal::Color, std::vector<std::vector<TVTriangulation::Point> > > ColorContours;
+
     // typedef std::array< Value, 2 >     VectorValue;
     struct VectorValue {
       Value x;
@@ -1027,7 +1029,7 @@ namespace DGtal {
     // starting ext point: arc tail
     TVTriangulation::Face faceIni = tvT.T.faceAroundArc(startArc);
 
-      if(faceIni == TVTriangulation::Triangulation::INVALID_FACE )
+    if(faceIni == TVTriangulation::Triangulation::INVALID_FACE )
       {
           return res;
       }
@@ -1096,6 +1098,66 @@ namespace DGtal {
 
 
 
+    
+  std::vector<TVTriangulation::ColorContours> trackAllBorders(TVTriangulation& tvT)
+  {
+    
+    typedef std::map<DGtal::Color, std::vector<unsigned int> >  MapColorContours;
+    std::vector<TVTriangulation::ColorContours> res;
+    MapColorContours mapContours;
+    std::vector<std::vector<TVTriangulation::Point> > resAll;
+    std::vector<bool> markedArcs(tvT.T.nbArcs());
+    for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
+    bool found = true;
+    while(found){
+      found = false;
+      for(unsigned int a = 0; a< markedArcs.size(); a++)
+      {
+          // tracking Head color
+        TVTriangulation::Value valH = tvT.u(tvT.T.head(a));
+        TVTriangulation::Value valT = tvT.u(tvT.T.tail(a));
+        
+        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]);
+        if(found)
+        {
+          resAll.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
+          if (mapContours.count(DGtal::Color(valH[0], valH[1], valH[2]))==0)
+          {
+            std::vector<unsigned int> indexC;
+            indexC.push_back(resAll.size()-1);
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])]=indexC;
+          }
+          else
+          {
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])].push_back(resAll.size()-1);
+          }
+        }
+      }
+    }
+
+    for(auto cc : mapContours)
+    {
+      TVTriangulation::ColorContours c;
+      c.first = cc.first;
+      
+      for(unsigned int i=0; i< (cc.second).size(); i++){
+        c.second.push_back(resAll[(cc.second)[i]]);
+      }
+      res.push_back(c);
+    }
+    // auto itMap = mapContours.begin();
+    // for(unsigned int i=0;i < mapContours.size(); i++)
+    // {      
+    // }
+    
+    
+    // }
+
+    return res;
+  }
+
+
+
   
   void exportEPSMeshDual(TVTriangulation& tvT, const std::string &name, unsigned int width,
                          unsigned int height, bool displayMesh, unsigned int numColor)
@@ -1147,9 +1209,55 @@ namespace DGtal {
   }
 
 
+
+  
+  void exportEPSContoursDual(TVTriangulation& tvT, const std::string &name, unsigned int width,
+                             unsigned int height)
+  {
+    BasicVectoImageExporter exp( name, width, height, false, 100);    
+    std::vector<TVTriangulation::Point> bg = {TVTriangulation::Point(0,0), TVTriangulation::Point(width, 0),
+                                              TVTriangulation::Point(width, height),
+                                              TVTriangulation::Point(0, height)};
+
+    
+    
+    for (auto c: contourCol){
+      DGtal::Color col = c.first;
+      exp.addRegions(c.second, col);
+      
+
+    }
+    
+  }
+
+
+
+  
+
+
 } // namespace DGtal
 
 
+
+// Add a band to the source image with NoneColor
+template <typename TImage>
+TImage
+extendImage(const TImage &image)
+{
+  TImage::Domain d (image.domain().lowerBound, image.domain().upperBound()+Z2i::Diagonal(2));
+  TImage res(d);
+  for(unsigned int i = 0; i < image.upperBound()[0]+1; i++)
+  {
+    for(unsigned int j = 0; j < image.upperBound()[1]+1; j++)
+    {
+      if(i==0  || j==0 || i==image.upperBound()[0] || j==image.lowerBound()[1])
+      {
+        
+      }
+    }
+  }
+  
+}
 
 
 
@@ -1184,6 +1292,7 @@ int main( int argc, char** argv )
     ("displayMesh", "display mesh of the eps display." )
     ("exportEPSMesh,e", po::value<std::string>(), "Export the triangle mesh." )
     ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." )
+    ("exportEPSContoursDual,C", po::value<std::string>(), "Export the image regions filled." )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
     ("fixDarkEdges", po::value<int>()->default_value( 0 ), "if [v] greater than zero, then do not flip edges whose values are lower than [v]." )
     ("fixBrightEdges", po::value<int>()->default_value( 255 ), "if [v] lower than 255, then do not flip edges whose values are greater than [v]." )
@@ -1333,6 +1442,13 @@ int main( int argc, char** argv )
         unsigned int numColor = vm["numColorExportEPSDual"].as<unsigned int>();
         exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor);
         
+    }
+    if(vm.count("exportEPSContoursDual"))
+    {
+        unsigned int w = image.extent()[ 0 ];
+        unsigned int h = image.extent()[ 1 ];
+        std::string name = vm["exportEPSContoursDual"].as<std::string>();
+        exportEPSContoursDual(TVT, name, w, h);        
     }
     trace.endBlock();
 
