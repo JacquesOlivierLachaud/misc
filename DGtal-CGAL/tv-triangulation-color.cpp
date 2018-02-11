@@ -20,6 +20,7 @@
 #include "CairoViewer.h"
 #include <DGtal/geometry/helpers/ContourHelper.h>
 #include "BasicVectoImageExporter.h"
+#include "ImageConnecter.h"
 
 
 // #include <CGAL/Delaunay_triangulation_2.h>
@@ -119,7 +120,9 @@ namespace DGtal {
     Value                _upflip;
     /// true iff some edges cannot be flipped.
     bool                 _check_edge;
-
+    /// true if arc is flippable.
+    std::vector<bool>    _flippable;
+    
     // Data needed for vectorization. Each contour is a succession of
     // arc, where head points outside.
     
@@ -419,6 +422,20 @@ namespace DGtal {
 			   (Scalar) converters[ green ]( val ),
 			   (Scalar) converters[ blue ] ( val ) );
       }
+      
+      // Building connections.
+      typedef ImageContainerBySTLVector<Domain,Value> ValueImage;
+      typedef ImageConnecter<ValueImage> Connecter;
+      ValueImage tmpI( I.domain() );
+      auto it = tmpI.begin();
+      for ( auto v : _I ) *it++ = v;
+
+      Connecter connecter;
+      typename Connecter::Comparator comp
+	= [this] ( Value v1, Value v2 ) { return _normX( v1 - v2 ); };
+      trace.info() << "Compute connections ... ";
+      connecter.init( tmpI, comp, 0.0 );
+      trace.info() << "ended." << std::endl;
 
       // Building triangulation
       const Point taille = I.extent();
@@ -431,16 +448,17 @@ namespace DGtal {
 	  const VertexIndex v10 = v00 + 1;
 	  const VertexIndex v01 = v00 + taille[ 0 ];
 	  const VertexIndex v11 = v01 + 1;
-	  bool diag00_11 = true;
-	  if ( _check_edge ) {
-	    const Value     vh = _I[ v01 ];
-	    const Value     vt = _I[ v10 ];
-	    if ( ( ( vh.sup( _lowflip ) == _lowflip )
-		   && ( vt.sup( _lowflip ) == _lowflip ) )
-		 || ( ( vh.inf( _upflip ) == _upflip )
-		      && ( vt.inf( _upflip ) == _upflip ) ) )
-	      diag00_11 = false;
-	  }
+	  auto  how = connecter.howConnected( Point( x, y ) );
+	  bool diag00_11 = ( how == Connecter::Diagonal00_11 );
+	  // if ( _check_edge ) {
+	  //   const Value     vh = _I[ v01 ];
+	  //   const Value     vt = _I[ v10 ];
+	  //   if ( ( ( vh.sup( _lowflip ) == _lowflip )
+	  // 	   && ( vt.sup( _lowflip ) == _lowflip ) )
+	  // 	 || ( ( vh.inf( _upflip ) == _upflip )
+	  // 	      && ( vt.inf( _upflip ) == _upflip ) ) )
+	  //     diag00_11 = false;
+	  // }
 	  if ( diag00_11 ) {
 	    T.addTriangle( v00, v01, v11 );
 	    T.addTriangle( v00, v11, v10 );
@@ -462,6 +480,21 @@ namespace DGtal {
       // TV-energy is computed and stored per face to speed-up computations.
       _tv_per_triangle.resize( T.nbFaces() );
       computeEnergyTV();
+
+      // Fix some arcs;
+      _flippable.resize( T.nbArcs() );
+      for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+	Point p = T.position( T.head( a ) );
+	Point q = T.position( T.tail( a ) );
+	Point l = p.inf( q );
+	Point u = p.sup( q );
+	if ( ( l - u ).dot( l - u ) == 2 ) {
+	  auto  how = connecter.howConnected( l );
+	  _flippable[ a ] = ( how == Connecter::Default );
+	} else {
+	  _flippable[ a ] = true;
+	}
+      }
     }
 
     template <typename Image>
@@ -525,16 +558,17 @@ namespace DGtal {
       if ( P[ 0 ] < P[ 2 ] ) return -2;
       if ( ! isConvex( P ) ) return -3;
       // Checks that edge can be flipped.
-      if ( _check_edge ) {
-	const Value     vh = _I[ T.head( a ) ];
-	const Value     vt = _I[ T.tail( a ) ];
-	if ( ( vh.sup( _lowflip ) == _lowflip )
-	     && ( vt.sup( _lowflip ) == _lowflip ) )
-	  return -4;
-	if ( ( vh.inf( _upflip ) == _upflip )
-	     && ( vt.inf( _upflip ) == _upflip ) )
-	  return -5;
-      }
+      if ( ! _flippable[ a ] ) return -4;
+      // if ( _check_edge ) {
+      // 	const Value     vh = _I[ T.head( a ) ];
+      // 	const Value     vt = _I[ T.tail( a ) ];
+      // 	if ( ( vh.sup( _lowflip ) == _lowflip )
+      // 	     && ( vt.sup( _lowflip ) == _lowflip ) )
+      // 	  return -4;
+      // 	if ( ( vh.inf( _upflip ) == _upflip )
+      // 	     && ( vt.inf( _upflip ) == _upflip ) )
+      // 	  return -5;
+      // }
       // Computes energies
       const Face    f012 = T.faceAroundArc( a );
       const Face    f023 = T.faceAroundArc( T.opposite( a ) );
