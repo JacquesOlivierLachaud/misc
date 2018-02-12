@@ -46,6 +46,7 @@
 #include <DGtal/kernel/CSpace.h>
 #include <DGtal/helpers/StdDefs.h>
 #include <DGtal/images/CImage.h>
+#include <DGtal/io/writers/PPMWriter.h>
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -89,13 +90,17 @@ namespace DGtal
       Size  max;
       bool operator<( const Quad& other ) const
       {
-	return ( ( max - min ) > ( other.max - other.min ) )
-	    || ( ( ( max - min ) == ( other.max - other.min ) )
-		 && ( min < other.min ) );
+	// Gives better results.
+	return ( min < other.min )
+      	  || ( ( min == other.min )
+      	       && ( max > other.max ) ); 
+	// return ( max > other.max )
+	// 	    || ( ( max == other.max )
+	// 		 && ( min < other.min ) );
+	// return ( ( max - min ) > ( other.max - other.min ) )
+	//     || ( ( ( max - min ) == ( other.max - other.min ) )
+	// 	 && ( min < other.min ) );
       }
-      // { return ( min < other.min )
-      // 	  || ( ( min == other.min )
-      // 	       && ( max > other.max ) ); }
     };
     
     // Union-find data structure.
@@ -103,9 +108,10 @@ namespace DGtal
       Point    point;
       Size     rank;
       Element* father;
-      Size     nb;
+      Size     nb4;
+      Size     nb8;
       Element( Element* self = nullptr, Point p = Point( 0, 0 ) )
-	: point( p ), rank( 0 ), father( self ), nb ( 1 ) {}
+	: point( p ), rank( 0 ), father( self ), nb4 ( 1 ), nb8( 1 ) {}
     };
 
     // return the root of the tree containing e
@@ -116,23 +122,44 @@ namespace DGtal
       return e->father;
     }
     // link the two trees of roots x and y.
-    static void link( Element* x, Element* y )
+    static void link4( Element* x, Element* y )
     {
       if ( x->rank > y->rank ) {
 	y->father = x;
-	x->nb    += y->nb; 
+	x->nb4   += y->nb4; 
+	x->nb8   += y->nb8; 
       }
       else {
 	x->father = y;
-	y->nb    += x->nb; 
+	y->nb4   += x->nb4; 
+	y->nb8   += x->nb8; 
+	if ( x->rank == y->rank ) y->rank += 1;
+      }
+    }
+    // link the two trees of roots x and y.
+    static void link8( Element* x, Element* y )
+    {
+      if ( x->rank > y->rank ) {
+	y->father = x;
+	x->nb8   += y->nb8; 
+      }
+      else {
+	x->father = y;
+	y->nb8   += x->nb8; 
 	if ( x->rank == y->rank ) y->rank += 1;
       }
     }
     // Given two elements x and y in different trees, makes the union
     // of the two trees.
-    static void merge( Element* x, Element* y )
+    static void merge4( Element* x, Element* y )
     {
-      link( find( x ), find( y ) );
+      link4( find( x ), find( y ) );
+    }
+    // Given two elements x and y in different trees, makes the union
+    // of the two trees.
+    static void merge8( Element* x, Element* y )
+    {
+      link8( find( x ), find( y ) );
     }
     enum Configuration { Default = 0, Diagonal00_11, Diagonal10_01 };
 
@@ -175,7 +202,7 @@ namespace DGtal
 	    Element* e1 = & labels[ p[ 1 ] * width + p[ 0 ] ];
 	    Element* e2 = & labels[ q[ 1 ] * width + q[ 0 ] ];
 	    if ( find( e1 ) != find( e2 ) ) {
-	      merge( e1, e2 );
+	      merge4( e1, e2 );
 	      // std::cout << "merge " << e1->nb << " " << e2->nb << std::endl;
 	    }
 	  }
@@ -186,7 +213,7 @@ namespace DGtal
 	    Element* e1 = & labels[ p[ 1 ] * width + p[ 0 ] ];
 	    Element* e2 = & labels[ q[ 1 ] * width + q[ 0 ] ];
 	    if ( find( e1 ) != find( e2 ) ) {
-	      merge( e1, e2 );
+	      merge4( e1, e2 );
 	      // std::cout << "merge " << e1->nb << " " << e2->nb << std::endl;
 	      //std::cout << "merge " << p << " " << q << std::endl;
 	    }
@@ -205,14 +232,30 @@ namespace DGtal
 	Element*    e01 = find( & labels[ p01[ 1 ] * width + p01[ 0 ] ] );
 	Element*    e11 = find( & labels[ p11[ 1 ] * width + p11[ 0 ] ] );
 	Quad          q = { p00,
-			    std::min( std::min( e00->nb, e10->nb ),
-				      std::min( e01->nb, e11->nb ) ),
-			    std::max( std::max( e00->nb, e10->nb ),
-				      std::max( e01->nb, e11->nb ) ) };
+			    std::min( std::min( e00->nb4, e10->nb4 ),
+				      std::min( e01->nb4, e11->nb4 ) ),
+			    std::max( std::max( e00->nb4, e10->nb4 ),
+				      std::max( e01->nb4, e11->nb4 ) ) };
 	quads.push_back( q );
       }
       std::sort( quads.begin(), quads.end() );
-      
+
+      typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
+      ColorImage debug( domain );
+      std::vector< Color > cc_color( labels.size() );
+      for ( int i = 0; i < cc_color.size(); ++i )
+	cc_color[ i ] = Color( (unsigned int) rand() % 0xffffff );
+      for ( int i = 0; i < cc_color.size(); ++i ) {
+	Element* e = & labels[ i ];
+	if ( e != find( e ) ) 
+	  cc_color[ i ] = cc_color[ find( e ) - & labels[ 0 ] ];
+      }
+      for ( auto p : domain )
+	debug.setValue( p, cc_color[ p[ 1 ] * width + p[ 0 ] ] );
+      PPMWriter<ColorImage, std::function< Color(Color) > >
+	::exportPPM("cc.ppm", debug, [] (Color c) { return c; } );
+
+	
       // Connect diagonals around big regions.
       Size nb00_11 = 0;
       Size nb10_01 = 0;
@@ -233,19 +276,31 @@ namespace DGtal
 	Scalar   s00_11 = comp( v00, v11 );
 	Scalar   s10_01 = comp( v10, v01 );
 	Configuration c = Default;
-	if ( ( s00_11 <= same ) && ( same < s10_01 ) )
+	if ( ( same   <  s00_11 ) && ( same < s10_01 ) )
+	  c = Default;
+	else if ( ( s00_11 <= same   ) && ( same < s10_01 ) )
 	  c = Diagonal00_11;
 	else if ( ( s10_01 <= same ) && ( same < s00_11 ) )
 	  c = Diagonal10_01;
-	else if ( ( std::min( e00->nb, e11->nb ) == q.min ) 
-		  && ( s00_11 <= same ) )
-	  c = Diagonal00_11;
-	else if ( ( std::min( e10->nb, e01->nb ) == q.min ) 
-		  && ( s10_01 <= same ) )
-	  c = Diagonal10_01;
-
-	if ( c == Diagonal00_11 ) nb00_11++;
-	if ( c == Diagonal10_01 ) nb10_01++;
+	// simpler solutions like this are better on 1-bit pixel art
+	// than complex ones, which introduces weird dithering.
+	else if ( ( e00 == e11 ) && ( e10 != e01 ) ) c = Diagonal10_01;
+	else if ( ( e10 == e01 ) && ( e00 != e11 ) ) c = Diagonal00_11;
+	else c = Diagonal00_11;
+	// else { 
+	//   int  r00_11 = ( e00->nb8 + e11->nb8 ) / ( e00->nb4 + e11->nb4 );
+	//   int  r10_01 = ( e10->nb8 + e01->nb8 ) / ( e10->nb4 + e01->nb4 );
+	//   if ( r00_11 < r10_01 ) c = Diagonal10_01;
+	//   else if ( r00_11 > r10_01 ) c = Diagonal00_11;
+	//   else c = Diagonal00_11;
+	// }
+	if ( c == Diagonal00_11 ) {
+	  if ( e00 != e11 ) merge8( e00, e11 );
+	  nb00_11++;
+	} else if ( c == Diagonal10_01 ) {
+	  if ( e10 != e01 ) merge8( e10, e01 );
+	  nb10_01++;
+	}
 	connections[ p00[ 1 ] * width + p00[ 0 ] ] = c;
       }
       trace.info() << "nb00_11=" << nb00_11
