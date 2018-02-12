@@ -1139,7 +1139,7 @@ namespace DGtal {
     trace.endBlock();
     trace.beginBlock("tracking border arcs");
 
-    TVTriangulation::Face faceIni = tvT.T.faceAroundArc(arcBorder);
+    TVTriangulation::Face faceIni = tvT.T.faceAroundArc(tvT.T.opposite(arcBorder));
     TVTriangulation::Arc currentArc = arcBorder;
     TVTriangulation::Face currentFace = faceIni;
     markedArcs[arcBorder] = true;
@@ -1155,18 +1155,16 @@ namespace DGtal {
      // auto vois = tvT.T.arou (currentArc)[0];
       do{
     arcFound=false;
-    for(auto a: tvT.T.outArcs(v))
-    {
-      if(!arcFound && tvT.T.isArcBoundary(a) && !markedArcs[a] && tvT.T.faceAroundArc(a) != currentFace )
+     currentArc = tvT.T.next(currentArc);
+    if(!arcFound && tvT.T.isArcBoundary(currentArc) && !markedArcs[currentArc] && tvT.T.faceAroundArc(currentArc) != currentFace )
       {
         arcFound=true;
-        currentArc=a;
-        currentFace = tvT.T.faceAroundArc(currentArc);
+        currentFace = tvT.T.faceAroundArc(tvT.T.opposite(currentArc));
         TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( currentFace );
         TVTriangulation::Point center = (tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
         vpt.push_back(center);
       }
-    }
+    
     }while(faceIni != currentFace);
         res.second.push_back(vpt);
     // track all border faces
