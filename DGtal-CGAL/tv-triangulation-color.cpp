@@ -123,6 +123,12 @@ namespace DGtal {
     /// @return the regularized value at vertex v.
     const Value& u( const VertexIndex v ) const
     { return _u[ v ]; }
+
+    /// @return the regularized value at vertex v.
+    void invalidate( const VertexIndex v )
+    { _u[ v ][0]=1;
+      _u[ v ][1]=1;
+      _u[ v ][2]=1;}
     
     /// The norm used for the scalars induced by vector-value space (RGB)
     std::function< Scalar( const Value& v ) >       _normX;
@@ -1029,10 +1035,6 @@ namespace DGtal {
     // starting ext point: arc tail
     TVTriangulation::Face faceIni = tvT.T.faceAroundArc(startArc);
 
-    if(faceIni == TVTriangulation::Triangulation::INVALID_FACE )
-      {
-          return res;
-      }
     TVTriangulation::Arc currentArc = startArc;
     TVTriangulation::Face currentFace = faceIni;
     markedArcs[startArc] = true;
@@ -1070,7 +1072,7 @@ namespace DGtal {
         TVTriangulation::Value valH = tvT.u(tvT.T.head(a));
         TVTriangulation::Value valT = tvT.u(tvT.T.tail(a));
         
-        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]);
+        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]) && !tvT.T.isArcBoundary(a);
         if(found)
         {
           resAll.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
@@ -1115,9 +1117,25 @@ namespace DGtal {
           res = res || isBorderArc(tvT, a);
       }
       return res;
-      //return  tvT.T.faceAroundArc(tvT.T.opposite( arc )) == TVTriangulation::Triangulation::INVALID_FACE;
+      
   }
 
+
+
+  
+  void invalidateImageBorder(TVTriangulation& tvT )
+  {
+    for(TVTriangulation::Arc a=0; a < tvT.T.nbArcs(); a++)
+    {
+      if(tvT.T.isArcBoundary(a))
+      {
+        tvT.invalidate(tvT.T.head(a));
+        tvT.invalidate(tvT.T.tail(a));
+      }
+    } 
+  }
+
+  
 
   
   TVTriangulation::ColorContours trackImageBorder(TVTriangulation& tvT,std::vector<bool> &markedArcs )
@@ -1138,11 +1156,13 @@ namespace DGtal {
     trace.info() << "arc border found" << std::endl;
     trace.endBlock();
     trace.beginBlock("tracking border arcs");
-
+    
     TVTriangulation::Face faceIni = tvT.T.faceAroundArc(tvT.T.opposite(arcBorder));
     TVTriangulation::Arc currentArc = arcBorder;
     TVTriangulation::Face currentFace = faceIni;
     markedArcs[arcBorder] = true;
+    TVTriangulation::Value val = tvT.u(tvT.T.head(currentArc));
+    res.first = DGtal::Color(val[0], val[1], val[2]);
     std::vector<TVTriangulation::Point> vpt;
 
     // track all border faces
@@ -1153,10 +1173,11 @@ namespace DGtal {
     auto aout =   (tvT.T.outArcs(v))[0];
     auto ain =   (tvT.T.inArcs(v))[0];
      // auto vois = tvT.T.arou (currentArc)[0];
-      do{
-    arcFound=false;
-     currentArc = tvT.T.next(currentArc);
-    if(!arcFound && tvT.T.isArcBoundary(currentArc) && !markedArcs[currentArc] && tvT.T.faceAroundArc(currentArc) != currentFace )
+    do{
+      arcFound=false;
+      currentArc = tvT.T.next(currentArc);
+      if(!arcFound && tvT.T.isArcBoundary(currentArc) && !markedArcs[currentArc] && tvT.T.faceAroundArc(currentArc) != currentFace
+        && !tvT.T.isArcBoundary(currentArc))
       {
         arcFound=true;
         currentFace = tvT.T.faceAroundArc(tvT.T.opposite(currentArc));
@@ -1165,8 +1186,9 @@ namespace DGtal {
         vpt.push_back(center);
       }
     
-    }while(faceIni != currentFace);
-        res.second.push_back(vpt);
+    }while(faceIni != currentFace && arcFound );
+    //  std::reverse(begin(vpt), end(vpt));
+    res.second.push_back(vpt);
     // track all border faces
     
     trace.endBlock();
@@ -1184,8 +1206,12 @@ namespace DGtal {
     std::vector<std::vector<TVTriangulation::Point> > resAll;
     std::vector<bool> markedArcs(tvT.T.nbArcs());
     for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
-    trackImageBorder(tvT,markedArcs);
-
+    invalidateImageBorder(tvT);
+//    TVTriangulation::ColorContours imgBorder =  trackImageBorder(tvT,markedArcs);
+    //res.push_back(imgBorder);
+//    resAll.push_back(imgBorder.second[0]);
+    //   mapContours[imgBorder.first].push_back(0);
+    
     bool found = true;
     while(found){
       found = false;
@@ -1195,7 +1221,7 @@ namespace DGtal {
         TVTriangulation::Value valH = tvT.u(tvT.T.head(a));
         TVTriangulation::Value valT = tvT.u(tvT.T.tail(a));
         
-        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]);
+        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]) && !tvT.T.isArcBoundary(a);
         if(found)
         {
           resAll.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
