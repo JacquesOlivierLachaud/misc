@@ -1150,17 +1150,17 @@ namespace DGtal {
     std::vector<bool> markedArcs(tvT.T.nbArcs());
     for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
     DGtal::Color med = invalidateImageBorder(tvT);
+
+    // Adding background:
     TVTriangulation::ColorContours c;
     c.first = med;
-
-    std::vector<std::vector<TVTriangulation::Point>> v={{TVTriangulation::Point(0, height),
-                                                         TVTriangulation::Point(width, height),
-                                                         TVTriangulation::Point(width, 0 ),
-                                                         TVTriangulation::Point(0,0)}};
-    c.second = v;
-    
+    std::vector<std::vector<TVTriangulation::Point>> bg = {{TVTriangulation::Point(0, height),
+                                                            TVTriangulation::Point(width, height),
+                                                            TVTriangulation::Point(width, 0 ),
+                                                            TVTriangulation::Point(0,0)}};
+    c.second = bg;
     res.push_back(c);
-
+    
     
     bool found = true;
     while(found){
@@ -1194,7 +1194,6 @@ namespace DGtal {
     {
       TVTriangulation::ColorContours c;
       c.first = cc.first;
-      
       for(unsigned int i=0; i< (cc.second).size(); i++){
         c.second.push_back(resAll[(cc.second)[i]]);
       }
