@@ -1152,13 +1152,11 @@ namespace DGtal {
     DGtal::Color med = invalidateImageBorder(tvT);
     TVTriangulation::ColorContours c;
     c.first = med;
-    std::vector<TVTriangulation::Point> imBorder = {TVTriangulation::Point(0, height),
-                                                    TVTriangulation::Point(width, height),
-                                                    TVTriangulation::Point(width, 0 ),
-                                                    TVTriangulation::Point(0,0)
-    };
 
-    std::vector<std::vector<TVTriangulation::Point>> v; v.push_back(imBorder);
+    std::vector<std::vector<TVTriangulation::Point>> v={{TVTriangulation::Point(0, height),
+                                                         TVTriangulation::Point(width, height),
+                                                         TVTriangulation::Point(width, 0 ),
+                                                         TVTriangulation::Point(0,0)}};
     c.second = v;
     
     res.push_back(c);
@@ -1252,9 +1250,7 @@ namespace DGtal {
                 col = DGtal::Color(200, 200, 20);
             }
             exp.addContour(c, col, 0.1);}
-      }
-    
-    
+      } 
   }
 
 
@@ -1264,17 +1260,10 @@ namespace DGtal {
                              unsigned int height)
   {
     BasicVectoImageExporter exp( name, width, height, false, 100);    
-    std::vector<TVTriangulation::Point> bg = {TVTriangulation::Point(0,0), TVTriangulation::Point(width, 0),
-                                              TVTriangulation::Point(width, height),
-                                              TVTriangulation::Point(0, height)};
-
-    
     std::vector<TVTriangulation::ColorContours> contourCol = trackAllBorders(tvT, width, height);
     for (auto c: contourCol){
       DGtal::Color col = c.first;
       exp.addRegions(c.second, col);
-      
-
     }
     
   }
