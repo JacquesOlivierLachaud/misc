@@ -1224,10 +1224,10 @@ namespace DGtal {
   }
 
   void exportEPSMesh(TVTriangulation& tvT, const std::string &name, unsigned int width,
-                     unsigned int height, bool displayMesh=true)
+                     unsigned int height, bool displayMesh=true, double scale=1.0)
   {
     BasicVectoImageExporter exp( name, width, height, displayMesh, 100);
-    BasicVectoImageExporter expMean( "mean.eps", width, height, displayMesh, 100);
+    BasicVectoImageExporter expMean( "mean.eps", width, height, displayMesh, scale);
     
     for(TVTriangulation::Face f = 0; f < tvT.T.nbFaces(); f++)
     {
@@ -1409,7 +1409,7 @@ namespace DGtal {
                                                             TVTriangulation::Point(0,0)}};
     c.second = bg;
     res.push_back(c);
-    
+   
     
     bool found = true;
     while(found){
@@ -1455,9 +1455,9 @@ namespace DGtal {
 
   
   void exportEPSMeshDual(TVTriangulation& tvT, const std::string &name, unsigned int width,
-                         unsigned int height, bool displayMesh, unsigned int numColor)
+                         unsigned int height, bool displayMesh, unsigned int numColor, double scale)
   {
-    BasicVectoImageExporter exp( name, width, height, displayMesh, 100);    
+    BasicVectoImageExporter exp( name, width, height, displayMesh, scale);    
     for(TVTriangulation::VertexIndex v = 0; v < tvT.T.nbVertices(); v++)
     {
       std::vector<TVTriangulation::RealPoint> tr;
@@ -1519,9 +1519,9 @@ namespace DGtal {
 
   
   void exportEPSContoursDual(TVTriangulation& tvT, const std::string &name, unsigned int width,
-                             unsigned int height)
+                             unsigned int height, double scale)
   {
-    BasicVectoImageExporter exp( name, width, height, false, 100);    
+    BasicVectoImageExporter exp( name, width, height, false, scale);    
     std::vector<TVTriangulation::ColorContours> contourCol = trackAllBorders(tvT, width, height);
     for (auto c: contourCol){
       DGtal::Color col = c.first;
@@ -1573,6 +1573,7 @@ int main( int argc, char** argv )
     ("exportEPSMesh,e", po::value<std::string>(), "Export the triangle mesh." )
     ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." )
     ("exportEPSContoursDual,C", po::value<std::string>(), "Export the image regions filled." )
+    ("epsScale", po::value<double>()->default_value( 1.0 ), "Change the default eps scale to increase display size on small images (using 10 will display easely small images while 1.0 is more adapted to bigger images) . " )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
     ("regularizeContour,R", po::value<int>()->default_value( 0 ), "regularizes the dual contours for <nb> iterations." )
     ;
@@ -1711,12 +1712,14 @@ int main( int argc, char** argv )
   }
   trace.endBlock();
   trace.beginBlock("Export base triangulation");
+
+  double epsScale = vm["epsScale"].as<double>();
   if(vm.count("exportEPSMesh"))
     {
       unsigned int w = image.extent()[ 0 ];
       unsigned int h = image.extent()[ 1 ];
       std::string name = vm["exportEPSMesh"].as<std::string>();
-      exportEPSMesh(TVT, name, w, h ,vm.count("displayMesh"));
+      exportEPSMesh(TVT, name, w, h ,vm.count("displayMesh"), epsScale);
       
     }
   if(vm.count("exportEPSMeshDual"))
@@ -1725,16 +1728,16 @@ int main( int argc, char** argv )
       unsigned int h = image.extent()[ 1 ];
       std::string name = vm["exportEPSMeshDual"].as<std::string>();
       unsigned int numColor = vm["numColorExportEPSDual"].as<unsigned int>();
-      exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor);
+      exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor, epsScale);
       
     }
-    if(vm.count("exportEPSContoursDual"))
-    {
-        unsigned int w = image.extent()[ 0 ];
-        unsigned int h = image.extent()[ 1 ];
-        std::string name = vm["exportEPSContoursDual"].as<std::string>();
-        exportEPSContoursDual(TVT, name, w, h);
-    }
+  if(vm.count("exportEPSContoursDual"))
+  {
+    unsigned int w = image.extent()[ 0 ];
+    unsigned int h = image.extent()[ 1 ];
+    std::string name = vm["exportEPSContoursDual"].as<std::string>();
+    exportEPSContoursDual(TVT, name, w, h, epsScale);
+  }
   trace.endBlock();
 
   
