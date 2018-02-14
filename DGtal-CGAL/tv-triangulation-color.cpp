@@ -452,7 +452,7 @@ namespace DGtal {
 	  const VertexIndex v01 = v00 + taille[ 0 ];
 	  const VertexIndex v11 = v01 + 1;
 	  auto  how = connecter.howConnected( Point( x, y ) );
-	  bool diag00_11 = ( how == Connecter::Diagonal00_11 );
+	  bool diag00_11 = ( how.diagonal == Connecter::Diagonal00_11 );
 	  if ( diag00_11 ) {
 	    T.addTriangle( v00, v01, v11 );
 	    T.addTriangle( v00, v11, v10 );
@@ -475,18 +475,23 @@ namespace DGtal {
 
       // Fix some arcs;
       _flippable.resize( T.nbArcs() );
+      int nbFlippable = 0;
       for ( Arc a = 0; a < T.nbArcs(); ++a ) {
 	Point p = T.position( T.head( a ) );
 	Point q = T.position( T.tail( a ) );
 	Point l = p.inf( q );
 	Point u = p.sup( q );
-	if ( ( l - u ).dot( l - u ) == 2 ) {
-	  auto  how = connecter.howConnected( l );
-	  _flippable[ a ] = ( how == Connecter::Default );
-	} else {
-	  _flippable[ a ] = true;
-	}
+	auto  how = connecter.howConnected( l );
+	if ( ( l - u ).dot( l - u ) == 2 )
+	  _flippable[ a ] = ( how.diagonal == Connecter::Default );
+	else if ( u[ 0 ] != l[ 0 ] )
+	  _flippable[ a ] = ! how.horizontal;
+	else 
+	  _flippable[ a ] = ! how.vertical;
+	nbFlippable += _flippable[ a ] ? 1 : 0;
       }
+      trace.info() << "Nb arcs flippable = " << nbFlippable
+		   << "/" << T.nbArcs() << std::endl;
     }
 
     template <typename Image>
@@ -545,12 +550,12 @@ namespace DGtal {
        the energy.
     */
     int updateArc( const Arc a ) {
+      // Checks that edge can be flipped.
+      if ( ! _flippable[ a ] ) return -4;
       VertexRange P = T.verticesAroundArc( a );
       if ( P.size() != 4 )   return -1;
       if ( P[ 0 ] < P[ 2 ] ) return -2;
       if ( ! isConvex( P ) ) return -3;
-      // Checks that edge can be flipped.
-      if ( ! _flippable[ a ] ) return -4;
       // Computes energies
       const Face    f012 = T.faceAroundArc( a );
       const Face    f023 = T.faceAroundArc( T.opposite( a ) );
@@ -657,7 +662,7 @@ namespace DGtal {
       // Taking care of first pass
       if ( Q_process.size() == 0 )
 	for ( Arc a = 0; a < T.nbArcs(); ++a )
-	  Q_process.push_back( a );
+	  if ( _flippable[ a ] ) Q_process.push_back( a );
       // Processing arcs
       for ( Arc a : Q_process ) {
 	int update = updateArc( a );

@@ -169,11 +169,20 @@ namespace DGtal
     {
       link8( find( x ), find( y ) );
     }
-    enum Configuration { Default = 0, Diagonal00_11, Diagonal10_01 };
+    enum DiagonalConfiguration { Default = 0, Diagonal00_11, Diagonal10_01 };
 
-    std::vector< Configuration > connections;
-    std::vector< Element >       labels;
-    Integer                      width;
+    /// Encodes connections between a group of four pixels sharing a pointel.
+    struct QuadConfiguration {
+      DiagonalConfiguration diagonal;
+      bool                  horizontal;
+      bool                  vertical;
+      QuadConfiguration()
+	: diagonal( Default ), horizontal( false ), vertical( false )
+      {}
+    };
+    std::vector< QuadConfiguration > connections;
+    std::vector< Element >           labels;
+    Integer                          width;
   public:
     /**
        Constructor. 
@@ -181,7 +190,7 @@ namespace DGtal
     ImageConnecter()
     {}
     
-    Configuration howConnected( Point p ) const
+    QuadConfiguration howConnected( Point p ) const
     {
       return connections[ p[ 1 ] * width + p[ 0 ] ];
     }
@@ -288,45 +297,49 @@ namespace DGtal
 	const Value v11 = I( p11 );
 	Scalar   s00_11 = comp( v00, v11 );
 	Scalar   s10_01 = comp( v10, v01 );
-	Configuration c = Default;
+	
+	QuadConfiguration c;
+	if ( comp( v00, v10 ) <= same ) c.horizontal = true;
+	if ( comp( v00, v01 ) <= same ) c.vertical   = true;
 	if ( ( same   <  s00_11 ) && ( same < s10_01 ) )
-	  c = Default;
+	  c.diagonal = Default;
 	else if ( ( s00_11 <= same   ) && ( same < s10_01 ) )
-	  c = Diagonal00_11;
+	  c.diagonal = Diagonal00_11;
 	else if ( ( s10_01 <= same ) && ( same < s00_11 ) )
-	  c = Diagonal10_01;
+	  c.diagonal = Diagonal10_01;
 	// simpler solutions like this are better on 1-bit pixel art
 	// than complex ones, which introduces weird dithering.
-	else if ( ( e00 == e11 ) && ( e10 != e01 ) ) c = Diagonal10_01;
-	else if ( ( e10 == e01 ) && ( e00 != e11 ) ) c = Diagonal00_11;
-	else c = Diagonal00_11;
+	else if ( ( e00 == e11 ) && ( e10 != e01 ) ) c.diagonal = Diagonal10_01;
+	else if ( ( e10 == e01 ) && ( e00 != e11 ) ) c.diagonal = Diagonal00_11;
+	else c.diagonal = Diagonal00_11;
 	// else if ( ( e00 == e11 ) && ( e10 != e01 ) ) {
 	//   if ( ( ( e00->nb4 + e11->nb4 ) < ( e10->nb4 + e01->nb4 ) ) )
 	//     //&&( ( e00->nb8 + e11->nb8 ) >= 2 * ( e00->nb4 + e11->nb4 ) ) )
-	//     c = Diagonal00_11;
-	//   else c = Diagonal10_01;
+	//     c.diagonal = Diagonal00_11;
+	//   else c.diagonal = Diagonal10_01;
 	// }
 	// else if ( ( e10 == e01 ) && ( e00 != e11 ) ) {
 	//   if ( ( ( e10->nb4 + e01->nb4 ) < ( e00->nb4 + e11->nb4 ) ) )
 	//     // &&( ( e10->nb8 + e01->nb8 ) >= 2 * ( e10->nb4 + e01->nb4 ) ) )
-	//     c = Diagonal10_01;
-	//   else c = Diagonal00_11;
+	//     c.diagonal = Diagonal10_01;
+	//   else c.diagonal = Diagonal00_11;
 	// }
-	// else c = Diagonal00_11;
+	// else c.diagonal = Diagonal00_11;
 	// else { 
 	//   int  r00_11 = ( e00->nb8 + e11->nb8 ) / ( e00->nb4 + e11->nb4 );
 	//   int  r10_01 = ( e10->nb8 + e01->nb8 ) / ( e10->nb4 + e01->nb4 );
-	//   if ( r00_11 < r10_01 ) c = Diagonal10_01;
-	//   else if ( r00_11 > r10_01 ) c = Diagonal00_11;
-	//   else c = Diagonal00_11;
+	//   if ( r00_11 < r10_01 ) c.diagonal = Diagonal10_01;
+	//   else if ( r00_11 > r10_01 ) c.diagonal = Diagonal00_11;
+	//   else c.diagonal = Diagonal00_11;
 	// }
-	if ( c == Diagonal00_11 ) {
+	if ( c.diagonal == Diagonal00_11 ) {
 	  if ( e00 != e11 ) merge8( e00, e11 );
 	  nb00_11++;
-	} else if ( c == Diagonal10_01 ) {
+	} else if ( c.diagonal == Diagonal10_01 ) {
 	  if ( e10 != e01 ) merge8( e10, e01 );
 	  nb10_01++;
 	}
+
 	connections[ p00[ 1 ] * width + p00[ 0 ] ] = c;
       }
       trace.info() << "nb00_11=" << nb00_11
@@ -518,13 +531,15 @@ namespace DGtal
 	const Value v11 = I( p11 );
 	Scalar   s00_11 = comp( v00, v11 );
 	Scalar   s10_01 = comp( v10, v01 );
-	Configuration c = Default;
+	QuadConfiguration c;
+	if ( comp( v00, v10 ) <= same ) c.horizontal = true;
+	if ( comp( v00, v01 ) <= same ) c.vertical   = true;
 	if ( ( same   <  s00_11 ) && ( same < s10_01 ) )
-	  c = Default;
+	  c.diagonal = Default;
 	else if ( ( s00_11 <= same   ) && ( same < s10_01 ) )
-	  c = Diagonal00_11;
+	  c.diagonal = Diagonal00_11;
 	else if ( ( s10_01 <= same ) && ( same < s00_11 ) )
-	  c = Diagonal10_01;
+	  c.diagonal = Diagonal10_01;
 	else {
 	  Size m00_11 = std::min( e00->order, e11->order ); 
 	  Size m10_01 = std::min( e10->order, e01->order );
@@ -534,13 +549,13 @@ namespace DGtal
 	  // 		    << " e11=" << e11->order
 	  // 		    << " e10=" << e10->order
 	  // 		    << " e01=" << e01->order << std::endl;
-	  if ( m00_11 < m10_01 ) c = Diagonal10_01;
-	  else c = Diagonal00_11;
+	  if ( m00_11 < m10_01 ) c.diagonal = Diagonal10_01;
+	  else c.diagonal = Diagonal00_11;
 	}
-	if ( c == Diagonal00_11 ) {
+	if ( c.diagonal == Diagonal00_11 ) {
 	  //if ( e00 != e11 ) merge8( e00, e11 );
 	  nb00_11++;
-	} else if ( c == Diagonal10_01 ) {
+	} else if ( c.diagonal == Diagonal10_01 ) {
 	  //if ( e10 != e01 ) merge8( e10, e01 );
 	  nb10_01++;
 	}
