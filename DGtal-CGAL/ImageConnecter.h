@@ -110,8 +110,10 @@ namespace DGtal
       Element* father;
       Size     nb4;
       Size     nb8;
+      int      order;
       Element( Element* self = nullptr, Point p = Point( 0, 0 ) )
-	: point( p ), rank( 0 ), father( self ), nb4 ( 1 ), nb8( 1 ) {}
+	: point( p ), rank( 0 ), father( self ), nb4 ( 1 ), nb8( 1 ),
+	  order( -1 ) {}
     };
 
     // return the root of the tree containing e
@@ -127,12 +129,18 @@ namespace DGtal
       if ( x->rank > y->rank ) {
 	y->father = x;
 	x->nb4   += y->nb4; 
-	x->nb8   += y->nb8; 
+	x->nb8   += y->nb8;
+	x->order  = ( y->order == -1 ) ? x->order
+	  : ( x->order == - 1 ) ? y->order
+	  : std::min( x->order, y->order );
       }
       else {
 	x->father = y;
 	y->nb4   += x->nb4; 
 	y->nb8   += x->nb8; 
+	y->order  = ( y->order == -1 ) ? x->order
+	  : ( x->order == - 1 ) ? y->order
+	  : std::min( x->order, y->order );
 	if ( x->rank == y->rank ) y->rank += 1;
       }
     }
@@ -161,11 +169,20 @@ namespace DGtal
     {
       link8( find( x ), find( y ) );
     }
-    enum Configuration { Default = 0, Diagonal00_11, Diagonal10_01 };
+    enum DiagonalConfiguration { Default = 0, Diagonal00_11, Diagonal10_01 };
 
-    std::vector< Configuration > connections;
-    std::vector< Element >       labels;
-    Integer                      width;
+    /// Encodes connections between a group of four pixels sharing a pointel.
+    struct QuadConfiguration {
+      DiagonalConfiguration diagonal;
+      bool                  horizontal;
+      bool                  vertical;
+      QuadConfiguration()
+	: diagonal( Default ), horizontal( false ), vertical( false )
+      {}
+    };
+    std::vector< QuadConfiguration > connections;
+    std::vector< Element >           labels;
+    Integer                          width;
   public:
     /**
        Constructor. 
@@ -173,10 +190,15 @@ namespace DGtal
     ImageConnecter()
     {}
     
-    Configuration howConnected( Point p ) const
+    QuadConfiguration howConnected( Point p ) const
     {
       return connections[ p[ 1 ] * width + p[ 0 ] ];
     }
+    Size linearize( Point p ) const
+    {
+      return p[ 1 ] * width + p[ 0 ];
+    }
+    
     void init( const Image& I, Comparator comp, Scalar same )
     {
       // Creates 4-connected components
@@ -275,30 +297,266 @@ namespace DGtal
 	const Value v11 = I( p11 );
 	Scalar   s00_11 = comp( v00, v11 );
 	Scalar   s10_01 = comp( v10, v01 );
-	Configuration c = Default;
+	
+	QuadConfiguration c;
+	if ( comp( v00, v10 ) <= same ) c.horizontal = true;
+	if ( comp( v00, v01 ) <= same ) c.vertical   = true;
 	if ( ( same   <  s00_11 ) && ( same < s10_01 ) )
-	  c = Default;
+	  c.diagonal = Default;
 	else if ( ( s00_11 <= same   ) && ( same < s10_01 ) )
-	  c = Diagonal00_11;
+	  c.diagonal = Diagonal00_11;
 	else if ( ( s10_01 <= same ) && ( same < s00_11 ) )
-	  c = Diagonal10_01;
+	  c.diagonal = Diagonal10_01;
 	// simpler solutions like this are better on 1-bit pixel art
 	// than complex ones, which introduces weird dithering.
-	else if ( ( e00 == e11 ) && ( e10 != e01 ) ) c = Diagonal10_01;
-	else if ( ( e10 == e01 ) && ( e00 != e11 ) ) c = Diagonal00_11;
-	else c = Diagonal00_11;
+	else if ( ( e00 == e11 ) && ( e10 != e01 ) ) c.diagonal = Diagonal10_01;
+	else if ( ( e10 == e01 ) && ( e00 != e11 ) ) c.diagonal = Diagonal00_11;
+	else c.diagonal = Diagonal00_11;
+	// else if ( ( e00 == e11 ) && ( e10 != e01 ) ) {
+	//   if ( ( ( e00->nb4 + e11->nb4 ) < ( e10->nb4 + e01->nb4 ) ) )
+	//     //&&( ( e00->nb8 + e11->nb8 ) >= 2 * ( e00->nb4 + e11->nb4 ) ) )
+	//     c.diagonal = Diagonal00_11;
+	//   else c.diagonal = Diagonal10_01;
+	// }
+	// else if ( ( e10 == e01 ) && ( e00 != e11 ) ) {
+	//   if ( ( ( e10->nb4 + e01->nb4 ) < ( e00->nb4 + e11->nb4 ) ) )
+	//     // &&( ( e10->nb8 + e01->nb8 ) >= 2 * ( e10->nb4 + e01->nb4 ) ) )
+	//     c.diagonal = Diagonal10_01;
+	//   else c.diagonal = Diagonal00_11;
+	// }
+	// else c.diagonal = Diagonal00_11;
 	// else { 
 	//   int  r00_11 = ( e00->nb8 + e11->nb8 ) / ( e00->nb4 + e11->nb4 );
 	//   int  r10_01 = ( e10->nb8 + e01->nb8 ) / ( e10->nb4 + e01->nb4 );
-	//   if ( r00_11 < r10_01 ) c = Diagonal10_01;
-	//   else if ( r00_11 > r10_01 ) c = Diagonal00_11;
-	//   else c = Diagonal00_11;
+	//   if ( r00_11 < r10_01 ) c.diagonal = Diagonal10_01;
+	//   else if ( r00_11 > r10_01 ) c.diagonal = Diagonal00_11;
+	//   else c.diagonal = Diagonal00_11;
 	// }
-	if ( c == Diagonal00_11 ) {
+	if ( c.diagonal == Diagonal00_11 ) {
 	  if ( e00 != e11 ) merge8( e00, e11 );
 	  nb00_11++;
-	} else if ( c == Diagonal10_01 ) {
+	} else if ( c.diagonal == Diagonal10_01 ) {
 	  if ( e10 != e01 ) merge8( e10, e01 );
+	  nb10_01++;
+	}
+
+	connections[ p00[ 1 ] * width + p00[ 0 ] ] = c;
+      }
+      trace.info() << "nb00_11=" << nb00_11
+		   << " nb10_01=" << nb10_01;
+    }
+
+    void fillRegionWithOrder( const Image& I, Comparator comp, Scalar same,
+			      Point p, int& order,
+			      std::set<Point>& M )
+    {
+      const Point lo = I.domain().lowerBound();
+      const Point up = I.domain().upperBound();
+      std::queue<Point> Q;
+      Q.push( p );
+      while ( ! Q.empty() ) {
+	Point    pp = Q.front(); Q.pop();
+	if ( M.find( pp ) != M.end() ) continue;
+	M.insert( pp );
+	Value     v = I( pp );
+	Element* e1 = & labels[ linearize( pp ) ];
+	e1->order   = ( e1->order == -1 )
+	  ? order : std::min( e1->order, order );
+	Point T[ 4 ] = { pp + Vector(  1,  0 ),
+			 pp + Vector( -1,  0 ),
+			 pp + Vector(  0,  1 ),
+			 pp + Vector(  0, -1 ) };
+	for ( int i = 0; i < 4; ++i ) {
+	  Point q = T[ i ];
+	  if ( ( q.inf( lo ) == lo ) && ( q.sup( up ) == up ) ) {
+	    Element* e2 = & labels[ linearize( q ) ];
+	    if ( comp( v, I( q ) ) <= same )
+	      Q.push( q );
+	    else
+	      e2->order   = ( e2->order == -1 )
+		? order+1 : std::min( e2->order, order+1 );
+	  }
+	} // 	for ( int i = 0; i < 4; ++i ) {
+      }	 // while (! Q.empty() ) {
+      ++order;
+    }
+    
+    void processPoint( const Image& I, Comparator comp, Scalar same,
+		       Point p, Size& order )
+    {
+      const Point lo = I.domain().lowerBound();
+      const Point up = I.domain().upperBound();
+      Value     v = I( p );
+      Element* e1 = & labels[ linearize( p ) ];
+      if ( p[ 0 ] < up[ 0 ] ) {
+	Point q = p + Vector( 1, 0 );
+	Element* e2 = & labels[ linearize( q ) ];
+	if ( comp( v, I( q ) ) <= same ) {
+	  if ( find( e1 ) != find( e2 ) ) {
+	    merge4( e1, e2 );
+	  }
+	} else {
+	  Element* fe2 = find( e2 );
+	  if ( fe2->order == -1 ) fe2->order = ++order;
+	}
+      }
+      if ( lo[ 0 ] < p[ 0 ] ) {
+	Point q = p + Vector( -1, 0 );
+	Element* e2 = & labels[ linearize( q ) ];
+	if ( comp( v, I( q ) ) <= same ) {
+	  if ( find( e1 ) != find( e2 ) ) {
+	    merge4( e1, e2 );
+	  }
+	} else {
+	  Element* fe2 = find( e2 );
+	  if ( fe2->order == -1 ) fe2->order = ++order;
+	}
+      }
+      if ( p[ 1 ] < up[ 1 ] ) {
+	Point q = p + Vector( 0, 1 );
+	Element* e2 = & labels[ linearize( q ) ];
+	if ( comp( v, I( q ) ) <= same ) {
+	  if ( find( e1 ) != find( e2 ) ) {
+	    merge4( e1, e2 );
+	  }
+	} else {
+	  Element* fe2 = find( e2 );
+	  if ( fe2->order == -1 ) fe2->order = ++order;
+	}
+      }
+      if ( lo[ 1 ] < p[ 1 ] ) {
+	Point q = p + Vector( 0, -1 );
+	Element* e2 = & labels[ linearize( q ) ];
+	if ( comp( v, I( q ) ) <= same ) {
+	  if ( find( e1 ) != find( e2 ) ) {
+	    merge4( e1, e2 );
+	  }
+	} else {
+	  Element* fe2 = find( e2 );
+	  if ( fe2->order == -1 ) fe2->order = ++order;
+	}
+      }
+    }
+    // The strategy is to label the components from the outside toward
+    // the inside, in order to get an order on regions.
+    void init2( const Image& I, Comparator comp, Scalar same )
+    {
+      // Creates 4-connected components
+      const Domain& domain = I.domain();
+      const Domain rdomain ( domain.lowerBound(),
+			     domain.upperBound() - Point::diagonal( 1 ) );
+      const Vector& extent = I.extent();
+      width  = extent[ 0 ];
+      // Initializes all regions as singletons.
+      labels.resize( domain.size() );
+      connections.resize( domain.size() );
+      Size i = 0;
+      for ( auto p : domain ) {
+	Element& self = labels[ i++ ];
+	self = Element( &self, p );
+      }
+      // We scan the domain from the outside toward the inside
+      const Point lo = domain.lowerBound();
+      const Point up = domain.upperBound();
+      Point      clo = lo;
+      Point      cup = up;
+      int      order = 0;
+      std::set<Point> M;
+      while ( ( clo[ 0 ] <= cup[ 0 ] ) &&
+	      ( clo[ 1 ] <= cup[ 1 ] ) ) {
+	for ( int x = clo[ 0 ]; x <= cup[ 0 ]; ++x ) {
+	  Point p1( x, clo[ 1 ] );
+	  if ( M.find( p1 ) == M.end() )
+	    fillRegionWithOrder( I, comp, same, p1, order, M );
+	  Point p2( x, cup[ 1 ] );
+	  if ( M.find( p2 ) == M.end() )
+	    fillRegionWithOrder( I, comp, same, p2, order, M );
+	  // processPoint( I, comp, same, Point( x, clo[ 1 ] ), order );
+	  // //std::cout << x << " " << clo[1] << " order=" << order << std::endl;
+	  // processPoint( I, comp, same, Point( x, cup[ 1 ] ), order );
+	  // //std::cout << x << " " << cup[1] << " order=" << order << std::endl;
+	}
+	for ( int y = clo[ 1 ]+1; y < cup[ 1 ]; ++y ) {
+	  Point p1( clo[ 0 ], y );
+	  if ( M.find( p1 ) == M.end() )
+	    fillRegionWithOrder( I, comp, same, p1, order, M );
+	  Point p2( cup[ 0 ], y );
+	  if ( M.find( p2 ) == M.end() )
+	    fillRegionWithOrder( I, comp, same, p2, order, M );
+	  // processPoint( I, comp, same, Point( clo[ 0 ], y ), order );
+	  // //std::cout << clo[ 0 ] << " " << y << " order=" << order << std::endl;
+	  // processPoint( I, comp, same, Point( cup[ 0 ], y ), order );
+	  // //std::cout << cup[ 0 ] << " " << y << " order=" << order << std::endl;
+	}
+	clo += Point::diagonal( 1 );
+	cup -= Point::diagonal( 1 );
+      }
+      // end scan for 4-connectedness
+      typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
+      ColorImage debug( domain );
+      std::vector< Color > cc_color( labels.size() );
+      for ( int i = 0; i < cc_color.size(); ++i )
+	cc_color[ i ] = Color( (unsigned int) rand() % 0xffffff );
+      for ( int i = 0; i < cc_color.size(); ++i ) {
+	Element* e = & labels[ i ];
+	if ( e != find( e ) ) 
+	  cc_color[ i ] = cc_color[ find( e ) - & labels[ 0 ] ];
+      }
+      for ( auto p : domain )
+	debug.setValue( p, cc_color[ p[ 1 ] * width + p[ 0 ] ] );
+      PPMWriter<ColorImage, std::function< Color(Color) > >
+	::exportPPM("cc.ppm", debug, [] (Color c) { return c; } );
+      for ( auto p : domain ) {
+	int order = find( & labels[ linearize( p ) ] )->order;
+	debug.setValue( p, Color( ( ( order % 16 ) * 16 ) % 256, ( order / 16 ) % 256, order % 256 ) );
+      }
+      PPMWriter<ColorImage, std::function< Color(Color) > >
+	::exportPPM("order.ppm", debug, [] (Color c) { return c; } );
+
+      // Connect diagonals around big regions.
+      Size nb00_11 = 0;
+      Size nb10_01 = 0;
+      for ( auto p : rdomain ) {
+	const Point p00 = p;
+	const Point p10 = p + Vector( 1, 0 );
+	const Point p01 = p + Vector( 0, 1 );
+	const Point p11 = p + Vector( 1, 1 );
+	Element*    e00 = find( & labels[ linearize( p00 ) ] );
+	Element*    e10 = find( & labels[ linearize( p10 ) ] );
+	Element*    e01 = find( & labels[ linearize( p01 ) ] );
+	Element*    e11 = find( & labels[ linearize( p11 ) ] );
+	const Value v00 = I( p00 );
+	const Value v10 = I( p10 );
+	const Value v01 = I( p01 );
+	const Value v11 = I( p11 );
+	Scalar   s00_11 = comp( v00, v11 );
+	Scalar   s10_01 = comp( v10, v01 );
+	QuadConfiguration c;
+	if ( comp( v00, v10 ) <= same ) c.horizontal = true;
+	if ( comp( v00, v01 ) <= same ) c.vertical   = true;
+	if ( ( same   <  s00_11 ) && ( same < s10_01 ) )
+	  c.diagonal = Default;
+	else if ( ( s00_11 <= same   ) && ( same < s10_01 ) )
+	  c.diagonal = Diagonal00_11;
+	else if ( ( s10_01 <= same ) && ( same < s00_11 ) )
+	  c.diagonal = Diagonal10_01;
+	else {
+	  Size m00_11 = std::min( e00->order, e11->order ); 
+	  Size m10_01 = std::min( e10->order, e01->order );
+	  // if ( m00_11 == m10_01 )
+	  //   trace.warning() << "At " << p00 << " same min:"
+	  // 		    << " e00=" << e00->order
+	  // 		    << " e11=" << e11->order
+	  // 		    << " e10=" << e10->order
+	  // 		    << " e01=" << e01->order << std::endl;
+	  if ( m00_11 < m10_01 ) c.diagonal = Diagonal10_01;
+	  else c.diagonal = Diagonal00_11;
+	}
+	if ( c.diagonal == Diagonal00_11 ) {
+	  //if ( e00 != e11 ) merge8( e00, e11 );
+	  nb00_11++;
+	} else if ( c.diagonal == Diagonal10_01 ) {
+	  //if ( e10 != e01 ) merge8( e10, e01 );
 	  nb10_01++;
 	}
 	connections[ p00[ 1 ] * width + p00[ 0 ] ] = c;

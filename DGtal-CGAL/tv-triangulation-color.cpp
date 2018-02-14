@@ -116,12 +116,6 @@ namespace DGtal {
     ScalarForm           _tv_per_triangle;
     /// The total variation energy of T.
     Scalar               _tv_energy;
-    /// Edges with both value strictly lower cannot be flipped.
-    Value                _lowflip;
-    /// Edges with both value strictly greater cannot be flipped.
-    Value                _upflip;
-    /// true iff some edges cannot be flipped.
-    bool                 _check_edge;
     /// true if arc is flippable.
     std::vector<bool>    _flippable;
     
@@ -381,14 +375,8 @@ namespace DGtal {
     // Constructor from color image.
     template <typename Image>
     TVTriangulation( const Image&  I, bool color,
-		     Scalar p = 0.5,
-		     Scalar lo_v = 0,
-		     Scalar up_v = 0 )
-      : _lowflip( Value( lo_v, lo_v, lo_v ) ),
-	_upflip( Value( up_v, up_v, up_v ) )
+		     Scalar p = 0.5, Scalar sim = 0.0 )
     {
-      _check_edge = ( _lowflip != Value( 0, 0, 0 ) )
-	||          ( _upflip != Value( 255, 255, 255 ) );
       _color = color;
       _power = p;
       // Defining norms.
@@ -449,7 +437,7 @@ namespace DGtal {
       typename Connecter::Comparator comp
 	= [this] ( Value v1, Value v2 ) { return _normX( v1 - v2 ); };
       trace.info() << "Compute connections ... ";
-      connecter.init( tmpI, comp, 0.0 );
+      connecter.init2( tmpI, comp, sim );
       trace.info() << "ended." << std::endl;
 
       // Building triangulation
@@ -464,16 +452,7 @@ namespace DGtal {
 	  const VertexIndex v01 = v00 + taille[ 0 ];
 	  const VertexIndex v11 = v01 + 1;
 	  auto  how = connecter.howConnected( Point( x, y ) );
-	  bool diag00_11 = ( how == Connecter::Diagonal00_11 );
-	  // if ( _check_edge ) {
-	  //   const Value     vh = _I[ v01 ];
-	  //   const Value     vt = _I[ v10 ];
-	  //   if ( ( ( vh.sup( _lowflip ) == _lowflip )
-	  // 	   && ( vt.sup( _lowflip ) == _lowflip ) )
-	  // 	 || ( ( vh.inf( _upflip ) == _upflip )
-	  // 	      && ( vt.inf( _upflip ) == _upflip ) ) )
-	  //     diag00_11 = false;
-	  // }
+	  bool diag00_11 = ( how.diagonal == Connecter::Diagonal00_11 );
 	  if ( diag00_11 ) {
 	    T.addTriangle( v00, v01, v11 );
 	    T.addTriangle( v00, v11, v10 );
@@ -481,8 +460,6 @@ namespace DGtal {
 	    T.addTriangle( v00, v01, v10 );
 	    T.addTriangle( v10, v01, v11 );
 	  }
-	  // T.addTriangle( v, v + taille[ 0 ], v + taille[ 0 ] + 1 );
-	  // T.addTriangle( v, v + taille[ 0 ] + 1, v + 1 );
 	}
       }
       bool ok = T.build();
@@ -498,18 +475,23 @@ namespace DGtal {
 
       // Fix some arcs;
       _flippable.resize( T.nbArcs() );
+      int nbFlippable = 0;
       for ( Arc a = 0; a < T.nbArcs(); ++a ) {
 	Point p = T.position( T.head( a ) );
 	Point q = T.position( T.tail( a ) );
 	Point l = p.inf( q );
 	Point u = p.sup( q );
-	if ( ( l - u ).dot( l - u ) == 2 ) {
-	  auto  how = connecter.howConnected( l );
-	  _flippable[ a ] = ( how == Connecter::Default );
-	} else {
-	  _flippable[ a ] = true;
-	}
+	auto  how = connecter.howConnected( l );
+	if ( ( l - u ).dot( l - u ) == 2 )
+	  _flippable[ a ] = ( how.diagonal == Connecter::Default );
+	else if ( u[ 0 ] != l[ 0 ] )
+	  _flippable[ a ] = ! how.horizontal;
+	else 
+	  _flippable[ a ] = ! how.vertical;
+	nbFlippable += _flippable[ a ] ? 1 : 0;
       }
+      trace.info() << "Nb arcs flippable = " << nbFlippable
+		   << "/" << T.nbArcs() << std::endl;
     }
 
     template <typename Image>
@@ -568,22 +550,12 @@ namespace DGtal {
        the energy.
     */
     int updateArc( const Arc a ) {
+      // Checks that edge can be flipped.
+      if ( ! _flippable[ a ] ) return -4;
       VertexRange P = T.verticesAroundArc( a );
       if ( P.size() != 4 )   return -1;
       if ( P[ 0 ] < P[ 2 ] ) return -2;
       if ( ! isConvex( P ) ) return -3;
-      // Checks that edge can be flipped.
-      if ( ! _flippable[ a ] ) return -4;
-      // if ( _check_edge ) {
-      // 	const Value     vh = _I[ T.head( a ) ];
-      // 	const Value     vt = _I[ T.tail( a ) ];
-      // 	if ( ( vh.sup( _lowflip ) == _lowflip )
-      // 	     && ( vt.sup( _lowflip ) == _lowflip ) )
-      // 	  return -4;
-      // 	if ( ( vh.inf( _upflip ) == _upflip )
-      // 	     && ( vt.inf( _upflip ) == _upflip ) )
-      // 	  return -5;
-      // }
       // Computes energies
       const Face    f012 = T.faceAroundArc( a );
       const Face    f023 = T.faceAroundArc( T.opposite( a ) );
@@ -593,22 +565,6 @@ namespace DGtal {
       const Scalar  E123 = computeEnergyTV( P[ 1 ], P[ 2 ], P[ 3 ] );
       const Scalar Ecurr = E012 + E023;
       const Scalar Eflip = E013 + E123;
-
-      // // Checks that edge can be flipped.
-      // bool force_flip = false;
-      // if ( _check_edge ) {
-      // 	const Value     vh = _I[ P[ 1 ] ];
-      // 	const Value     vt = _I[ P[ 3 ] ];
-      // 	if ( ( ( vh.sup( _lowflip ) == _lowflip )
-      // 	       && ( vt.sup( _lowflip ) == _lowflip ) )
-      // 	     || ( ( vh.inf( _upflip ) == _upflip )
-      // 		  && ( vt.inf( _upflip ) == _upflip )	) )
-      // 	  force_flip = true;
-      // }
-      // trace.info() << "(" << P[ 0 ] << "," << P[ 1 ] << "," << P[ 2 ]
-      // 		   << "," << P[ 3 ] << ") ";
-      // trace.info() << "Ecurr=" << Ecurr << " Eflip=" << Eflip << std::endl;
-      // @todo Does not take into account equality for now.a
       if ( Eflip < Ecurr ) {
 	// Save arcs that may be affected.
 	queueSurroundingArcs( a );
@@ -706,7 +662,7 @@ namespace DGtal {
       // Taking care of first pass
       if ( Q_process.size() == 0 )
 	for ( Arc a = 0; a < T.nbArcs(); ++a )
-	  Q_process.push_back( a );
+	  if ( _flippable[ a ] ) Q_process.push_back( a );
       // Processing arcs
       for ( Arc a : Q_process ) {
 	int update = updateArc( a );
@@ -1612,14 +1568,13 @@ int main( int argc, char** argv )
     ("discontinuities", po::value<double>()->default_value( 0.0 ), "Tells to display a % of the TV discontinuities (the triangles with greatest energy)." ) 
     ("stiffness", po::value<double>()->default_value( 0.9 ), "Tells how to stiff the gradient around discontinuities (amplitude value is changed at stiffness * middle)." ) 
     ("amplitude", po::value<double>()->default_value( 0.75 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." )
+    ("similarity", po::value<double>()->default_value( 0.0 ), "Tells when two colors are considered identical for connectedness." )
     ("displayMesh", "display mesh of the eps display." )
     ("exportEPSMesh,e", po::value<std::string>(), "Export the triangle mesh." )
     ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." )
     ("exportEPSContoursDual,C", po::value<std::string>(), "Export the image regions filled." )
     ("epsScale", po::value<double>()->default_value( 1.0 ), "Change the default eps scale to increase display size on small images (using 10 will display easely small images while 1.0 is more adapted to bigger images) . " )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
-    ("fixDarkEdges", po::value<int>()->default_value( 0 ), "if [v] greater than zero, then do not flip edges whose values are lower than [v]." )
-    ("fixBrightEdges", po::value<int>()->default_value( 255 ), "if [v] lower than 255, then do not flip edges whose values are greater than [v]." )
     ("regularizeContour,R", po::value<int>()->default_value( 0 ), "regularizes the dual contours for <nb> iterations." )
     ;
 
@@ -1660,9 +1615,8 @@ int main( int argc, char** argv )
 	       << "x" << image.extent()[ 1 ]
 	       << " color=" << ( color ? "True" : "False" ) << std::endl;
   double    p = vm[ "tv-power" ].as<double>();
-  int   fdark = vm[ "fixDarkEdges" ].as<int>();
-  int fbright = vm[ "fixBrightEdges" ].as<int>();
-  TVTriangulation TVT( image, color, p, fdark, fbright );
+  double  sim = vm[ "similarity" ].as<double>();
+  TVTriangulation TVT( image, color, p, sim );
   trace.info() << TVT.T << std::endl;
   trace.endBlock();
 
