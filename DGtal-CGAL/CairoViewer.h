@@ -498,6 +498,114 @@ namespace DGtal
 	}
       }
     }
+
+    static inline
+    Scalar det( const RealVector& v, const RealVector& w )
+    {
+      return v[ 0 ] * w[ 1 ] - v[ 1 ] * w[ 0 ];
+    }
+    
+    /// @return the barycentric coordinates of point \a p in triangle (abc).
+    static
+    RealPoint3 barycentric( const RealPoint& p,
+			    const RealPoint& a,
+			    const RealPoint& b,
+			    const RealPoint& c )
+    {
+      RealPoint3 bc = { det( b - p, c - p ),
+			det( c - p, a - p ),
+			det( a - p, b - p ) };
+      return bc / ( bc[ 0 ] + bc[ 1 ] + bc[ 2 ] );
+    }
+
+
+    /// @param bc any barycentric coordinates (sum is 1).
+    ///
+    /// @return 'true' iff the given barycentric coordinates \a bc
+    /// indicates a point inside or on the boundary of the triangle.
+    static
+    bool isInTriangle( const RealPoint3& bc )
+    {
+      return ( 0 <= bc[ 0 ] ) && ( bc[ 0 ] <= 1 )
+	&&   ( 0 <= bc[ 1 ] ) && ( bc[ 1 ] <= 1 )
+	&&   ( 0 <= bc[ 2 ] ) && ( bc[ 2 ] <= 1 );
+    }
+
+    /// bc[ 0 ] + bc[ 1 ] + bc[ 2 ] = 1
+    static
+    Scalar linearPOU( Scalar va, Scalar vb, Scalar vc, const RealPoint3& bc )
+    {
+      return bc[ 0 ] * va + bc[ 1 ] * vb + bc[ 2 ] * vc;
+    }
+
+    static
+    Scalar sqr( Scalar x )
+    { return x*x; }
+
+    static
+    Scalar gaussianPOU( Scalar va, Scalar vb, Scalar vc, const RealPoint3& bc )
+    {
+      Scalar ca = bc[ 0 ] > 0.0 ? exp( 1.0 - 1.0 / ( bc[ 0 ] ) ) : 0.0; 
+      Scalar cb = bc[ 1 ] > 0.0 ? exp( 1.0 - 1.0 / ( bc[ 1 ] ) ) : 0.0; 
+      Scalar cc = bc[ 2 ] > 0.0 ? exp( 1.0 - 1.0 / ( bc[ 2 ] ) ) : 0.0; 
+      return ( ca * va + cb * vb + cc * vc ) / ( ca + cb + cc );
+    }
+    
+    template <typename Fct3>
+    void drawPartitionOfUnityTriangle
+    ( RealPoint a, RealPoint b, RealPoint c,
+      Fct3     fa, Fct3     fb, Fct3     fc )
+    {
+      if ( _color ) drawColorPartitionOfUnityTriangle( a, b, c, fa, fb, fc );
+      else  drawGrayLevelPartitionOfUnityTriangle( a, b, c, fa, fb, fc );
+    }
+    
+    template <typename Fct3>
+    void drawGrayLevelPartitionOfUnityTriangle
+    ( RealPoint a, RealPoint b, RealPoint c,
+      Fct3     fa, Fct3     fb, Fct3     fc )
+    {
+      // Scans all pixels in triangle
+      RealPoint low = ij( a ).inf( ij( b ) ).inf( ij( c ) ); 
+      RealPoint sup = ij( a ).sup( ij( b ) ).sup( ij( c ) ); 
+      Point   ijlow = Point( (int) low[ 0 ], (int) low[ 1 ] );
+      Point   ijsup = Point( (int) sup[ 0 ], (int) sup[ 1 ] );
+      Domain domain( ijlow, ijsup );
+      for ( Point p : domain ) {
+	const RealPoint q = { x( p[ 0 ] ), y( p[ 1 ] ) };
+	const auto     bq = barycentric( q, a, b, c );
+	if ( isInTriangle( bq ) ) {
+	  Scalar v = gaussianPOU( fa[ 0 ]( q ), fb[ 0 ]( q ), fc[ 0 ]( q ), bq );
+          cairo_set_source_rgb( _cr, v * _redf, v * _greenf, v * _bluef );
+	  cairo_rectangle( _cr, p[ 0 ], p[ 1 ], 1, 1 );
+	  cairo_fill( _cr );
+	}
+      }
+    }
+    template <typename Fct3>
+    void drawColorPartitionOfUnityTriangle
+    ( RealPoint a, RealPoint b, RealPoint c,
+      Fct3     fa, Fct3     fb, Fct3     fc )
+    {
+      // Scans all pixels in triangle
+      RealPoint low = ij( a ).inf( ij( b ) ).inf( ij( c ) ); 
+      RealPoint sup = ij( a ).sup( ij( b ) ).sup( ij( c ) ); 
+      Point   ijlow = Point( (int) low[ 0 ], (int) low[ 1 ] );
+      Point   ijsup = Point( (int) sup[ 0 ], (int) sup[ 1 ] );
+      Domain domain( ijlow, ijsup );
+      for ( Point p : domain ) {
+	const RealPoint q = { x( p[ 0 ] ), y( p[ 1 ] ) };
+	const auto     bq = barycentric( q, a, b, c );
+	if ( isInTriangle( bq ) ) {
+	  Scalar vr = gaussianPOU( fa[ 0 ]( q ), fb[ 0 ]( q ), fc[ 0 ]( q ), bq );
+	  Scalar vg = gaussianPOU( fa[ 1 ]( q ), fb[ 1 ]( q ), fc[ 1 ]( q ), bq );
+	  Scalar vb = gaussianPOU( fa[ 2 ]( q ), fb[ 2 ]( q ), fc[ 2 ]( q ), bq );
+          cairo_set_source_rgb( _cr, vr * _redf, vg * _greenf, vb * _bluef );
+	  cairo_rectangle( _cr, p[ 0 ], p[ 1 ], 1, 1 );
+	  cairo_fill( _cr );
+	}
+      }
+    }
     
     // ------------------------- Private Datas --------------------------------
   private:

@@ -74,29 +74,43 @@ namespace DGtal {
     typedef QuadraticPolynomial<Point>  Self;
     typedef typename Point::Coordinate  Scalar;
     
-    Scalar _a, _b, _c, _d, _e;
+    Scalar _a, _b, _c, _d, _e, _f;
+    Scalar _x0, _y0;
     QuadraticPolynomial() 
-      : _a( 0 ), _b( 0 ), _c( 0 ), _d( 0 ), _e( 0 )
+      : _a( 0 ), _b( 0 ), _c( 0 ), _d( 0 ), _e( 0 ), _f( 0 ),
+	_x0( 0 ), _y0( 0 )
     {}
     QuadraticPolynomial( Scalar a, Scalar b, Scalar c,
-			 Scalar d, Scalar e )
-      : _a( a ), _b( b ), _c( c ), _d( d ), _e( e )
+			 Scalar d, Scalar e, Scalar f,
+			 Scalar x0, Scalar y0 )
+      : _a( a ), _b( b ), _c( c ), _d( d ), _e( e ), _f( f ),
+	_x0( x0 ), _y0( y0 )
     {}
     ~QuadraticPolynomial() {}
-    
+
+    // Global coordinates
     Scalar operator()( Point p ) const {
-      return operator()( p[ 0 ], p[ 1 ] );
+      return eval( p[ 0 ] - _x0, p[ 1 ] - _y0 );
     }
-    Scalar operator()( Scalar x, Scalar y ) const {
-      return x*( _a*x + _b*y + _d ) + y*( _c*y + _e );
+    // Local coordinates
+    Scalar eval( Scalar x, Scalar y ) const {
+      return x*( _a*x + _b*y + _d ) + y*( _c*y + _e ) + _f;
     }
 
     void fit( std::vector< Point >  X,
 	      std::vector< Scalar > V ) {
       auto n = std::min( X.size(), V.size() );
-      if ( n <= 2 ) { // constant polynomial
-	_a = _b = _c = _d = _e  = 0;
-      } else if ( n == 3 ) {
+      _a = _b = _c = _d = _e  = 0;
+      _f = V[ 0 ];
+      _x0 = X[ 0 ][ 0 ];
+      _y0 = X[ 0 ][ 1 ];
+      for ( int i = 1; i < n; ++i ) {
+	X[ i ][ 0 ] -= X[ 0 ][ 0 ];
+	X[ i ][ 1 ] -= X[ 0 ][ 1 ];
+      }
+      X[ 0 ][ 0 ] = 0;
+      X[ 0 ][ 1 ] = 0;
+      if ( n == 3 ) {
 	_a = _b = _c = 0;
 	typedef SimpleMatrix<Scalar,3,2>      Matrix;
 	typedef SimpleMatrix<Scalar,2,3>      TrMatrix;
@@ -106,8 +120,11 @@ namespace DGtal {
 			   X[ 2 ][ 0 ], X[ 2 ][ 1 ] };
 	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_d = S[ 0 ]; _e = S[ 1 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _d = S[ 0 ]; _e = S[ 1 ];
+	}
       } else if ( n == 4 ) {
 	_a = _b = _c = 0;
 	typedef SimpleMatrix<Scalar,4,2>      Matrix;
@@ -120,8 +137,11 @@ namespace DGtal {
 	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ],
 				 V[ 2 ] - V[ 0 ], V[ 3 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_d = S[ 0 ]; _e = S[ 1 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _d = S[ 0 ]; _e = S[ 1 ];
+	}
       } else if ( n == 5 ) {
 	typedef SimpleMatrix<Scalar,5,5>      Matrix;
 	typedef SimpleMatrix<Scalar,5,5>      TrMatrix;
@@ -135,8 +155,11 @@ namespace DGtal {
 	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
 				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	} 
       } else if ( n == 6 ) {
 	typedef SimpleMatrix<Scalar,6,5>      Matrix;
 	typedef SimpleMatrix<Scalar,5,6>      TrMatrix;
@@ -152,8 +175,11 @@ namespace DGtal {
 				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
 				 V[ 5 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	}
       } else if ( n == 7 ) {
 	typedef SimpleMatrix<Scalar,7,5>      Matrix;
 	typedef SimpleMatrix<Scalar,5,7>      TrMatrix;
@@ -170,8 +196,11 @@ namespace DGtal {
 				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
 				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	}
       } else if ( n == 8 ) {
 	typedef SimpleMatrix<Scalar,8,5>      Matrix;
 	typedef SimpleMatrix<Scalar,5,8>      TrMatrix;
@@ -190,8 +219,11 @@ namespace DGtal {
 				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
 				 V[ 7 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	}
       } else if ( n == 9 ) {
 	typedef SimpleMatrix<Scalar,9,5>      Matrix;
 	typedef SimpleMatrix<Scalar,5,9>      TrMatrix;
@@ -211,8 +243,11 @@ namespace DGtal {
 				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
 				 V[ 7 ] - V[ 0 ], V[ 8 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	}
       } else if ( n >= 10 ) {
 	typedef SimpleMatrix<Scalar,10,5>      Matrix;
 	typedef SimpleMatrix<Scalar,5,10>      TrMatrix;
@@ -235,9 +270,19 @@ namespace DGtal {
 				 V[ 7 ] - V[ 0 ], V[ 8 ] - V[ 0 ],
 				 V[ 9 ] - V[ 0 ] };
 	const TrMatrix    tM = M.transpose();
-	const auto         S = ( tM * M ).inverse() * ( tM * Y );
-	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	const auto       tMM = tM * M;
+	if ( tMM.determinant() != 0 ) {
+	  const auto         S = tMM.inverse() * ( tM * Y );
+	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+	}
       }
+      if ( n > 10 ) trace.warning() << "Too many neighbors"
+				    << " n=" << n << std::endl;
+      // trace.info() << "At " << X[ 0 ] << " v=" << V[ 0 ]
+      // 		   << " #=" << X.size()
+      // 		   << " a=" << _a << " b=" << _b
+      // 		   << " c=" << _c << " d=" << _d
+      // 		   << " e=" << _e << " f=" << _f << std::endl;
     }
       
   };
@@ -274,7 +319,7 @@ namespace DGtal {
     typedef std::vector<Value>         ValueForm;
     typedef std::vector<VectorValue>   VectorValueForm;
     typedef QuadraticPolynomial<RealPoint> QPolynomial;
-    
+    typedef std::array< QPolynomial, 3 > QPolynomial3;
     /// The domain triangulation
     Triangulation        T;
     /// The image values at each vertex
@@ -302,7 +347,7 @@ namespace DGtal {
     std::vector<bool>    _flippable;
 
     /// Contains the polynomials per vertex that fits the values.
-    std::vector< std::array< QPolynomial, 3 > > _u_approx;
+    std::vector< QPolynomial3 > _u_approx;
     
     // Data needed for vectorization. Each contour is a succession of
     // arc, where head points outside.
@@ -315,11 +360,11 @@ namespace DGtal {
     /// Contains the area for each vertex.
     std::vector<Scalar>     _A; 
 
-    /// @return the polynomial at vertex \a v and component \a m
-    const QPolynomial& uApprox( const Vertex v, int m ) const
+    /// @return the polynomial at vertex \a v
+    const QPolynomial3& uApprox( const Vertex v ) const
     {
       ASSERT( v < _u_approx.size() );
-      return _u_approx[ v ][ m ];
+      return _u_approx[ v ];
     }
     
     /// @return the regularized value at vertex v.
@@ -1251,6 +1296,7 @@ namespace DGtal {
     typedef TVT::Point               Point;
     typedef Z2i::RealPoint           RealPoint;
 
+    using Base::_color;
   public:
 
     /**
@@ -1334,13 +1380,35 @@ namespace DGtal {
 			RealPoint( c[ 0 ], c[ 1 ] ), val );
     }
 
+    void viewTVTPartitionOfUnityTriangle( TVT & tvT, Face f )
+    {
+      VertexRange V = tvT.T.verticesAroundFace( f );
+      Point a = tvT.T.position( V[ 0 ] );
+      Point b = tvT.T.position( V[ 1 ] );
+      Point c = tvT.T.position( V[ 2 ] );
+      auto fa = tvT.uApprox( V[ 0 ] );
+      auto fb = tvT.uApprox( V[ 1 ] );
+      auto fc = tvT.uApprox( V[ 2 ] );
+      drawPartitionOfUnityTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
+				    RealPoint( b[ 0 ], b[ 1 ] ),
+				    RealPoint( c[ 0 ], c[ 1 ] ),
+				    fa, fb, fc );
+    }
 
     /**
        Displays the AVT with flat or Gouraud shading.
     */
     void view( TVT & tvT )
     {
-      cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+      if ( _shading == 3 ) {
+	trace.beginBlock( "Compute u approximations" );
+	tvT.computeUApproximations();
+	trace.endBlock();
+      }
+      if ( _shading == 3 )
+	cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
+      else
+	cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
       cairo_set_line_width( _cr, 0.0 ); 
       cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
       cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
@@ -1348,6 +1416,7 @@ namespace DGtal {
 	{
 	  if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
 	  else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
+	  else if ( _shading == 3 ) viewTVTPartitionOfUnityTriangle( tvT, f );
 	  else                      viewTVTFlatTriangle   ( tvT, f );
 	}
     }
@@ -1358,6 +1427,11 @@ namespace DGtal {
     */
     void view( TVT & tvT, Scalar discontinuities )
     {
+      if ( _shading == 3 ) {
+	trace.beginBlock( "Compute u approximations" );
+	tvT.computeUApproximations();
+	trace.endBlock();
+      }
       // We need first to sort faces according to their energyTV.
       std::vector<Face> tv_faces( tvT.T.nbFaces() );
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
@@ -1375,8 +1449,10 @@ namespace DGtal {
       Scalar Etv = tvT.getEnergyTV();
       Scalar Ctv = 0.0;
       Scalar Otv = Etv * discontinuities;
-      
-      cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+      if ( _shading == 3 )
+	cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
+      else
+	cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
       cairo_set_line_width( _cr, 0.0 ); 
       cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
       cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
@@ -1391,6 +1467,7 @@ namespace DGtal {
 	  else {
 	    if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
 	    else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
+	    else if ( _shading == 3 ) viewTVTPartitionOfUnityTriangle( tvT, f );
 	    else                      viewTVTFlatTriangle   ( tvT, f );
 	  }
 	}
@@ -1408,7 +1485,7 @@ namespace DGtal {
 
   };
   
-  // shading; 0:flat, 1:gouraud, 2:linear gradient.
+  // shading; 0:flat, 1:gouraud, 2:linear gradient, 3: partition of unity
   void viewTVTriangulation
   ( TVTriangulation& tvT, double b, double x0, double y0, double x1, double y1,
 	int shading, bool color, std::string fname, double discontinuities,
@@ -1438,6 +1515,9 @@ namespace DGtal {
 			   discontinuities, stiffness, amplitude );
     if ( display & 0x4 )
       viewTVTriangulation( tvT, b, x0, y0, x1, y1, 2, color, fname + "-lg.png",
+			   discontinuities, stiffness, amplitude );
+    if ( display & 0x8 )
+      viewTVTriangulation( tvT, b, x0, y0, x1, y1, 3, color, fname + "-pu.png",
 			   discontinuities, stiffness, amplitude );
   }
 
