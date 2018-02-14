@@ -82,6 +82,8 @@ namespace DGtal {
     typedef Triangulation::FaceRange   FaceRange;
     typedef double                     Scalar;
     typedef PointVector< 3, Scalar >   Value;
+    typedef std::pair<DGtal::Color, std::vector<std::vector<TVTriangulation::Point> > > ColorContours;
+
     // typedef std::array< Value, 2 >     VectorValue;
     struct VectorValue {
       Value x;
@@ -143,6 +145,19 @@ namespace DGtal {
       return ( 1.0 - _t[ a ] ) * A + _t[ a ] * B;
     }
     
+    /// invalidate a vertex by using specific value (to process image border).
+    void invalidate( const VertexIndex v )
+    { _u[ v ][0]=std::numeric_limits<double>::min();
+      _u[ v ][1]=std::numeric_limits<double>::min();
+      _u[ v ][2]=std::numeric_limits<double>::min();
+    }
+    bool isinvalid(const VertexIndex v)
+    {
+      return   _u[ v ][0]==std::numeric_limits<double>::min() &&
+               _u[ v ][1]==std::numeric_limits<double>::min() &&
+               _u[ v ][2]==std::numeric_limits<double>::min();
+    }
+      
     /// The norm used for the scalars induced by vector-value space (RGB)
     std::function< Scalar( const Value& v ) >       _normX;
     /// The norm used for the 2d vectors induced by vector-value space (RGB)
@@ -1271,10 +1286,6 @@ namespace DGtal {
     // starting ext point: arc tail
     TVTriangulation::Face faceIni = tvT.T.faceAroundArc(startArc);
 
-      if(faceIni == TVTriangulation::Triangulation::INVALID_FACE )
-      {
-          return res;
-      }
     TVTriangulation::Arc currentArc = startArc;
     TVTriangulation::Face currentFace = faceIni;
     markedArcs[startArc] = true;
@@ -1282,7 +1293,7 @@ namespace DGtal {
     do 
     {
       TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( currentFace );
-      TVTriangulation::Point center = (tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
+      TVTriangulation::Point center = tvT.barycenter(currentFace);//(tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
       res.push_back(center);
       currentArc = pivotNext(tvT, currentArc, valInside);          
       currentFace = tvT.T.faceAroundArc(currentArc);
@@ -1312,7 +1323,7 @@ namespace DGtal {
         TVTriangulation::Value valH = tvT.u(tvT.T.head(a));
         TVTriangulation::Value valT = tvT.u(tvT.T.tail(a));
         
-        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]);
+        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]) && !tvT.T.isArcBoundary(a);
         if(found)
         {
           resAll.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
@@ -1334,6 +1345,103 @@ namespace DGtal {
     std::vector<std::vector<TVTriangulation::Point> > res;
     for(unsigned int i=0; i< (itMap->second).size(); i++){
       res.push_back(resAll[(itMap->second)[i]]);
+    }
+    return res;
+  }
+
+
+
+  /**
+   * Invalidate contour border and compute the median image color.
+   * 
+   **/
+  DGtal::Color invalidateImageBorder(TVTriangulation& tvT )
+  {
+    std::vector<TVTriangulation::Value> vectColors;
+    for(TVTriangulation::Arc a=0; a < tvT.T.nbArcs(); a++)
+    {
+      if(tvT.T.isArcBoundary(a))
+      {
+        vectColors.push_back(tvT.u(tvT.T.head(a)));
+      }
+    }
+    for(TVTriangulation::Arc a=0; a < tvT.T.nbArcs(); a++)
+    {
+      if(tvT.T.isArcBoundary(a))
+      {
+        tvT.invalidate(tvT.T.head(a));
+        tvT.invalidate(tvT.T.tail(a));
+      }
+    }
+    std::sort(vectColors.begin(), vectColors.end(), [](const TVTriangulation::Value &a,
+                                                       const TVTriangulation::Value &b){
+        return a[0]*a[0]+a[1]*a[1]+a[2]*a[2] > b[0]*b[0]+b[1]*b[1]+b[2]*b[2];});
+    TVTriangulation::Value valMed = vectColors[vectColors.size()/2]; 
+    return DGtal::Color(valMed[0], valMed[1], valMed[2]);
+  }
+
+  
+
+  
+
+    
+  std::vector<TVTriangulation::ColorContours> trackAllBorders(TVTriangulation& tvT, unsigned int width, unsigned int height)
+  {
+    typedef std::map<DGtal::Color, std::vector<unsigned int> >  MapColorContours;
+    std::vector<TVTriangulation::ColorContours> res;
+    MapColorContours mapContours;
+    std::vector<std::vector<TVTriangulation::Point> > resAll;
+    std::vector<bool> markedArcs(tvT.T.nbArcs());
+    for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
+    DGtal::Color med = invalidateImageBorder(tvT);
+
+    // Adding background:
+    TVTriangulation::ColorContours c;
+    c.first = med;
+    std::vector<std::vector<TVTriangulation::Point>> bg = {{TVTriangulation::Point(0, height),
+                                                            TVTriangulation::Point(width, height),
+                                                            TVTriangulation::Point(width, 0 ),
+                                                            TVTriangulation::Point(0,0)}};
+    c.second = bg;
+    res.push_back(c);
+    
+    
+    bool found = true;
+    while(found){
+      found = false;
+      for(unsigned int a = 0; a< markedArcs.size(); a++)
+      {
+        // tracking Head color
+        TVTriangulation::Value valH = tvT.u(tvT.T.head(a));
+        TVTriangulation::Value valT = tvT.u(tvT.T.tail(a));
+        
+        found = !markedArcs[a] && (valH[0]!=valT[0] || valH[1]!=valT[1] || valH[2]!=valT[2]) && !tvT.T.isArcBoundary(a)
+          && !tvT.isinvalid(tvT.T.head(a));
+        if(found)
+        {
+          resAll.push_back( trackBorderFromFace(tvT, a, valH, markedArcs));
+          if (mapContours.count(DGtal::Color(valH[0], valH[1], valH[2]))==0)
+          {
+            std::vector<unsigned int> indexC;
+            indexC.push_back(resAll.size()-1);
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])]=indexC;
+          }
+          else
+          {
+            mapContours[DGtal::Color(valH[0], valH[1], valH[2])].push_back(resAll.size()-1);
+          }
+        }
+      }
+    }
+
+    for(auto cc : mapContours)
+    {
+      TVTriangulation::ColorContours c;
+      c.first = cc.first;
+      for(unsigned int i=0; i< (cc.second).size(); i++){
+        c.second.push_back(resAll[(cc.second)[i]]);
+      }
+      res.push_back(c);
     }
     return res;
   }
@@ -1399,14 +1507,30 @@ namespace DGtal {
                 col = DGtal::Color(200, 200, 20);
             }
             exp.addContour(c, col, 0.1);}
-      }
-    
+      } 
+  }
+
+
+
+  
+  void exportEPSContoursDual(TVTriangulation& tvT, const std::string &name, unsigned int width,
+                             unsigned int height)
+  {
+    BasicVectoImageExporter exp( name, width, height, false, 100);    
+    std::vector<TVTriangulation::ColorContours> contourCol = trackAllBorders(tvT, width, height);
+    for (auto c: contourCol){
+      DGtal::Color col = c.first;
+      exp.addRegions(c.second, col);
+    }
     
   }
 
 
-} // namespace DGtal
 
+  
+
+
+} // namespace DGtal
 
 
 
@@ -1443,6 +1567,7 @@ int main( int argc, char** argv )
     ("displayMesh", "display mesh of the eps display." )
     ("exportEPSMesh,e", po::value<std::string>(), "Export the triangle mesh." )
     ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." )
+    ("exportEPSContoursDual,C", po::value<std::string>(), "Export the image regions filled." )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
     ("regularizeContour,R", po::value<int>()->default_value( 0 ), "regularizes the dual contours for <nb> iterations." )
     ;
@@ -1597,6 +1722,13 @@ int main( int argc, char** argv )
       unsigned int numColor = vm["numColorExportEPSDual"].as<unsigned int>();
       exportEPSMeshDual(TVT, name, w, h, vm.count("displayMesh"), numColor);
       
+    }
+    if(vm.count("exportEPSContoursDual"))
+    {
+        unsigned int w = image.extent()[ 0 ];
+        unsigned int h = image.extent()[ 1 ];
+        std::string name = vm["exportEPSContoursDual"].as<std::string>();
+        exportEPSContoursDual(TVT, name, w, h);
     }
   trace.endBlock();
 

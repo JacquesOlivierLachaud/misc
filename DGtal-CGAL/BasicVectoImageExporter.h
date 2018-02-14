@@ -73,7 +73,7 @@ public:
     {
       addPathContent(cnt);
     }
-  myOutputStream << "closepath" << std::endl;
+  myOutputStream << " closepath " << std::endl;
   if(myDisplayMesh)
   {
     myOutputStream << "gsave" << std::endl;
