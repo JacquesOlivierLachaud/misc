@@ -17,8 +17,9 @@
 #include <DGtal/io/colormaps/GrayscaleColorMap.h>
 #include "DGtal/io/readers/GenericReader.h"
 #include "DGtal/io/writers/PPMWriter.h"
-#include "CairoViewer.h"
+#include <DGtal/math/linalg/SimpleMatrix.h>
 #include <DGtal/geometry/helpers/ContourHelper.h>
+#include "CairoViewer.h"
 #include "BasicVectoImageExporter.h"
 #include "ImageConnecter.h"
 #include "ImageTVRegularization.h"
@@ -63,7 +64,187 @@ namespace DGtal {
       else                return DGtal::Color( 0, 0, 255-value*2 );
     }
   };
+
+  /// We use a specific representation of multivariate polynomial to
+  /// speed up its computation.
+  /// p( x, y ) := a x^2 + b xy + c y^2 + d x + e y
+  template <typename TPoint>
+  struct QuadraticPolynomial {
+    typedef TPoint                      Point;
+    typedef QuadraticPolynomial<Point>  Self;
+    typedef typename Point::Coordinate  Scalar;
+    
+    Scalar _a, _b, _c, _d, _e;
+    QuadraticPolynomial() 
+      : _a( 0 ), _b( 0 ), _c( 0 ), _d( 0 ), _e( 0 )
+    {}
+    QuadraticPolynomial( Scalar a, Scalar b, Scalar c,
+			 Scalar d, Scalar e )
+      : _a( a ), _b( b ), _c( c ), _d( d ), _e( e )
+    {}
+    ~QuadraticPolynomial() {}
+    
+    Scalar operator()( Point p ) const {
+      return operator()( p[ 0 ], p[ 1 ] );
+    }
+    Scalar operator()( Scalar x, Scalar y ) const {
+      return x*( _a*x + _b*y + _d ) + y*( _c*y + _e );
+    }
+
+    void fit( std::vector< Point >  X,
+	      std::vector< Scalar > V ) {
+      auto n = std::min( X.size(), V.size() );
+      if ( n <= 2 ) { // constant polynomial
+	_a = _b = _c = _d = _e  = 0;
+      } else if ( n == 3 ) {
+	_a = _b = _c = 0;
+	typedef SimpleMatrix<Scalar,3,2>      Matrix;
+	typedef SimpleMatrix<Scalar,2,3>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M = { X[ 0 ][ 0 ], X[ 0 ][ 1 ],
+			   X[ 1 ][ 0 ], X[ 1 ][ 1 ],
+			   X[ 2 ][ 0 ], X[ 2 ][ 1 ] };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_d = S[ 0 ]; _e = S[ 1 ];
+      } else if ( n == 4 ) {
+	_a = _b = _c = 0;
+	typedef SimpleMatrix<Scalar,4,2>      Matrix;
+	typedef SimpleMatrix<Scalar,2,4>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M = { X[ 0 ][ 0 ], X[ 0 ][ 1 ],
+			   X[ 1 ][ 0 ], X[ 1 ][ 1 ],
+			   X[ 2 ][ 0 ], X[ 2 ][ 1 ],
+			   X[ 3 ][ 0 ], X[ 3 ][ 1 ] };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ],
+				 V[ 2 ] - V[ 0 ], V[ 3 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_d = S[ 0 ]; _e = S[ 1 ];
+      } else if ( n == 5 ) {
+	typedef SimpleMatrix<Scalar,5,5>      Matrix;
+	typedef SimpleMatrix<Scalar,5,5>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M =
+	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
+	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
+	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
+	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
+	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1] };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
+				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+      } else if ( n == 6 ) {
+	typedef SimpleMatrix<Scalar,6,5>      Matrix;
+	typedef SimpleMatrix<Scalar,5,6>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M =
+	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
+	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
+	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
+	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
+	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
+	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1] };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
+				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
+				 V[ 5 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+      } else if ( n == 7 ) {
+	typedef SimpleMatrix<Scalar,7,5>      Matrix;
+	typedef SimpleMatrix<Scalar,5,7>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M =
+	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
+	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
+	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
+	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
+	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
+	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
+	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1] };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
+				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
+				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+      } else if ( n == 8 ) {
+	typedef SimpleMatrix<Scalar,8,5>      Matrix;
+	typedef SimpleMatrix<Scalar,5,8>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M =
+	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
+	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
+	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
+	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
+	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
+	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
+	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1],
+	    X[7][0]*X[7][0], X[7][0]*X[7][1], X[7][1]*X[7][1], X[7][0], X[7][1] };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
+				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
+				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
+				 V[ 7 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+      } else if ( n == 9 ) {
+	typedef SimpleMatrix<Scalar,9,5>      Matrix;
+	typedef SimpleMatrix<Scalar,5,9>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M =
+	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
+	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
+	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
+	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
+	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
+	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
+	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1],
+	    X[7][0]*X[7][0], X[7][0]*X[7][1], X[7][1]*X[7][1], X[7][0], X[7][1],
+	    X[8][0]*X[8][0], X[8][0]*X[8][1], X[8][1]*X[8][1], X[8][0], X[8][1] };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
+				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
+				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
+				 V[ 7 ] - V[ 0 ], V[ 8 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+      } else if ( n >= 10 ) {
+	typedef SimpleMatrix<Scalar,10,5>      Matrix;
+	typedef SimpleMatrix<Scalar,5,10>      TrMatrix;
+	typedef typename Matrix::ColumnVector ColumnVector;
+	const Matrix M =
+	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
+	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
+	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
+	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
+	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
+	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
+	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1],
+	    X[7][0]*X[7][0], X[7][0]*X[7][1], X[7][1]*X[7][1], X[7][0], X[7][1],
+	    X[8][0]*X[8][0], X[8][0]*X[8][1], X[8][1]*X[8][1], X[8][0], X[8][1],
+	    X[9][0]*X[9][0], X[9][0]*X[9][1], X[9][1]*X[9][1], X[9][0], X[9][1],
+	  };
+	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
+				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
+				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
+				 V[ 7 ] - V[ 0 ], V[ 8 ] - V[ 0 ],
+				 V[ 9 ] - V[ 0 ] };
+	const TrMatrix    tM = M.transpose();
+	const auto         S = ( tM * M ).inverse() * ( tM * Y );
+	_a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
+      }
+    }
+      
+  };
   
+  /// This class represents a triangulation with a Total Variation
+  /// (TV) energy computed per triangle. The main idea of the class is
+  /// to flip edges in order to decrease the total TV energy.
   struct TVTriangulation
   {
 
@@ -92,7 +273,8 @@ namespace DGtal {
     typedef std::vector<Scalar>        ScalarForm;
     typedef std::vector<Value>         ValueForm;
     typedef std::vector<VectorValue>   VectorValueForm;
-
+    typedef QuadraticPolynomial<RealPoint> QPolynomial;
+    
     /// The domain triangulation
     Triangulation        T;
     /// The image values at each vertex
@@ -118,6 +300,9 @@ namespace DGtal {
     Scalar               _tv_energy;
     /// true if arc is flippable.
     std::vector<bool>    _flippable;
+
+    /// Contains the polynomials per vertex that fits the values.
+    std::vector< std::array< QPolynomial, 3 > > _u_approx;
     
     // Data needed for vectorization. Each contour is a succession of
     // arc, where head points outside.
@@ -129,6 +314,13 @@ namespace DGtal {
     std::vector<RealPoint>  _b;
     /// Contains the area for each vertex.
     std::vector<Scalar>     _A; 
+
+    /// @return the polynomial at vertex \a v and component \a m
+    const QPolynomial& uApprox( const Vertex v, int m ) const
+    {
+      ASSERT( v < _u_approx.size() );
+      return _u_approx[ v ][ m ];
+    }
     
     /// @return the regularized value at vertex v.
     const Value& u( const VertexIndex v ) const
@@ -1012,6 +1204,28 @@ namespace DGtal {
       Scalar  t = ( DC[ 1 ] * AC[ 0 ] - DC[ 0 ] * AC[ 1 ] ) / d;
       Scalar  u = ( AB[ 0 ] * AC[ 1 ] - AB[ 1 ] * AC[ 0 ] ) / d;
       return std::make_pair( t, u );
+    }
+
+    // Computes approximation of u at each vertex.
+    void computeUApproximations()
+    {
+      const int d = _color ? 3 : 1;
+      _u_approx.resize( T.nbVertices() );
+      for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
+	auto arcs = T.outArcs( v );
+	std::vector< RealPoint > X;
+	std::array< std::vector< Scalar >, 3 > V;
+	X.push_back( T.position( v ) );
+	for ( int m = 0; m < d; ++m ) V[ m ].push_back( _u[ v ][ m ] );
+	for ( auto a : arcs ) {
+	  Vertex w = T.head( a );
+	  X.push_back( T.position( w ) );
+	  for ( int m = 0; m < d; ++m ) V[ m ].push_back( _u[ w ][ m ] );
+	}
+	// Fit values in the least-square sense for each RGB channel.
+	for ( int m = 0; m < d; ++m )
+	  _u_approx[ v ][ m ].fit( X, V[ m ] );
+      }
     }
   };
 
