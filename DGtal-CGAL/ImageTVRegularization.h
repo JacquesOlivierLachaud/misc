@@ -201,26 +201,42 @@ namespace DGtal
 
     /// Functor for outputing the result into a color image.
     struct Value2ColorFunctor {
+      const double factor;
+      Value2ColorFunctor( int level = 256 )
+	: factor ( 255.0 / ( level - 1 ) ) {}
+
+      double q( double v ) const  {
+      	return round( v / factor ) * factor;
+      }
+
       unsigned int operator()( const Value& v ) const
       {
 	if ( M <= 2 ) 
-	  return ( dig( v[ 0 ] ) << 16 )
-	    +    ( dig( v[ 0 ] ) << 8 )
-	    +    ( dig( v[ 0 ] ) );
+	  return ( dig( q( v[ 0 ] ) ) << 16 )
+	    +    ( dig( q( v[ 0 ] ) ) << 8 )
+	    +    ( dig( q( v[ 0 ] ) ) );
 	else 
-	  return ( dig( v[ 0 ] ) << 16 )
-	    +    ( dig( v[ 1 ] ) << 8 )
-	    +    ( dig( v[ 2 ] ) );
+	  return ( dig( q( v[ 0 ] ) ) << 16 )
+	    +    ( dig( q( v[ 1 ] ) ) << 8 )
+	    +    ( dig( q( v[ 2 ] ) ) );
       }
     };
     
     /// Functor for outputing the result into a gray-level image.
     struct Value2GrayLevelFunctor {
+      const double factor;
+      
+      Value2GrayLevelFunctor( int level = 256 )
+	: factor ( 255.0 / ( level - 1 ) ) {}
+
+      double q( double v ) const  {
+      	return round( v / factor ) * factor;
+      }
       unsigned int operator()( const Value& v ) const
       {
 	unsigned int gl = 0;
 	for ( unsigned int m = 0; m < M; ++m )
-	  gl += dig( v[ m ] );
+	  gl += dig( q( v[ m ] ) );
 	return gl / M;
       }
     };

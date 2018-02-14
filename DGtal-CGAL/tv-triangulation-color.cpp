@@ -21,7 +21,7 @@
 #include <DGtal/geometry/helpers/ContourHelper.h>
 #include "BasicVectoImageExporter.h"
 #include "ImageConnecter.h"
-
+#include "ImageTVRegularization.h"
 
 // #include <CGAL/Delaunay_triangulation_2.h>
 // #include <CGAL/Constrained_Delaunay_triangulation_2.h>
@@ -1561,7 +1561,7 @@ int main( int argc, char** argv )
     ("dt", po::value<double>()->default_value( 0.248 ), "The time step in TV denoising (should be lower than 0.25)" ) 
     ("tolerance,t", po::value<double>()->default_value( 0.01 ), "The tolerance to stop the TV denoising." ) 
     ("quantify,q", po::value<int>()->default_value( 256 ), "The quantification for colors (number of levels, q=2 means binary." ) 
-    ("tv-max-iter,N", po::value<int>()->default_value( 10 ), "The maximum number of iteration in TV's algorithm." )
+    ("tv-max-iter,N", po::value<int>()->default_value( 20 ), "The maximum number of iteration in TV's algorithm." )
     ("nb-alt-iter,A", po::value<int>()->default_value( 1 ), "The number of iteration for alternating TV and TV-flip." )
     ("display-tv,d", po::value<int>()->default_value( 0 ), "Tells the display mode after TV of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
     ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode after flips of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
@@ -1597,14 +1597,15 @@ int main( int argc, char** argv )
     }
 
   // Useful types
-  typedef DGtal::Z2i::Domain Domain;
 
   using namespace DGtal;
 
-  trace.beginBlock("Construction of the triangulation");
+  typedef Z2i::Space  Space;
+  typedef Z2i::Domain Domain;
   typedef ImageSelector < Z2i::Domain, unsigned int>::Type Image;
   typedef ImageSelector < Z2i::Domain, Color>::Type ColorImage;
   
+  trace.beginBlock("Loading image");
   std::string img_fname = vm[ "input" ].as<std::string>();
   Image image           = GenericReader<Image>::import( img_fname ); 
   std::string extension = img_fname.substr(img_fname.find_last_of(".") + 1);
@@ -1614,24 +1615,70 @@ int main( int argc, char** argv )
 	       << "> size=" << image.extent()[ 0 ]
 	       << "x" << image.extent()[ 1 ]
 	       << " color=" << ( color ? "True" : "False" ) << std::endl;
+  trace.info() << std::fixed;
+  trace.endBlock();
+
+  double lambda = vm[ "lambda" ].as<double>();
+  double      dt = vm[ "dt" ].as<double>();
+  double     tol = vm[ "tolerance" ].as<double>();
+  int          N = vm[ "tv-max-iter" ].as<int>();
+  int      quant = vm[ "quantify" ].as<int>();
+  if ( lambda > 0.0 ) {
+    trace.beginBlock("Image usual TV regularization");
+    bool out_color = color;
+    if ( color ) {
+      typedef ImageTVRegularization<Space, 3> ColorTV;
+      ColorTV tv;
+      tv.init( image, ColorTV::Color2ValueFunctor() );
+      tv.optimize( lambda, dt, tol, N );
+      if ( out_color ) tv.outputU( image, ColorTV::Value2ColorFunctor( quant ) );
+      else             tv.outputU( image, ColorTV::Value2GrayLevelFunctor( quant ) );
+    } else {
+      typedef ImageTVRegularization<Space, 1> GrayLevelTV;
+      GrayLevelTV tv;
+      tv.init( image, GrayLevelTV::GrayLevel2ValueFunctor() );
+      tv.optimize( lambda, dt, tol, N );
+      if ( out_color ) tv.outputU( image, GrayLevelTV::Value2ColorFunctor( quant ) );
+      else             tv.outputU( image, GrayLevelTV::Value2GrayLevelFunctor(quant ) );
+    }
+    trace.endBlock();
+  } else if ( quant != 256 ) {
+    trace.beginBlock("Image quantification");
+    bool out_color = color;
+    if ( color ) {
+      typedef ImageTVRegularization<Space, 3> ColorTV;
+      ColorTV tv;
+      tv.init( image, ColorTV::Color2ValueFunctor() );
+      if ( out_color ) tv.outputU( image, ColorTV::Value2ColorFunctor( quant ) );
+      else             tv.outputU( image, ColorTV::Value2GrayLevelFunctor( quant ) );
+    } else {
+      typedef ImageTVRegularization<Space, 1> GrayLevelTV;
+      GrayLevelTV tv;
+      tv.init( image, GrayLevelTV::GrayLevel2ValueFunctor() );
+      if ( out_color ) tv.outputU( image, GrayLevelTV::Value2ColorFunctor( quant ) );
+      else             tv.outputU( image, GrayLevelTV::Value2GrayLevelFunctor(quant ) );
+    }
+    trace.endBlock();
+  }
+  
+  trace.beginBlock("Construction of the triangulation");
   double    p = vm[ "tv-power" ].as<double>();
   double  sim = vm[ "similarity" ].as<double>();
   TVTriangulation TVT( image, color, p, sim );
   trace.info() << TVT.T << std::endl;
   trace.endBlock();
 
-  trace.info() << std::fixed;
-  trace.beginBlock("TV regularization");
-  double lambda = vm[ "lambda" ].as<double>();
-  double     dt = vm[ "dt" ].as<double>();
-  double    tol = vm[ "tolerance" ].as<double>();
-  int     quant = vm[ "quantify" ].as<int>();
-  int         N = vm[ "tv-max-iter" ].as<int>();
-  if ( lambda > 0.0 ) {
-    TVT.tvPass( lambda, dt, tol, N );
-  }
-  if ( quant > 0 ) TVT.quantify( quant );
-  trace.endBlock();
+  // trace.beginBlock("TV regularization");
+  // double lambda = vm[ "lambda" ].as<double>();
+  // double     dt = vm[ "dt" ].as<double>();
+  // double    tol = vm[ "tolerance" ].as<double>();
+  // int     quant = vm[ "quantify" ].as<int>();
+  // int         N = vm[ "tv-max-iter" ].as<int>();
+  // if ( lambda > 0.0 ) {
+  //   TVT.tvPass( lambda, dt, tol, N );
+  // }
+  // if ( quant > 0 ) TVT.quantify( quant );
+  // trace.endBlock();
   
   trace.beginBlock("Output TV image (possibly quantified)");
   Image J( image.domain() );
