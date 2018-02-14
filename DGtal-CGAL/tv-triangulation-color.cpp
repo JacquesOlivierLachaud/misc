@@ -1342,7 +1342,7 @@ namespace DGtal {
     do 
     {
       TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( currentFace );
-      TVTriangulation::Point center = (tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
+      TVTriangulation::Point center = tvT.barycenter(currentFace);//(tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
       res.push_back(center);
       currentArc = pivotNext(tvT, currentArc, valInside);          
       currentFace = tvT.T.faceAroundArc(currentArc);
