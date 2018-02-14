@@ -169,37 +169,73 @@ namespace DGtal
     {
       link8( find( x ), find( y ) );
     }
+
+    /// The possible strategies for solving connectivity ambiguities.
+    /// SizeOfConnectedComponents:  best for 1-bit images.
+    /// OrderOfConnectedComponents: best in the general case.
+    enum Strategy { SizeOfConnectedComponents,
+		    OrderOfConnectedComponents };
+    /// The three possible configurations between 4 points.
     enum DiagonalConfiguration { Default = 0, Diagonal00_11, Diagonal10_01 };
 
     /// Encodes connections between a group of four pixels sharing a pointel.
     struct QuadConfiguration {
-      DiagonalConfiguration diagonal;
-      bool                  horizontal;
-      bool                  vertical;
+      DiagonalConfiguration diagonal;   //< choice of diagonal edge
+      bool                  horizontal; //< force horizontal edge
+      bool                  vertical;   //< force vertical edge
+      /// Default constructor.
       QuadConfiguration()
 	: diagonal( Default ), horizontal( false ), vertical( false )
       {}
     };
+
+    /// Stores how edges should be connected within a group of four
+    /// pixels sharing a pointel.
     std::vector< QuadConfiguration > connections;
+
+    /// Useful for union-find algorithm
     std::vector< Element >           labels;
+
+    /// The width of the image
     Integer                          width;
+
+    /// Tells is in debug mode.
+    bool                             _debug;
   public:
-    /**
-       Constructor. 
-    */
-    ImageConnecter()
+
+    /// Constructor.
+    ///
+    /// @param debug if true, outputs images of connected components
+    /// (cc.ppm) or orders (order.ppm)
+    ImageConnecter( bool debug = false )
+      : _debug( debug )
     {}
-    
+
+    /// Given a point \a p representing the base corner of a group of
+    /// 4 pixels sharing a vertex, returns how edges should be
+    /// connected.
     QuadConfiguration howConnected( Point p ) const
     {
       return connections[ p[ 1 ] * width + p[ 0 ] ];
     }
-    Size linearize( Point p ) const
+
+    /// Compute connectivities in the image \a I, according to the
+    /// chosen strategy \a s and a comparator such that 'comp( I(p1),
+    /// I(p2) ) <= same' indicates that the pixels \a p1 and \a p2
+    /// have the same value.
+    void init
+    ( Strategy s, const Image& I, Comparator comp, Scalar same )
     {
-      return p[ 1 ] * width + p[ 0 ];
+      if ( s == SizeOfConnectedComponents )
+	initWithSizeOfConnectedComponents ( I, comp, same );
+      else
+	initWithOrderOnConnectedComponents ( I, comp, same );
     }
-    
-    void init( const Image& I, Comparator comp, Scalar same )
+
+    /// Compute connectivities using the respective of 4 and 8
+    /// connected components.
+    void initWithSizeOfConnectedComponents
+    ( const Image& I, Comparator comp, Scalar same )
     {
       // Creates 4-connected components
       const Domain& domain = I.domain();
@@ -262,21 +298,22 @@ namespace DGtal
       }
       std::sort( quads.begin(), quads.end() );
 
-      typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
-      ColorImage debug( domain );
-      std::vector< Color > cc_color( labels.size() );
-      for ( int i = 0; i < cc_color.size(); ++i )
-	cc_color[ i ] = Color( (unsigned int) rand() % 0xffffff );
-      for ( int i = 0; i < cc_color.size(); ++i ) {
-	Element* e = & labels[ i ];
-	if ( e != find( e ) ) 
-	  cc_color[ i ] = cc_color[ find( e ) - & labels[ 0 ] ];
+      if ( _debug ) {
+	typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
+	ColorImage debug( domain );
+	std::vector< Color > cc_color( labels.size() );
+	for ( int i = 0; i < cc_color.size(); ++i )
+	  cc_color[ i ] = Color( (unsigned int) rand() % 0xffffff );
+	for ( int i = 0; i < cc_color.size(); ++i ) {
+	  Element* e = & labels[ i ];
+	  if ( e != find( e ) ) 
+	    cc_color[ i ] = cc_color[ find( e ) - & labels[ 0 ] ];
+	}
+	for ( auto p : domain )
+	  debug.setValue( p, cc_color[ p[ 1 ] * width + p[ 0 ] ] );
+	PPMWriter<ColorImage, std::function< Color(Color) > >
+	  ::exportPPM("cc.ppm", debug, [] (Color c) { return c; } );
       }
-      for ( auto p : domain )
-	debug.setValue( p, cc_color[ p[ 1 ] * width + p[ 0 ] ] );
-      PPMWriter<ColorImage, std::function< Color(Color) > >
-	::exportPPM("cc.ppm", debug, [] (Color c) { return c; } );
-
 	
       // Connect diagonals around big regions.
       Size nb00_11 = 0;
@@ -439,7 +476,8 @@ namespace DGtal
     }
     // The strategy is to label the components from the outside toward
     // the inside, in order to get an order on regions.
-    void init2( const Image& I, Comparator comp, Scalar same )
+    void initWithOrderOnConnectedComponents
+    ( const Image& I, Comparator comp, Scalar same )
     {
       // Creates 4-connected components
       const Domain& domain = I.domain();
@@ -471,10 +509,6 @@ namespace DGtal
 	  Point p2( x, cup[ 1 ] );
 	  if ( M.find( p2 ) == M.end() )
 	    fillRegionWithOrder( I, comp, same, p2, order, M );
-	  // processPoint( I, comp, same, Point( x, clo[ 1 ] ), order );
-	  // //std::cout << x << " " << clo[1] << " order=" << order << std::endl;
-	  // processPoint( I, comp, same, Point( x, cup[ 1 ] ), order );
-	  // //std::cout << x << " " << cup[1] << " order=" << order << std::endl;
 	}
 	for ( int y = clo[ 1 ]+1; y < cup[ 1 ]; ++y ) {
 	  Point p1( clo[ 0 ], y );
@@ -483,36 +517,35 @@ namespace DGtal
 	  Point p2( cup[ 0 ], y );
 	  if ( M.find( p2 ) == M.end() )
 	    fillRegionWithOrder( I, comp, same, p2, order, M );
-	  // processPoint( I, comp, same, Point( clo[ 0 ], y ), order );
-	  // //std::cout << clo[ 0 ] << " " << y << " order=" << order << std::endl;
-	  // processPoint( I, comp, same, Point( cup[ 0 ], y ), order );
-	  // //std::cout << cup[ 0 ] << " " << y << " order=" << order << std::endl;
 	}
 	clo += Point::diagonal( 1 );
 	cup -= Point::diagonal( 1 );
       }
       // end scan for 4-connectedness
-      typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
-      ColorImage debug( domain );
-      std::vector< Color > cc_color( labels.size() );
-      for ( int i = 0; i < cc_color.size(); ++i )
-	cc_color[ i ] = Color( (unsigned int) rand() % 0xffffff );
-      for ( int i = 0; i < cc_color.size(); ++i ) {
-	Element* e = & labels[ i ];
-	if ( e != find( e ) ) 
-	  cc_color[ i ] = cc_color[ find( e ) - & labels[ 0 ] ];
-      }
-      for ( auto p : domain )
-	debug.setValue( p, cc_color[ p[ 1 ] * width + p[ 0 ] ] );
-      PPMWriter<ColorImage, std::function< Color(Color) > >
-	::exportPPM("cc.ppm", debug, [] (Color c) { return c; } );
-      for ( auto p : domain ) {
-	int order = find( & labels[ linearize( p ) ] )->order;
-	debug.setValue( p, Color( ( ( order % 16 ) * 16 ) % 256, ( order / 16 ) % 256, order % 256 ) );
-      }
-      PPMWriter<ColorImage, std::function< Color(Color) > >
-	::exportPPM("order.ppm", debug, [] (Color c) { return c; } );
 
+      if ( _debug ) {
+	typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
+	ColorImage debug( domain );
+	std::vector< Color > cc_color( labels.size() );
+	for ( int i = 0; i < cc_color.size(); ++i )
+	  cc_color[ i ] = Color( (unsigned int) rand() % 0xffffff );
+	for ( int i = 0; i < cc_color.size(); ++i ) {
+	  Element* e = & labels[ i ];
+	  if ( e != find( e ) ) 
+	    cc_color[ i ] = cc_color[ find( e ) - & labels[ 0 ] ];
+	}
+	for ( auto p : domain )
+	  debug.setValue( p, cc_color[ p[ 1 ] * width + p[ 0 ] ] );
+	PPMWriter<ColorImage, std::function< Color(Color) > >
+	  ::exportPPM("cc.ppm", debug, [] (Color c) { return c; } );
+	for ( auto p : domain ) {
+	  int order = find( & labels[ linearize( p ) ] )->order;
+	  debug.setValue( p, Color( ( ( order % 16 ) * 16 ) % 256, ( order / 16 ) % 256, order % 256 ) );
+	}
+	PPMWriter<ColorImage, std::function< Color(Color) > >
+	  ::exportPPM("order.ppm", debug, [] (Color c) { return c; } );
+      }
+      
       // Connect diagonals around big regions.
       Size nb00_11 = 0;
       Size nb10_01 = 0;
@@ -543,12 +576,6 @@ namespace DGtal
 	else {
 	  Size m00_11 = std::min( e00->order, e11->order ); 
 	  Size m10_01 = std::min( e10->order, e01->order );
-	  // if ( m00_11 == m10_01 )
-	  //   trace.warning() << "At " << p00 << " same min:"
-	  // 		    << " e00=" << e00->order
-	  // 		    << " e11=" << e11->order
-	  // 		    << " e10=" << e10->order
-	  // 		    << " e01=" << e01->order << std::endl;
 	  if ( m00_11 < m10_01 ) c.diagonal = Diagonal10_01;
 	  else c.diagonal = Diagonal00_11;
 	}
@@ -576,7 +603,12 @@ namespace DGtal
     
     // ------------------------- Hidden services ------------------------------
   protected:
-
+    /// @param p any point
+    /// @return the corresponding index in the 1-dimensional array.
+    Size linearize( Point p ) const
+    {
+      return p[ 1 ] * width + p[ 0 ];
+    }
 
     // ------------------------- Internals ------------------------------------
   private:

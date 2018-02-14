@@ -375,7 +375,8 @@ namespace DGtal {
     // Constructor from color image.
     template <typename Image>
     TVTriangulation( const Image&  I, bool color,
-		     Scalar p = 0.5, Scalar sim = 0.0 )
+		     Scalar p = 0.5, Scalar sim = 0.0,
+		     int connectivity_strategy = 1, bool debug = false )
     {
       _color = color;
       _power = p;
@@ -433,11 +434,14 @@ namespace DGtal {
       auto it = tmpI.begin();
       for ( auto v : _I ) *it++ = v;
 
-      Connecter connecter;
+      Connecter connecter( debug );
       typename Connecter::Comparator comp
 	= [this] ( Value v1, Value v2 ) { return _normX( v1 - v2 ); };
       trace.info() << "Compute connections ... ";
-      connecter.init2( tmpI, comp, sim );
+      auto ccn_strategy = connectivity_strategy == 0
+	? Connecter::SizeOfConnectedComponents
+	: Connecter::OrderOfConnectedComponents;
+      connecter.init( ccn_strategy, tmpI, comp, sim );
       trace.info() << "ended." << std::endl;
 
       // Building triangulation
@@ -1553,7 +1557,7 @@ int main( int argc, char** argv )
   general_opt.add_options()
     ("help,h", "display this message")
     ("input,i", po::value<std::string>(), "Specifies the input shape as a 2D image PPM filename.")
-    ("limit,L", po::value<int>()->default_value(100), "Gives the maximum number of passes (default is 100).")  
+    ("limit,L", po::value<int>()->default_value(200), "Gives the maximum number of passes (default is 200).")  
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("strategy,s", po::value<int>()->default_value(4), "Strategy for quadrilatera with equal energy: 0: do nothing, 1: subdivide, 2: flip all, 3: flip all when #flipped normal = 0, 4: flip approximately half when #flipped normal = 0, 5: flip approximately half when #flipped normal = 0, subdivide if everything fails." )
     ("tv-power,p", po::value<double>()->default_value( 0.5 ), "The power coefficient used to compute the gradient ie |Grad I|^{2p}. " )
@@ -1569,6 +1573,8 @@ int main( int argc, char** argv )
     ("stiffness", po::value<double>()->default_value( 0.9 ), "Tells how to stiff the gradient around discontinuities (amplitude value is changed at stiffness * middle)." ) 
     ("amplitude", po::value<double>()->default_value( 0.75 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." )
     ("similarity", po::value<double>()->default_value( 0.0 ), "Tells when two colors are considered identical for connectedness." )
+    ("connectivity", po::value<std::string>()->default_value( "Order" ), "Indicates the strategy for determining the connectivity of ambiguous pixels: Size | Order. Size is best for 1-bit images, Order is best for color images." )
+    ("debug", "specifies the DEBUG mode: output some intermediate results in cc.ppm and order.ppm." )
     ("displayMesh", "display mesh of the eps display." )
     ("exportEPSMesh,e", po::value<std::string>(), "Export the triangle mesh." )
     ("exportEPSMeshDual,E", po::value<std::string>(), "Export the triangle mesh." )
@@ -1598,6 +1604,7 @@ int main( int argc, char** argv )
 
   // Useful types
 
+  using namespace std;
   using namespace DGtal;
 
   typedef Z2i::Space  Space;
@@ -1664,21 +1671,12 @@ int main( int argc, char** argv )
   trace.beginBlock("Construction of the triangulation");
   double    p = vm[ "tv-power" ].as<double>();
   double  sim = vm[ "similarity" ].as<double>();
-  TVTriangulation TVT( image, color, p, sim );
+  string conn = vm[ "connectivity" ].as<string>();
+  bool  debug = vm.count( "debug" );
+  int  conn_s = conn == "Size" ? 0 : 1;
+  TVTriangulation TVT( image, color, p, sim, conn_s, debug );
   trace.info() << TVT.T << std::endl;
   trace.endBlock();
-
-  // trace.beginBlock("TV regularization");
-  // double lambda = vm[ "lambda" ].as<double>();
-  // double     dt = vm[ "dt" ].as<double>();
-  // double    tol = vm[ "tolerance" ].as<double>();
-  // int     quant = vm[ "quantify" ].as<int>();
-  // int         N = vm[ "tv-max-iter" ].as<int>();
-  // if ( lambda > 0.0 ) {
-  //   TVT.tvPass( lambda, dt, tol, N );
-  // }
-  // if ( quant > 0 ) TVT.quantify( quant );
-  // trace.endBlock();
   
   trace.beginBlock("Output TV image (possibly quantified)");
   Image J( image.domain() );
