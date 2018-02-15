@@ -23,6 +23,7 @@
 #include "BasicVectoImageExporter.h"
 #include "ImageConnecter.h"
 #include "ImageTVRegularization.h"
+#include "LeastSquares.h"
 
 // #include <CGAL/Delaunay_triangulation_2.h>
 // #include <CGAL/Constrained_Delaunay_triangulation_2.h>
@@ -74,18 +75,20 @@ namespace DGtal {
     typedef QuadraticPolynomial<Point>  Self;
     typedef typename Point::Coordinate  Scalar;
     
-    Scalar _a, _b, _c, _d, _e, _f;
+    std::array< Scalar, 6 > _c;
     Scalar _x0, _y0;
+    
     QuadraticPolynomial() 
-      : _a( 0 ), _b( 0 ), _c( 0 ), _d( 0 ), _e( 0 ), _f( 0 ),
+      : _c { 0, 0, 0, 0, 0, 0 },
 	_x0( 0 ), _y0( 0 )
     {}
     QuadraticPolynomial( Scalar a, Scalar b, Scalar c,
 			 Scalar d, Scalar e, Scalar f,
 			 Scalar x0, Scalar y0 )
-      : _a( a ), _b( b ), _c( c ), _d( d ), _e( e ), _f( f ),
+      : _c { a, b, c, d, e, f },
 	_x0( x0 ), _y0( y0 )
     {}
+    
     ~QuadraticPolynomial() {}
 
     // Global coordinates
@@ -94,195 +97,14 @@ namespace DGtal {
     }
     // Local coordinates
     Scalar eval( Scalar x, Scalar y ) const {
-      return x*( _a*x + _b*y + _d ) + y*( _c*y + _e ) + _f;
+      return x*( _c[3]*x + _c[4]*y + _c[1] ) + y*( _c[5]*y + _c[2] ) + _c[0];
     }
 
     void fit( std::vector< Point >  X,
 	      std::vector< Scalar > V ) {
-      auto n = std::min( X.size(), V.size() );
-      _a = _b = _c = _d = _e  = 0;
-      _f = V[ 0 ];
+      _c = LeastSquares<Point>::linearFit( X, V );
       _x0 = X[ 0 ][ 0 ];
       _y0 = X[ 0 ][ 1 ];
-      for ( int i = 1; i < n; ++i ) {
-	X[ i ][ 0 ] -= X[ 0 ][ 0 ];
-	X[ i ][ 1 ] -= X[ 0 ][ 1 ];
-      }
-      X[ 0 ][ 0 ] = 0;
-      X[ 0 ][ 1 ] = 0;
-      if ( n == 3 ) {
-	_a = _b = _c = 0;
-	typedef SimpleMatrix<Scalar,3,2>      Matrix;
-	typedef SimpleMatrix<Scalar,2,3>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M = { X[ 0 ][ 0 ], X[ 0 ][ 1 ],
-			   X[ 1 ][ 0 ], X[ 1 ][ 1 ],
-			   X[ 2 ][ 0 ], X[ 2 ][ 1 ] };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _d = S[ 0 ]; _e = S[ 1 ];
-	}
-      } else if ( n == 4 ) {
-	_a = _b = _c = 0;
-	typedef SimpleMatrix<Scalar,4,2>      Matrix;
-	typedef SimpleMatrix<Scalar,2,4>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M = { X[ 0 ][ 0 ], X[ 0 ][ 1 ],
-			   X[ 1 ][ 0 ], X[ 1 ][ 1 ],
-			   X[ 2 ][ 0 ], X[ 2 ][ 1 ],
-			   X[ 3 ][ 0 ], X[ 3 ][ 1 ] };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ],
-				 V[ 2 ] - V[ 0 ], V[ 3 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _d = S[ 0 ]; _e = S[ 1 ];
-	}
-      } else if ( n == 5 ) {
-	typedef SimpleMatrix<Scalar,5,5>      Matrix;
-	typedef SimpleMatrix<Scalar,5,5>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M =
-	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
-	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
-	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
-	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
-	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1] };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
-				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
-	} 
-      } else if ( n == 6 ) {
-	typedef SimpleMatrix<Scalar,6,5>      Matrix;
-	typedef SimpleMatrix<Scalar,5,6>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M =
-	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
-	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
-	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
-	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
-	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
-	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1] };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
-				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
-				 V[ 5 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
-	}
-      } else if ( n == 7 ) {
-	typedef SimpleMatrix<Scalar,7,5>      Matrix;
-	typedef SimpleMatrix<Scalar,5,7>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M =
-	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
-	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
-	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
-	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
-	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
-	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
-	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1] };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
-				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
-				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
-	}
-      } else if ( n == 8 ) {
-	typedef SimpleMatrix<Scalar,8,5>      Matrix;
-	typedef SimpleMatrix<Scalar,5,8>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M =
-	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
-	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
-	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
-	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
-	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
-	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
-	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1],
-	    X[7][0]*X[7][0], X[7][0]*X[7][1], X[7][1]*X[7][1], X[7][0], X[7][1] };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
-				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
-				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
-				 V[ 7 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
-	}
-      } else if ( n == 9 ) {
-	typedef SimpleMatrix<Scalar,9,5>      Matrix;
-	typedef SimpleMatrix<Scalar,5,9>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M =
-	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
-	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
-	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
-	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
-	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
-	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
-	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1],
-	    X[7][0]*X[7][0], X[7][0]*X[7][1], X[7][1]*X[7][1], X[7][0], X[7][1],
-	    X[8][0]*X[8][0], X[8][0]*X[8][1], X[8][1]*X[8][1], X[8][0], X[8][1] };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
-				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
-				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
-				 V[ 7 ] - V[ 0 ], V[ 8 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
-	}
-      } else if ( n >= 10 ) {
-	typedef SimpleMatrix<Scalar,10,5>      Matrix;
-	typedef SimpleMatrix<Scalar,5,10>      TrMatrix;
-	typedef typename Matrix::ColumnVector ColumnVector;
-	const Matrix M =
-	  { X[0][0]*X[0][0], X[0][0]*X[0][1], X[0][1]*X[0][1], X[0][0], X[0][1],
-	    X[1][0]*X[1][0], X[1][0]*X[1][1], X[1][1]*X[1][1], X[1][0], X[1][1],
-	    X[2][0]*X[2][0], X[2][0]*X[2][1], X[2][1]*X[2][1], X[2][0], X[2][1],
-	    X[3][0]*X[3][0], X[3][0]*X[3][1], X[3][1]*X[3][1], X[3][0], X[3][1],
-	    X[4][0]*X[4][0], X[4][0]*X[4][1], X[4][1]*X[4][1], X[4][0], X[4][1],
-	    X[5][0]*X[5][0], X[5][0]*X[5][1], X[5][1]*X[5][1], X[5][0], X[5][1],
-	    X[6][0]*X[6][0], X[6][0]*X[6][1], X[6][1]*X[6][1], X[6][0], X[6][1],
-	    X[7][0]*X[7][0], X[7][0]*X[7][1], X[7][1]*X[7][1], X[7][0], X[7][1],
-	    X[8][0]*X[8][0], X[8][0]*X[8][1], X[8][1]*X[8][1], X[8][0], X[8][1],
-	    X[9][0]*X[9][0], X[9][0]*X[9][1], X[9][1]*X[9][1], X[9][0], X[9][1],
-	  };
-	const ColumnVector Y = { 0, V[ 1 ] - V[ 0 ], V[ 2 ] - V[ 0 ],
-				 V[ 3 ] - V[ 0 ], V[ 4 ] - V[ 0 ],
-				 V[ 5 ] - V[ 0 ], V[ 6 ] - V[ 0 ],
-				 V[ 7 ] - V[ 0 ], V[ 8 ] - V[ 0 ],
-				 V[ 9 ] - V[ 0 ] };
-	const TrMatrix    tM = M.transpose();
-	const auto       tMM = tM * M;
-	if ( tMM.determinant() != 0 ) {
-	  const auto         S = tMM.inverse() * ( tM * Y );
-	  _a = S[ 0 ]; _b = S[ 1 ]; _c = S[ 2 ]; _d = S[ 3 ]; _e = S[ 4 ];
-	}
-      }
-      if ( n > 10 ) trace.warning() << "Too many neighbors"
-				    << " n=" << n << std::endl;
-      // trace.info() << "At " << X[ 0 ] << " v=" << V[ 0 ]
-      // 		   << " #=" << X.size()
-      // 		   << " a=" << _a << " b=" << _b
-      // 		   << " c=" << _c << " d=" << _d
-      // 		   << " e=" << _e << " f=" << _f << std::endl;
     }
       
   };
@@ -295,6 +117,7 @@ namespace DGtal {
 
     typedef Z2i::Integer               Integer;
     typedef Z2i::RealPoint             Point;
+    typedef Z2i::Point                 Point2i;
     typedef Z2i::RealVector            Vector;
     typedef Z2i::RealPoint             RealPoint;
     typedef Z2i::RealVector            RealVector;
@@ -348,6 +171,11 @@ namespace DGtal {
 
     /// Contains the polynomials per vertex that fits the values.
     std::vector< QPolynomial3 > _u_approx;
+    /// Width of the image
+    Integer              _width;
+    /// Domain of the input image
+    Point2i              _lo;
+    Point2i              _up;
     
     // Data needed for vectorization. Each contour is a succession of
     // arc, where head points outside.
@@ -617,6 +445,9 @@ namespace DGtal {
     {
       _color = color;
       _power = p;
+      _lo    = I.domain().lowerBound();
+      _up    = I.domain().upperBound();
+      _width = _up[ 0 ] - _lo[ 0 ] + 1; 
       // Defining norms.
       if ( color ) {
 	_normX = [p] ( const Value& v ) -> Scalar
@@ -1272,6 +1103,48 @@ namespace DGtal {
 	  _u_approx[ v ][ m ].fit( X, V[ m ] );
       }
     }
+
+    /// s close to 0 means that the coefficient should be important.
+    static
+    Scalar fPOU( Scalar s )
+    {
+      // return std::max( 1.0 - sqrt(s), 0.0 ); //exp( -s*s*2 );
+      return exp( -s*s*3 );
+    }
+    
+    Value evalPOU( const Point& p ) const {
+      const int    d = _color ? 3 : 1;
+      const Scalar r = 3.0;
+      Point2i lo( (int) ( round( p[ 0 ] ) - r ), (int) ( round( p[ 1 ] ) - r ) );
+      Point2i hi( (int) ( round( p[ 0 ] ) + r ), (int) ( round( p[ 1 ] ) + r ) );
+      lo = lo.sup( _lo );
+      hi = hi.inf( _up );
+      // Start scanning of values for POU
+      Domain  local( lo, hi );
+      Value  R;
+      Scalar wsum;
+      for ( auto qi : local ) {
+	Point q( qi[ 0 ], qi[ 1 ] );
+	Scalar pq = (q - p).norm();
+	if ( pq <= r ) {
+	  Integer v = linearize( qi );
+	  Scalar  w = fPOU( pq );
+	  for ( int m = 0; m < d; ++m )
+	    R[ m ] += w * _u_approx[ v ][ m ]( p );
+	  wsum     += w;
+	}
+      }
+      R /= wsum;
+      if ( d == 1 ) { R[ 1 ] = R[ 0 ]; R[ 2 ] = R[ 0 ]; }
+      return R;
+    }
+    
+    /// @param p any point
+    /// @return the corresponding index in the 1-dimensional array.
+    Integer linearize( Point2i p ) const
+    {
+      return p[ 1 ] * _width + p[ 0 ];
+    }
   };
 
   // Useful function for viewing triangulations.
@@ -1294,11 +1167,15 @@ namespace DGtal {
     typedef TVT::VertexRange         VertexRange;
     typedef TVT::Scalar              Scalar;
     typedef TVT::Point               Point;
+    typedef Z2i::Point               Point2i;
     typedef Z2i::RealPoint           RealPoint;
 
     using Base::_color;
+    using Base::_draw_domain;
   public:
 
+    Point2i _lo;
+    Point2i _up;
     /**
        Constructor. 
     */
@@ -1310,7 +1187,10 @@ namespace DGtal {
 		   double disc_amplitude = 0.75 )
       : Base( x0, y0, width, height, xfactor, yfactor, shading, color,
 	      disc_stiffness, disc_amplitude )
-    {}
+    {
+      _lo = Point2i( x0, y0 );
+      _up = Point2i( width, height );
+    }
     
     /// Destructor.
     ~CairoViewerTV() {}
@@ -1403,22 +1283,25 @@ namespace DGtal {
       if ( _shading == 3 ) {
 	trace.beginBlock( "Compute u approximations" );
 	tvT.computeUApproximations();
-	trace.endBlock();
-      }
-      if ( _shading == 3 )
 	cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
-      else
+	cairo_set_line_width( _cr, 0.0 ); 
+	cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+	cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+	drawPartitionOfUnity( _draw_domain, tvT );
+	trace.endBlock();
+      } else {
 	cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
-      cairo_set_line_width( _cr, 0.0 ); 
-      cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
-      cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
-      for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
-	{
-	  if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
-	  else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
-	  else if ( _shading == 3 ) viewTVTPartitionOfUnityTriangle( tvT, f );
-	  else                      viewTVTFlatTriangle   ( tvT, f );
-	}
+	cairo_set_line_width( _cr, 0.0 ); 
+	cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+	cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+	for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
+	  {
+	    if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
+	    else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
+	    // else if ( _shading == 3 ) viewTVTPartitionOfUnityTriangle( tvT, f );
+	    else                       viewTVTFlatTriangle   ( tvT, f );
+	  }
+      }
     }
 
     /**
@@ -1430,47 +1313,50 @@ namespace DGtal {
       if ( _shading == 3 ) {
 	trace.beginBlock( "Compute u approximations" );
 	tvT.computeUApproximations();
-	trace.endBlock();
-      }
-      // We need first to sort faces according to their energyTV.
-      std::vector<Face> tv_faces( tvT.T.nbFaces() );
-      for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
-	tv_faces[ f ] = f;
-      std::sort( tv_faces.begin(), tv_faces.end(),
-		 [ & tvT ] ( Face f1, Face f2 ) -> bool
-		 // { return ( tvT.energyTV( f1 ) ) > ( tvT.energyTV( f2 ) ); } 
-		 // { return ( tvT.aspectRatio( f1 ) )
-                 //     > ( tvT.aspectRatio( f2 ) ); } 
-		 { return ( tvT.energyTV( f1 ) * tvT.diameter( f1 ) )
-		     > ( tvT.energyTV( f2 ) * tvT.diameter( f2 ) ); } 
-		 // { return ( tvT.energyTV( f1 ) * tvT.aspectRatio( f1 ) )
-		 //     > ( tvT.energyTV( f2 ) * tvT.aspectRatio( f2 ) ); } 
-                 );
-      Scalar Etv = tvT.getEnergyTV();
-      Scalar Ctv = 0.0;
-      Scalar Otv = Etv * discontinuities;
-      if ( _shading == 3 )
 	cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
-      else
+	cairo_set_line_width( _cr, 0.0 ); 
+	cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+	cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+	drawPartitionOfUnity( _draw_domain, tvT );
+	trace.endBlock();
+      } else {
+	// We need first to sort faces according to their energyTV.
+	std::vector<Face> tv_faces( tvT.T.nbFaces() );
+	for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
+	  tv_faces[ f ] = f;
+	std::sort( tv_faces.begin(), tv_faces.end(),
+		   [ & tvT ] ( Face f1, Face f2 ) -> bool
+		   // { return ( tvT.energyTV( f1 ) ) > ( tvT.energyTV( f2 ) ); } 
+		   // { return ( tvT.aspectRatio( f1 ) )
+		   //     > ( tvT.aspectRatio( f2 ) ); } 
+		   { return ( tvT.energyTV( f1 ) * tvT.diameter( f1 ) )
+		       > ( tvT.energyTV( f2 ) * tvT.diameter( f2 ) ); } 
+		   // { return ( tvT.energyTV( f1 ) * tvT.aspectRatio( f1 ) )
+		   //     > ( tvT.energyTV( f2 ) * tvT.aspectRatio( f2 ) ); } 
+		   );
+	Scalar Etv = tvT.getEnergyTV();
+	Scalar Ctv = 0.0;
+	Scalar Otv = Etv * discontinuities;
 	cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
-      cairo_set_line_width( _cr, 0.0 ); 
-      cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
-      cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
-      for ( int i = 0; i < tv_faces.size(); ++i )
-	{
-	  Face f = tv_faces[ i ];
-	  Ctv   += tvT.energyTV( f );
-	  if ( Ctv < Otv ) { // display discontinuity
-	    // viewTVTTriangleDiscontinuity( tvT, f );
-	    viewTVTNonLinearGradientTriangle( tvT, f );
+	cairo_set_line_width( _cr, 0.0 ); 
+	cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+	cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+	for ( int i = 0; i < tv_faces.size(); ++i )
+	  {
+	    Face f = tv_faces[ i ];
+	    Ctv   += tvT.energyTV( f );
+	    if ( Ctv < Otv ) { // display discontinuity
+	      // viewTVTTriangleDiscontinuity( tvT, f );
+	      viewTVTNonLinearGradientTriangle( tvT, f );
+	    }
+	    else {
+	      if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
+	      else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
+	      // else if ( _shading == 3 ) viewTVTPartitionOfUnityTriangle( tvT, f );
+	      else                      viewTVTFlatTriangle   ( tvT, f );
+	    }
 	  }
-	  else {
-	    if ( _shading == 1 )      viewTVTGouraudTriangle( tvT, f );
-	    else if ( _shading == 2 ) viewTVTLinearGradientTriangle( tvT, f );
-	    else if ( _shading == 3 ) viewTVTPartitionOfUnityTriangle( tvT, f );
-	    else                      viewTVTFlatTriangle   ( tvT, f );
-	  }
-	}
+      }
       // cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
       // for ( int idx = 0; idx < tvT.T.nbVertices(); ++idx ) {
       // 	Point       a = tvT.T.position( idx );
