@@ -112,10 +112,10 @@ namespace DGtal
 	_x0( round( x0 ) ), _y0( round( y0 ) ),
 	_width( round( (x1-x0) * xfactor + 1 ) ),
 	_height(round( (y1-y0) * xfactor + 1 ) ),
+      _draw_domain( Point( _x0, _y0 ),
+                   Point( _x0 + _width - 2, _y0 + _height - 2 ) ),
 	_xf( xfactor ), _yf( yfactor ), _shading( shading ),
-	_color( color ), _st( disc_stiffness ), _am( disc_amplitude ),
-	_draw_domain( Point( _x0, _y0 ),
-		      Point( _x0 + _width - 1, _y0 + _height - 1 ) )
+	_color( color ), _st( disc_stiffness ), _am( disc_amplitude )
     {
       _surface = cairo_image_surface_create( CAIRO_FORMAT_ARGB32,
 					     _width, _height );
@@ -609,32 +609,36 @@ namespace DGtal
 	}
       }
     }
-    template <typename EvalPOU>
-    void drawPartitionOfUnity( Domain    domain, const EvalPOU& f )
+    template <typename EvalMetrics>
+    void drawPartitionOfUnity( Domain    domain, const EvalMetrics& f )
     {
       if ( _color ) drawColorPartitionOfUnity( domain, f );
       else          drawGrayLevelPartitionOfUnity( domain, f );
     }
     
-    template <typename EvalPOU>
-    void drawColorPartitionOfUnity( Domain    domain, const EvalPOU&   f )
+    template <typename EvalMetrics>
+    void drawColorPartitionOfUnity( Domain    domain, const EvalMetrics&   f )
     {
       // Scans all pixels in domain
-      for ( Point p : domain ) {
+      std::cout << "Domain=" << domain << std::endl;
+      std::vector<Point> D;
+      for ( Point p : domain ) D.push_back( p );
+      for ( Point p : D ) {
 	const RealPoint q = { x( p[ 0 ] ), y( p[ 1 ] ) };
-	const auto      V = f.evalPOU( q );
+	//std::cout << "p=" << p << " q=" << q << std::endl;
+	const Value     V = f.evalMetrics( q );
 	cairo_set_source_rgb( _cr, V[0] * _redf, V[1] * _greenf, V[2] * _bluef );
 	cairo_rectangle( _cr, p[ 0 ], p[ 1 ], 1, 1 );
 	cairo_fill( _cr );
       }
     }
-    template <typename EvalPOU>
-    void drawGrayLevelPartitionOfUnity( Domain    domain, const EvalPOU&   f )
+    template <typename EvalMetrics>
+    void drawGrayLevelPartitionOfUnity( Domain    domain, const EvalMetrics&   f )
     {
       // Scans all pixels in domain
       for ( Point p : domain ) {
 	const RealPoint q = { x( p[ 0 ] ), y( p[ 1 ] ) };
-	const auto      V = f.evalPOU( q );
+	const auto      V = f.evalMetrics( q );
 	cairo_set_source_rgb( _cr, V[0] * _redf, V[0] * _greenf, V[0] * _bluef );
 	cairo_rectangle( _cr, p[ 0 ], p[ 1 ], 1, 1 );
 	cairo_fill( _cr );

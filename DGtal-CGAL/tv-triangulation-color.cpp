@@ -24,6 +24,7 @@
 #include "ImageConnecter.h"
 #include "ImageTVRegularization.h"
 #include "LeastSquares.h"
+#include "BezierCurve.h"
 
 // #include <CGAL/Delaunay_triangulation_2.h>
 // #include <CGAL/Constrained_Delaunay_triangulation_2.h>
@@ -108,6 +109,82 @@ namespace DGtal {
     }
       
   };
+
+  /// We use a specific representation to represent a linear fit that
+  /// can be straightened around its mid-value.
+  /// p( x, y ) := a x^2 + b xy + c y^2 + d x + e y
+  template <typename TPoint>
+  struct StraightableLinearFit {
+    typedef TPoint                       Point;
+    typedef StraightableLinearFit<Point> Self;
+    typedef typename Point::Coordinate   Scalar;
+    
+    std::array< Scalar, 6 > _c;
+    Scalar _x0, _y0;
+    Scalar _mv, _midv, _Mv;
+    
+    StraightableLinearFit()
+      : _c { 0, 0, 0, 0, 0, 0 },
+	_x0( 0 ), _y0( 0 )
+    {}
+    StraightableLinearFit( Scalar a, Scalar b, Scalar c,
+			 Scalar d, Scalar e, Scalar f,
+			 Scalar x0, Scalar y0 )
+      : _c { a, b, c, d, e, f },
+	_x0( x0 ), _y0( y0 )
+    {}
+    
+    ~StraightableLinearFit() {}
+
+    // Global coordinates
+    Scalar operator()( Point p ) const {
+      return eval( p[ 0 ] - _x0, p[ 1 ] - _y0 );
+    }
+    // Local coordinates
+    Scalar eval( Scalar x, Scalar y ) const {
+      return x*_c[1] + y*_c[2] + _c[0];
+    }
+    // Global coordinates
+    Scalar operator()( Point p, Scalar amp, Scalar stiff ) const {
+      return eval( p[ 0 ] - _x0, p[ 1 ] - _y0, amp, stiff );
+    }
+    // Local coordinates
+    Scalar eval( Scalar x, Scalar y,
+		 Scalar amp, Scalar stiff ) const {
+      Scalar v = x*_c[1] + y*_c[2] + _c[0];
+      if ( v <= _midv ) return _mv;
+      else if ( (v - _mv) <= stiff*(_midv - _mv) )
+	return _mv;
+      // return ( v - _mv )*(1.0-amp) + _mv;
+      else if ( (v - _mv) <= (1.0-stiff)*(_midv - _mv) )
+	return _midv;
+      else return _Mv;
+	// from ( stiff*(_midv - _mv)+_mv, 0.5*( _Mv - _mv) *(1.0-amp) + _mv )
+	// to   ( _midv, _midv )
+	// return ( v - _mv )*(1.0-amp) + _mv;
+    }
+
+    void fit( std::vector< Point >  X,
+	      std::vector< Scalar > V ) {
+      // Compute min and max value.
+      int m = 0;
+      int M = 0;
+      if ( V[ 1 ] < V[ m ] ) m = 1;
+      if ( V[ 2 ] < V[ m ] ) m = 2;
+      if ( V[ 1 ] > V[ M ] ) M = 1;
+      if ( V[ 2 ] > V[ M ] ) M = 2;
+      auto c = LeastSquares<Point>::linearFit( X, V );
+      _c[ 0 ] = c[ 0 ];
+      _c[ 1 ] = c[ 1 ];
+      _c[ 2 ] = c[ 2 ];
+      _x0 = X[ 0 ][ 0 ];
+      _y0 = X[ 0 ][ 1 ];
+      _mv = V[ m ];
+      _Mv = V[ M ];
+      _midv = 0.5*(_Mv + _mv);
+    }
+      
+  };
   
   /// This class represents a triangulation with a Total Variation
   /// (TV) energy computed per triangle. The main idea of the class is
@@ -143,6 +220,48 @@ namespace DGtal {
     typedef std::vector<VectorValue>   VectorValueForm;
     typedef QuadraticPolynomial<RealPoint> QPolynomial;
     typedef std::array< QPolynomial, 3 > QPolynomial3;
+    typedef StraightableLinearFit<RealPoint> SLFit;
+    typedef std::array< SLFit, 3 > SLFit3;
+    /// A symmetric definite positive matrix [[a,b],[b,c]]
+    struct Metric {
+      Scalar _a, _b, _c;
+      Metric() {}
+      Metric( Point p, Point q, Point r ) {
+	Vector sides  [ 3 ] = { q - p, r - q, p - r };
+	Scalar lengths[ 3 ] = { sides[ 0 ].norm(),
+				sides[ 1 ].norm(),
+				sides[ 2 ].norm() };
+	int l = 0;
+	if ( lengths[ 1 ] > lengths[ l ] ) l = 1;
+	if ( lengths[ 2 ] > lengths[ l ] ) l = 2;
+	const Vector cst = sides[ l ] / lengths[ l ]; // [ cos t, sin t ]
+	const Vector ort = { -cst[ 1 ], cst[ 0 ] };
+	const Scalar  l1 = lengths[ l ];
+	const Scalar  l2 = fabs( sides[ (l+1)%3 ].dot( ort ) );
+	_a = cst[0] * cst[0] / ( l1 ) + cst[1] * cst[1] / ( l2 );
+	_b = cst[0] * cst[1] / ( l1 ) - cst[0] * cst[1] / ( l2 );
+	_c = cst[1] * cst[1] / ( l1 ) + cst[0] * cst[0] / ( l2 );
+	// _a = cst[0] * cst[0] / ( l1 * l1 ) + cst[1] * cst[1] / ( l2 * l2 );
+	// _b = cst[0] * cst[1] / ( l1 * l1 ) - cst[0] * cst[1] / ( l2 * l2 );
+	// _c = cst[1] * cst[1] / ( l1 * l1 ) + cst[0] * cst[0] / ( l2 * l2 );
+      }
+      Scalar operator()( const RealVector& v, const RealVector& w ) const
+      {
+	return v[0] * (_a * w[0] + _b * w[1])
+	  + v[1] * (_b * w[0] + _c * w[1]);
+      }
+    };
+
+
+    /// Contains information per face for 2nd order reconstruction.
+    struct FaceInformation {
+      VectorValue grad;
+      int        order; ///< Order according to TV discontinuity (0:highest)
+      Scalar  cumul_tv; ///< cumulative percent of total TV energy
+      Scalar      disc; ///< between 0 and 1, means that you consider the face as a discontinuity, more means that you do not consider this face as discontinuous.
+    };
+
+
     /// The domain triangulation
     Triangulation        T;
     /// The image values at each vertex
@@ -171,11 +290,17 @@ namespace DGtal {
 
     /// Contains the polynomials per vertex that fits the values.
     std::vector< QPolynomial3 > _u_approx;
+    /// Contains the polynomials per faces that fits the values.
+    std::vector< SLFit3 > _u_approx_f;
     /// Width of the image
     Integer              _width;
     /// Domain of the input image
     Point2i              _lo;
     Point2i              _up;
+    /// Contains the metric of each triangle.
+    std::vector<Metric>  _metrics;
+    /// Contains information per face for 2nd order reconstruction.
+    std::vector<FaceInformation> _finfos;
     
     // Data needed for vectorization. Each contour is a succession of
     // arc, where head points outside.
@@ -193,6 +318,13 @@ namespace DGtal {
     {
       ASSERT( v < _u_approx.size() );
       return _u_approx[ v ];
+    }
+
+    /// @return the face information associated to face \a f.
+    const FaceInformation& finfo( const Face f ) const
+    {
+      ASSERT( f < _finfos.size() );
+      return _finfos[ f ];
     }
     
     /// @return the regularized value at vertex v.
@@ -912,30 +1044,47 @@ namespace DGtal {
       // return ( _u[ T.head( a ) ] - _u[ T.tail( a ) ] ).norm();
     }
 
+    /// @param[in] f any valid face.
+    /// @return the three arcs belonging to the face f.
+    std::array<Arc,3> arcsAroundFace( const Face f ) const
+    {
+      VertexRange V = T.verticesAroundFace( f );
+      std::array<Arc,3> arcs;
+      arcs[ 0 ] = T.arc( V[ 0 ], V[ 1 ] );
+      arcs[ 1 ] = T.next( arcs[ 0 ] );
+      arcs[ 2 ] = T.next( arcs[ 1 ] );
+      return arcs;
+    }
+
+    /// @param[out] dissim the (dis)similarity coefficient for each arc
+    /// @param[in]  arcs the three arcs belonging to some face.
+    ///
+    /// @return the arc whose vertices have similar values if it
+    /// exists, or -1 otherwise.
+    int arcDissimilarities( std::array<Scalar,3>& dissim,
+			    const std::array<Arc,3>& arcs ) const
+    {
+      for ( int i = 0; i < 3; ++i ) {
+	dissim[ i ] = arcSimilarity( arcs[ i ] );
+      }
+      // Sort similarities...
+      int  m  = std::min_element( dissim.begin(), dissim.end() ) - dissim.begin();
+      bool id = ( ( 2*dissim[ m ] ) < dissim[ (m+1)%3 ] )
+	&&      ( ( 2*dissim[ m ] ) < dissim[ (m+2)%3 ] );
+      if ( id ) dissim[ m ] = 0;
+      return id ? m : -1;
+    }
     
     /// Computes the barycenters for each triangle. The idea is to
     /// count only arcs with different values.
     void updateBarycenters()
     {
       for ( Face f = 0; f < T.nbFaces(); ++f )	{
-	VertexRange V = T.verticesAroundFace( f );
+	auto     arcs = arcsAroundFace( f );
 	Scalar      w = 0.0;
 	Point       B = Point::zero;
-	// Point       P[ 3 ] = { T.position( V[ 0 ] ), T.position( V[ 1 ] ),
-	// 		       T.position( V[ 2 ] ) };
-	Arc arcs[ 3 ];
-	Scalar s[ 3 ];
-	// Sort similarities...
-	arcs[ 0 ] = T.arc( V[ 0 ], V[ 1 ] );
-	arcs[ 1 ] = T.next( arcs[ 0 ] );
-	arcs[ 2 ] = T.next( arcs[ 1 ] );
-	for ( int i = 0; i < 3; ++i ) {
-	  s[ i ] = arcSimilarity( arcs[ i ] );
-	}
-	int  m  = std::min_element( s, s + 3 ) - s;
-	bool id = ( ( 2*s[ m ] ) < s[ (m+1)%3 ] )
-	  &&      ( ( 2*s[ m ] ) < s[ (m+2)%3 ] );
-	if ( id ) s[ m ] = 0;
+	std::array<Scalar,3> s;
+	int m = arcDissimilarities( s, arcs );
 	for ( int i = 0; i < 3; ++i ) {
 	  B += s[ i ] * contourPoint ( arcs[ i ] );
 	  w += s[ i ];
@@ -1081,7 +1230,125 @@ namespace DGtal {
       Scalar  u = ( AB[ 0 ] * AC[ 1 ] - AB[ 1 ] * AC[ 0 ] ) / d;
       return std::make_pair( t, u );
     }
+    
+    /// Computes information per face
+    void compute2ndOrderInformation( Scalar discontinuities ) {
+      _finfos.resize( T.nbFaces() );
+      for ( Face f = 0; f < T.nbFaces(); ++f ) {
+	auto V = T.verticesAroundFace( f );
+	_finfos[ f ].grad = grad( f, _u );
+      }	
+      // We need first to sort faces according to their energyTV.
+      std::vector<Face> tv_faces( T.nbFaces() );
+      for ( Face f = 0; f < T.nbFaces(); ++f ) tv_faces[ f ] = f;
+      std::sort( tv_faces.begin(), tv_faces.end(),
+		 [ & ] ( Face f1, Face f2 ) -> bool
+		 // { return ( tvT.energyTV( f1 ) ) > ( tvT.energyTV( f2 ) ); } 
+		 // { return ( tvT.aspectRatio( f1 ) )
+		 //     > ( tvT.aspectRatio( f2 ) ); } 
+		 { return ( energyTV( f1 ) * diameter( f1 ) )
+		     > ( energyTV( f2 ) * diameter( f2 ) ); } 
+		 // { return ( tvT.energyTV( f1 ) * tvT.aspectRatio( f1 ) )
+		 //     > ( tvT.energyTV( f2 ) * tvT.aspectRatio( f2 ) ); } 
+		 );
+      Scalar Etv = getEnergyTV();
+      Scalar Ctv = 0.0;
+      Scalar Otv = Etv * discontinuities;
+      for ( int i = 0; i < tv_faces.size(); ++i ) {
+	Face f = tv_faces[ i ];
+	Ctv   += energyTV( f );
+	_finfos[ f ].order    = i;
+	_finfos[ f ].cumul_tv = Ctv / Etv;
+	_finfos[ f ].disc     = Ctv / Otv;
+      }      
+    }
+    
+    // Computes approximation of u at each vertex.
+    void computeMetrics() {
+      const int d = _color ? 3 : 1;
+      _metrics.resize( T.nbFaces() );
+      _p.resize( T.nbFaces() ); 
+      _b.resize( T.nbFaces() );
+      for ( Face f = 0; f < T.nbFaces(); ++f ) {
+	auto V = T.verticesAroundFace( f );
+	_metrics[ f ] = Metric( T.position( V[ 0 ] ),
+				T.position( V[ 1 ] ),
+				T.position( V[ 2 ] ) );
+	_p[ f ] = grad( f, _u );
+	_b[ f ] = ( T.position( V[ 0 ] )
+		    + T.position( V[ 1 ] )
+		    + T.position( V[ 2 ] ) ) / 3.0;
+      }
+      trace.info() << "Finishing computing metrics" << std::endl;
+      // computeUApproximations();
+      computeUApproximationsAtFaces();
+      trace.info() << "Finishing computing U approx" << std::endl;
+    }
 
+    
+    Value evalMetrics( const RealPoint& p ) const {
+      const int    d = _color ? 3 : 1;
+//      trace.info() << "[evalMetrics] " << p
+//           << " #V=" << T.nbVertices()
+//           << " F=" << T.nbFaces()
+//           << " d=" << d << std::endl;
+      const Scalar r = 1.5;
+      Point2i lo( (int) ( round( p[ 0 ] ) - r ), (int) ( round( p[ 1 ] ) - r ) );
+      Point2i hi( (int) ( round( p[ 0 ] ) + r ), (int) ( round( p[ 1 ] ) + r ) );
+      lo = lo.sup( _lo );
+      hi = hi.inf( _up );
+      Value  R;
+      Scalar wsum = 0;
+      // Find surrounding faces.
+      std::set<Face> faces;
+      Domain  local( lo, hi );
+      for ( auto qi : local ) {
+	Vertex v = linearize( qi );
+	auto   F = T.facesAroundVertex( v );
+	for ( auto f : F ) faces.insert( f );
+	// Scalar       w = fM( ( p - RealPoint( qi[ 0 ], qi[ 1 ] ) ).norm() );
+	// for ( int m = 0; m < d; ++m ) {
+	//   R[ m ] += w * _u_approx[ v ][ m ]( p );
+	// }
+	// wsum   += w;
+      }
+      // Compute value by metrized partition of unity
+      for ( auto f : faces ) {
+	RealVector  bp = _b[f] - p;
+	Scalar   dist2 = _metrics[ f ]( bp, bp );
+	Scalar       w = fM( sqrt( dist2 ) );
+	for ( int m = 0; m < d; ++m ) {
+	  Scalar v_stiff = _u_approx_f[ f ][ m ]( p, 1.0, 0.95 );
+	  Scalar  v_grad = _u_approx_f[ f ][ m ]( p );
+	  // R[ m ] += w * _u_approx_f[ f ][ m ]( p );
+	  R[ m ] += w * ( w * v_stiff + (1.0-w) * v_grad );
+	}
+	wsum   += w;
+      }
+      R /= wsum;
+      if ( d == 1 ) { R[ 1 ] = R[ 0 ]; R[ 2 ] = R[ 0 ]; }
+      return R;
+    }
+    
+    // Computes approximation of u at each face.
+    void computeUApproximationsAtFaces()
+    {
+      const int d = _color ? 3 : 1;
+      _u_approx_f.resize( T.nbFaces() );
+      for ( Face f = 0; f < T.nbFaces(); ++f ) {
+	auto vertices = T.verticesAroundFace( f );
+ 	std::vector< RealPoint > X;
+	std::array< std::vector< Scalar >, 3 > V;
+	for ( auto w : vertices ) {
+	  X.push_back( T.position( w ) );
+	  for ( int m = 0; m < d; ++m ) V[ m ].push_back( _u[ w ][ m ] );
+	}
+	// Fit values in the least-square sense for each RGB channel.
+	for ( int m = 0; m < d; ++m )
+	  _u_approx_f[ f ][ m ].fit( X, V[ m ] );
+      }
+    }
+    
     // Computes approximation of u at each vertex.
     void computeUApproximations()
     {
@@ -1089,7 +1356,7 @@ namespace DGtal {
       _u_approx.resize( T.nbVertices() );
       for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
 	auto arcs = T.outArcs( v );
-	std::vector< RealPoint > X;
+ 	std::vector< RealPoint > X;
 	std::array< std::vector< Scalar >, 3 > V;
 	X.push_back( T.position( v ) );
 	for ( int m = 0; m < d; ++m ) V[ m ].push_back( _u[ v ][ m ] );
@@ -1106,10 +1373,18 @@ namespace DGtal {
 
     /// s close to 0 means that the coefficient should be important.
     static
+    Scalar fM( Scalar s )
+    {
+      //return std::max( 1.0 - s/2, 0.0 ); //exp( -s*s*2 );
+      // between -s^2 and -2s^2 is a good trade-off
+      return exp( -s*s*2 );
+    }
+    /// s close to 0 means that the coefficient should be important.
+    static
     Scalar fPOU( Scalar s )
     {
-      // return std::max( 1.0 - sqrt(s), 0.0 ); //exp( -s*s*2 );
-      return exp( -s*s*3 );
+      return std::max( 1.0 - s, 0.0 ); //exp( -s*s*2 );
+      // return exp( -s*s*4 );
     }
     
     Value evalPOU( const Point& p ) const {
@@ -1122,7 +1397,7 @@ namespace DGtal {
       // Start scanning of values for POU
       Domain  local( lo, hi );
       Value  R;
-      Scalar wsum;
+        Scalar wsum = 0;
       for ( auto qi : local ) {
 	Point q( qi[ 0 ], qi[ 1 ] );
 	Scalar pq = (q - p).norm();
@@ -1145,6 +1420,8 @@ namespace DGtal {
     {
       return p[ 1 ] * _width + p[ 0 ];
     }
+
+
   };
 
   // Useful function for viewing triangulations.
@@ -1159,6 +1436,7 @@ namespace DGtal {
     typedef CairoViewer<Z2i::Space>  Base;
     typedef TVTriangulation          TVT;
     typedef TVT::Value               Value;
+    typedef TVT::VectorValue         VectorValue;
     typedef TVT::Triangulation       Triangulation;
     typedef TVT::VertexIndex         VertexIndex;
     typedef TVT::Vertex              Vertex;
@@ -1169,13 +1447,30 @@ namespace DGtal {
     typedef TVT::Point               Point;
     typedef Z2i::Point               Point2i;
     typedef Z2i::RealPoint           RealPoint;
-
+    typedef Z2i::Domain              Domain;
+    
     using Base::_color;
     using Base::_draw_domain;
+    using Base::_xf;
+    using Base::_yf;
+
+    /// Contains information per boundary pixel for 2nd order reconstruction.
+    struct PixelInformation {
+      VectorValue grad; ///< grad in pixel coordinates
+      Value          v; ///< value at pixel
+      Scalar     crisp; ///< 0 is linear gradient wrt to distance d, otherwise some 1/2*(1+atan(d pi/2)^(1/crisp)).
+    };
+
+    typedef ImageContainerBySTLVector< Domain, Arc > ArcImage;
+    
   public:
 
     Point2i _lo;
     Point2i _up;
+
+    std::map< Point, PixelInformation > _pixinfo;
+    ArcImage _arcimage;
+    
     /**
        Constructor. 
     */
@@ -1186,10 +1481,12 @@ namespace DGtal {
 		   double disc_stiffness = 0.5,
 		   double disc_amplitude = 0.75 )
       : Base( x0, y0, width, height, xfactor, yfactor, shading, color,
-	      disc_stiffness, disc_amplitude )
+	      disc_stiffness, disc_amplitude ),
+	_arcimage( Domain( Point2i(), Point2i() ) )
     {
       _lo = Point2i( x0, y0 );
       _up = Point2i( width, height );
+      _arcimage = ArcImage( _draw_domain );
     }
     
     /// Destructor.
@@ -1282,7 +1579,8 @@ namespace DGtal {
     {
       if ( _shading == 3 ) {
 	trace.beginBlock( "Compute u approximations" );
-	tvT.computeUApproximations();
+	// tvT.computeUApproximations();
+	tvT.computeMetrics();
 	cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
 	cairo_set_line_width( _cr, 0.0 ); 
 	cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
@@ -1312,7 +1610,8 @@ namespace DGtal {
     {
       if ( _shading == 3 ) {
 	trace.beginBlock( "Compute u approximations" );
-	tvT.computeUApproximations();
+	// tvT.computeUApproximations();
+	tvT.computeMetrics();
 	cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
 	cairo_set_line_width( _cr, 0.0 ); 
 	cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
@@ -1357,18 +1656,93 @@ namespace DGtal {
 	    }
 	  }
       }
-      // cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
-      // for ( int idx = 0; idx < tvT.T.nbVertices(); ++idx ) {
-      // 	Point       a = tvT.T.position( idx );
-      // 	Value     val = tvT.u( idx );
-      // 	//cairo_set_source_rgb( _cr, 1.0, 0.0, 0.0 );
-      // 	cairo_set_source_rgb( _cr, val[ 0 ] * _redf, val[ 1 ] * _greenf, val[ 2 ] * _bluef );
-      // 	cairo_set_line_width( _cr, 0.0 );
-      // 	cairo_rectangle( _cr, i( a[ 0 ] ), j( a[ 1 ] )-1, 1.0, 1.0 );
-      // 	cairo_fill( _cr );
-      // }
     }
 
+    /// @return the normalized tangent of the contour crossing arc \a a.
+    RealVector tangentAtArc( TVT& tvT, const Arc a ) {
+      // The tangent is arbitrary defined as parallel to the vector
+      // joining the two barycenters and points inward the face
+      const Face  f = tvT.T.faceAroundArc( a );
+      const Face of = tvT.T.faceAroundArc( tvT.T.opposite( a ) );
+      return ( tvT.barycenter( f ) - tvT.barycenter( of ) ).getNormalized();
+    }
+
+    VectorValue combine( const VectorValue& g1, const VectorValue& g2,
+			 Scalar t = 0.5 )
+    {
+      return VectorValue { (1.0-t) * g1.x + t * g2.x,
+	  (1.0-t) * g1.y + t * g2.y };
+    }
+    /// @return the value at an arc \a a.
+    Value valueAtArc( TVT& tvT, const Arc a ) {
+      return 0.5 * ( tvT.u( tvT.T.head( a ) ) + tvT.u( tvT.T.tail( a ) ) );
+    }
+    
+    /// @return the gradient at an arc \a a.
+    VectorValue gradientAtArc( TVT& tvT, const Arc a ) {
+      const Face    f = tvT.T.faceAroundArc( a );
+      const Face   of = tvT.T.faceAroundArc( tvT.T.opposite( a ) );
+      VectorValue  gf = tvT.finfo( f ) .grad;
+      VectorValue gof = tvT.finfo( of ).grad;
+      return combine( gf, gof, 0.5 );
+    }
+    
+    void drawFace( TVT& tvT, const Face f ) {
+      typedef SimpleMatrix<Scalar,2,2>      Matrix;
+      typedef typename Matrix::ColumnVector CVector;
+      std::array<Scalar,3> s;
+      const auto        arcs = tvT.arcsAroundFace( f );
+      const int            m = tvT.arcDissimilarities( s, arcs );
+      const auto           V = tvT.T.verticesAroundFace( f );
+      const RealPoint x[ 3 ] = { tvT.T.position( V[ 0 ] ),
+				 tvT.T.position( V[ 1 ] ),
+				 tvT.T.position( V[ 2 ] ) };
+      const RealPoint      b = tvT.barycenter( f );
+      // if m = -1, this is an ordinary face, otherwise it is a contour face.
+      if ( m < 0 ) {
+	// Computes the control points of the Bezier curve
+	const Dimension  i = (m+1)%3;
+	const Dimension  j = (m+2)%3;
+	const RealVector u = tangentAtArc( tvT, arcs[ i ] );
+	const RealVector v = tangentAtArc( tvT, arcs[ j ] );
+	Matrix  M = { u[ 0 ], v[ 0 ], u[ 1 ], v[ 1 ] };
+	CVector R = { 8.0/3.0 * ( b[ 0 ] - 0.5*( x[ i ][ 0 ]+x[ j ][ 0 ] ) ),
+		      8.0/3.0 * ( b[ 1 ] - 0.5*( x[ i ][ 1 ]+x[ j ][ 1 ] ) ) };
+	CVector S = M.determinant() != 0
+	  ? ( M.inverse() * R )
+	  : CVector { 1, 1 };
+	std::vector<RealPoint> bp = { x[ i ], x[ i ] + S[ 0 ] * u,
+				      x[ j ] + S[ 1 ] * v, x[ j ] };
+	const RealVector       bt = ( bp[ 2 ] - bp[ 1 ] ).getNormalized();
+	// Traces the digital Bezier curve.
+	BezierCurve<Space> B( bp );
+	std::vector<Point2i>  dp;
+	std::vector<Scalar>   dt;
+	B.trace( dp, dt );
+	VectorValue vi = gradientAtArc( tvT, arcs[ i ] );  
+	VectorValue vj = gradientAtArc( tvT, arcs[ j ] );
+	for ( int i = 0; i < dp.size(); ++i ) {
+	  PixelInformation pi;
+	}
+      } else {
+      }
+    }
+    /**
+       Displays the TV triangulation with discontinuities and
+       second-order reconstruction.
+    */
+    void view2ndOrder( TVT & tvT, Scalar discontinuities ) {
+      // Pre-compute soem information per faces (gradient, etc)
+      tvT.compute2ndOrderInformation( discontinuities );
+      // Resets the image that will be used to compute distance to contours.
+      const Arc invalid_arc = tvT.T.nbArcs();
+      for ( auto p : _draw_domain ) _arcimage.setValue( p, invalid_arc );
+      
+      
+      
+    }
+
+    
   };
   
   // shading; 0:flat, 1:gouraud, 2:linear gradient, 3: partition of unity
