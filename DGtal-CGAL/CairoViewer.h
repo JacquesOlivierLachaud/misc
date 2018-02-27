@@ -644,6 +644,16 @@ namespace DGtal
 	cairo_fill( _cr );
       }
     }
+
+    void drawPixel( Point p, Value V )
+    {
+      if ( _color )
+	cairo_set_source_rgb( _cr, V[0] * _redf, V[1] * _greenf, V[2] * _bluef );
+      else
+	cairo_set_source_rgb( _cr, V[0] * _redf, V[0] * _greenf, V[0] * _bluef );
+      cairo_rectangle( _cr, p[ 0 ], p[ 1 ], 1, 1 );
+      cairo_fill( _cr );
+    }
     
     // ------------------------- Private Datas --------------------------------
   private:

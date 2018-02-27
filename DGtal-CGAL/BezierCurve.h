@@ -42,6 +42,7 @@
 // Inclusions
 #include <iostream>
 #include <vector>
+#include <functional>
 #include <DGtal/base/Common.h>
 #include <DGtal/kernel/CSpace.h>
 #include <DGtal/helpers/StdDefs.h>
@@ -77,6 +78,7 @@ namespace DGtal
     typedef typename Space::Size                  Size;
     typedef typename Vector::Component            Integer;
     typedef typename RealVector::Component        Scalar;
+    typedef std::function< Point( RealPoint p ) > Digitizer;
 
     
     /// The Bezier points of the curve
@@ -101,7 +103,7 @@ namespace DGtal
     /// b020, b002, b110, b011, b101
     BezierCurve( const std::vector<RealPoint>& bpoints )
       : _bpoints( bpoints ) {}
-    
+
     /// @return the i-th Bezier control point (in order b200, b020,
     /// b002, b110, b011, b101).
     const RealPoint& b( int i ) const { return _bpoints[ i ]; }
@@ -120,18 +122,17 @@ namespace DGtal
       return Self( tP ) ( t );
     }
 
-    static Point digitize( RealPoint p ) {
-      return Point( (Integer) round( p[ 0 ] ), (Integer) round( p[ 1 ] ) );
-    }
       
     /// @param[out] lo the lowest digital point of the digital bounding box
     /// @param[out] hi the highet digital point of the digital bounding box
-    void digitalBoundingBox( Point& lo, Point& hi ) const
+    void digitalBoundingBox( const Digitizer& dig,
+			     Point& lo, Point& hi ) const
     {
-      RealPoint rlo, rhi;
-      boundingBox( rlo, rhi );
-      lo = digitize( rlo );
-      hi = digitize( rhi );
+      hi = lo = dig( b( 0 ) );
+      for ( Size i = 1; i < _bpoints.size(); ++i ) {
+	lo = lo.inf( dig( b( i ) ) );
+	hi = hi.sup( dig( b( i ) ) );
+      }
     }
     
     /// @param[out] lo the lowest point of the bounding box
@@ -148,10 +149,10 @@ namespace DGtal
 
     /// @param[out] p a digital point traced by the Bezier curve.
     /// @return 'true' iff the Bezier curve is reduced to one digital point.
-    bool isOnePoint( Point& p ) const
+    bool isOnePoint( const Digitizer& dig, Point& p ) const
     {
       Point hi;
-      boundingBox( p, hi );
+      digitalBoundingBox( dig, p, hi );
       return p == hi;
     }
 
@@ -160,9 +161,9 @@ namespace DGtal
     ///
     /// @return 'true' iff the Bezier curve is reduced to a group of
     /// at most four digital points.
-    bool isTwoPoints( Point& p, Point& q ) const
+    bool isTwoPoints( const Digitizer& dig, Point& p, Point& q ) const
     {
-      digitalBoundingBox( p, q );
+      digitalBoundingBox( dig, p, q );
       return ( ( p[ 0 ] + 1 ) >= q[ 0 ] )
 	&&   ( ( p[ 1 ] + 1 ) >= q[ 1 ] );
     }
@@ -171,10 +172,11 @@ namespace DGtal
     ///
     /// @param[out] dp the vector of digital points traced by the Bezier curve.
     /// @param[out] dt the associated vector of parameters t, ie `dp[i]=B(t[i])`.
-    void trace( std::vector<Point>& dp, std::vector<Scalar>& dt ) const
+    void trace( const Digitizer& dig,
+		std::vector<Point>& dp, std::vector<Scalar>& dt ) const
     {
       std::vector<Scalar> dd;
-      trace( dp, dt, dd, 0.0, 1.0 );
+      trace( dig, dp, dt, dd, 0.0, 1.0 );
     }
     
     /// Traces the digital points covered by the Bezier curve.
@@ -185,18 +187,19 @@ namespace DGtal
     ///
     /// @param[in] t0, t1 the current interval [t0,t1] in the
     /// recursion (should be called with [0,1]).
-    void trace( std::vector<Point>& dp, std::vector<Scalar>& dt,
+    void trace( const Digitizer& dig,
+		std::vector<Point>& dp, std::vector<Scalar>& dt,
 		std::vector<Scalar>& dd,
 		Scalar t0 = 0.0, Scalar t1 = 1.0 ) const
     {
       const Size    n = _bpoints.size();
       Point p, q;
-      if ( isTwoPoints( p, q ) ) {
+      if ( isTwoPoints( dig, p, q ) ) {
 	Scalar        t = t0;
 	const Scalar ti = (t1-t0) / ( _bpoints.size() - 1 );
 	for ( Size i = 0; i < n; ++i ) {
 	  RealPoint   r = _bpoints[ i ];
-	  Point      dr = digitize( r );
+	  Point      dr = dig( r );
 	  RealPoint rdr = RealPoint( dr[ 0 ], dr[ 1 ] );
 	  if ( dp.empty() || ( dr != dp.back() ) ) {
 	    dp.push_back( dr );
@@ -221,8 +224,8 @@ namespace DGtal
 	}
 	Self bleft ( left  );
 	Self bright( right );
-	bleft .trace( dp, dt, dd, t0, tm );
-	bright.trace( dp, dt, dd, tm, t1 );
+	bleft .trace( dig, dp, dt, dd, t0, tm );
+	bright.trace( dig, dp, dt, dd, tm, t1 );
       }
     }
     

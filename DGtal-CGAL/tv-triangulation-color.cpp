@@ -1422,6 +1422,23 @@ namespace DGtal {
     }
 
 
+    /// @return 'true' iff the given barycentric coordinates \a bc
+    /// indicates a point inside or on the boundary of the triangle.
+    bool isInTriangle( const Face f, const RealPoint& p ) const
+    {
+      const auto     V = T.verticesAroundFace( f );
+      RealPoint b[ 3 ] = { T.position( V[ 0 ] ),
+			   T.position( V[ 1 ] ),
+			   T.position( V[ 2 ] ) };
+      Value         bc = { det( b[ 1 ] - p, b[ 2 ] - p ),
+			   det( b[ 2 ] - p, b[ 0 ] - p ),
+			   det( b[ 0 ] - p, b[ 1 ] - p ) };
+      bc /= ( bc[ 0 ] + bc[ 1 ] + bc[ 2 ] );
+      return ( 0 <= bc[ 0 ] ) && ( bc[ 0 ] <= 1 )
+	&&   ( 0 <= bc[ 1 ] ) && ( bc[ 1 ] <= 1 )
+	&&   ( 0 <= bc[ 2 ] ) && ( bc[ 2 ] <= 1 );
+    }
+
   };
 
   // Useful function for viewing triangulations.
@@ -1453,6 +1470,12 @@ namespace DGtal {
     using Base::_draw_domain;
     using Base::_xf;
     using Base::_yf;
+    using Base::i;
+    using Base::j;
+    using Base::ij;
+    using Base::x;
+    using Base::y;
+    using Base::xy;
 
     /// Contains information per boundary pixel for 2nd order reconstruction.
     struct PixelInformation {
@@ -1663,15 +1686,25 @@ namespace DGtal {
       // The tangent is arbitrary defined as parallel to the vector
       // joining the two barycenters and points inward the face
       const Face  f = tvT.T.faceAroundArc( a );
-      const Face of = tvT.T.faceAroundArc( tvT.T.opposite( a ) );
-      return ( tvT.barycenter( f ) - tvT.barycenter( of ) ).getNormalized();
+      const Arc  oa = tvT.T.opposite( a );
+      if ( ! tvT.T.isArcBoundary( oa ) ) {
+	const Face of = tvT.T.faceAroundArc( oa );
+	return ( tvT.barycenter( f ) - tvT.barycenter( of ) ).getNormalized();
+      } else {
+	const RealPoint v1 = tvT.T.position( tvT.T.head( a ) );
+	const RealPoint v2 = tvT.T.position( tvT.T.tail( a ) );
+	return ( tvT.barycenter( f ) - 0.5 * ( v1 + v2 ) ).getNormalized();
+      }	
     }
 
     VectorValue combine( const VectorValue& g1, const VectorValue& g2,
-			 Scalar t = 0.5 )
-    {
+			 Scalar t = 0.5 ) {
       return VectorValue { (1.0-t) * g1.x + t * g2.x,
 	  (1.0-t) * g1.y + t * g2.y };
+    }
+    Value combine( const Value& g1, const Value& g2,
+			 Scalar t = 0.5 ) {
+      return (1.0-t) * g1 + t * g2;
     }
     /// @return the value at an arc \a a.
     Value valueAtArc( TVT& tvT, const Arc a ) {
@@ -1681,50 +1714,85 @@ namespace DGtal {
     /// @return the gradient at an arc \a a.
     VectorValue gradientAtArc( TVT& tvT, const Arc a ) {
       const Face    f = tvT.T.faceAroundArc( a );
-      const Face   of = tvT.T.faceAroundArc( tvT.T.opposite( a ) );
       VectorValue  gf = tvT.finfo( f ) .grad;
-      VectorValue gof = tvT.finfo( of ).grad;
-      return combine( gf, gof, 0.5 );
+      const Arc    oa = tvT.T.opposite( a );
+      if ( ! tvT.T.isArcBoundary( oa ) ) {
+	const Face   of = tvT.T.faceAroundArc( oa ); 
+	VectorValue gof = tvT.finfo( of ).grad;
+	return combine( gf, gof, 0.5 );
+      } else {
+	return gf;
+      }
     }
     
     void drawFace( TVT& tvT, const Face f ) {
       typedef SimpleMatrix<Scalar,2,2>      Matrix;
       typedef typename Matrix::ColumnVector CVector;
       std::array<Scalar,3> s;
+      std::function<Point2i( RealPoint )> dig
+	= [&] (const RealPoint& p) { RealPoint q = ij( p );
+				     return Point2i( floor( q[ 0 ] ),
+						     floor( q[ 1 ] ) ); };
       const auto        arcs = tvT.arcsAroundFace( f );
       const int            m = tvT.arcDissimilarities( s, arcs );
-      const auto           V = tvT.T.verticesAroundFace( f );
-      const RealPoint x[ 3 ] = { tvT.T.position( V[ 0 ] ),
-				 tvT.T.position( V[ 1 ] ),
-				 tvT.T.position( V[ 2 ] ) };
+      const RealPoint x[ 3 ] = { tvT.contourPoint( arcs[ 0 ] ),
+				 tvT.contourPoint( arcs[ 1 ] ),
+				 tvT.contourPoint( arcs[ 2 ] ) };
       const RealPoint      b = tvT.barycenter( f );
       // if m = -1, this is an ordinary face, otherwise it is a contour face.
-      if ( m < 0 ) {
+      if ( m >= 0 ) {
 	// Computes the control points of the Bezier curve
-	const Dimension  i = (m+1)%3;
-	const Dimension  j = (m+2)%3;
-	const RealVector u = tangentAtArc( tvT, arcs[ i ] );
-	const RealVector v = tangentAtArc( tvT, arcs[ j ] );
+	const Dimension i1 = (m+1)%3;
+	const Dimension j1 = (m+2)%3;
+	const RealVector u = tangentAtArc( tvT, arcs[ i1 ] );
+	const RealVector v = tangentAtArc( tvT, arcs[ j1 ] );
+	/// Given two straight lines (AB) and (CD), returns their
+	/// intersection point as two scalars (t,u) such that:
+	/// I = A + t AB = C + u CD
+	auto tu = tvT.intersect( x[ i1 ], x[ i1 ] + u,
+				 x[ j1 ], x[ j1 ] + v );
+	RealPoint bb = 0.55 * b + 0.45 * ( x[ i1 ] + tu.first * u );
+	if ( ! tvT.isInTriangle( f, bb ) ) bb = b;
 	Matrix  M = { u[ 0 ], v[ 0 ], u[ 1 ], v[ 1 ] };
-	CVector R = { 8.0/3.0 * ( b[ 0 ] - 0.5*( x[ i ][ 0 ]+x[ j ][ 0 ] ) ),
-		      8.0/3.0 * ( b[ 1 ] - 0.5*( x[ i ][ 1 ]+x[ j ][ 1 ] ) ) };
-	CVector S = M.determinant() != 0
+	CVector R = { ( 8.0*bb[ 0 ] - 4.0*( x[ i1 ][ 0 ]+x[ j1 ][ 0 ] ) ) / 3.0,
+		      ( 8.0*bb[ 1 ] - 4.0*( x[ i1 ][ 1 ]+x[ j1 ][ 1 ] ) ) / 3.0 };
+	CVector S = ( fabs( M.determinant() ) > 1e-4 )
 	  ? ( M.inverse() * R )
-	  : CVector { 1, 1 };
-	std::vector<RealPoint> bp = { x[ i ], x[ i ] + S[ 0 ] * u,
-				      x[ j ] + S[ 1 ] * v, x[ j ] };
-	const RealVector       bt = ( bp[ 2 ] - bp[ 1 ] ).getNormalized();
+	  : CVector { 0, 0 };
+	// trace.info() << f << " " << fabs( M.determinant() ) << " " << S
+	// 	     << std::endl;
+	std::vector<RealPoint> bp = { x[ i1 ],
+				      x[ i1 ] + S[ 0 ] * u,
+				      x[ j1 ] + S[ 1 ] * v,
+				      x[ j1 ] };
 	// Traces the digital Bezier curve.
 	BezierCurve<Space> B( bp );
 	std::vector<Point2i>  dp;
 	std::vector<Scalar>   dt;
-	B.trace( dp, dt );
-	VectorValue vi = gradientAtArc( tvT, arcs[ i ] );  
-	VectorValue vj = gradientAtArc( tvT, arcs[ j ] );
-	for ( int i = 0; i < dp.size(); ++i ) {
-	  PixelInformation pi;
+	B.trace( dig, dp, dt );
+	Value       vi = valueAtArc( tvT, arcs[ i1 ] );
+	Value       vj = valueAtArc( tvT, arcs[ j1 ] );
+	VectorValue gi = gradientAtArc( tvT, arcs[ i1 ] );  
+	VectorValue gj = gradientAtArc( tvT, arcs[ j1 ] );
+	for ( int k = 0; k < dp.size(); ++k ) {
+	  PixelInformation pi = {
+	    combine( gi, gj, dt[ k ] ), // grad in pixel coordinates
+	    combine( vi, vj, dt[ k ] ), // value at pixel
+	    0.0 // 0 is linear gradient wrt to distance d, otherwise some 1/2*(1+atan(d pi/2)^(1/crisp)).
+	  };
+	  //	  if ( 
+	  if ( tvT.isInTriangle( f, xy( dp[ k ] ) )
+	       && _draw_domain.isInside( dp[ k ] ) ) {
+	    _pixinfo [ dp[ k ] ] = pi;
+	    _arcimage.setValue( dp[ k ],
+				( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
+	  }
 	}
+	_arcimage.setValue( Point( i( b[ 0 ] ), j( b[ 1 ] ) ), arcs[ i1 ] );
+	_arcimage.setValue( Point( i( x[ i1 ][ 0 ] ), j( x[ i1 ][ 1 ] ) ), arcs[ i1 ] );
+	_arcimage.setValue( Point( i( x[ j1 ][ 0 ] ), j( x[ j1 ][ 1 ] ) ), arcs[ j1 ] );
       } else {
+	// todo
       }
     }
     /**
@@ -1732,14 +1800,22 @@ namespace DGtal {
        second-order reconstruction.
     */
     void view2ndOrder( TVT & tvT, Scalar discontinuities ) {
+      cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+      cairo_set_line_width( _cr, 0.0 ); 
+      cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+      cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
       // Pre-compute soem information per faces (gradient, etc)
       tvT.compute2ndOrderInformation( discontinuities );
       // Resets the image that will be used to compute distance to contours.
       const Arc invalid_arc = tvT.T.nbArcs();
       for ( auto p : _draw_domain ) _arcimage.setValue( p, invalid_arc );
-      
-      
-      
+      for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
+	drawFace( tvT, f );
+      for ( auto p : _draw_domain ) {
+	if ( _arcimage( p ) != invalid_arc )
+	  drawPixel( p, ( _pixinfo.find( p ) != _pixinfo.end() )
+		     ? _pixinfo[ p ].v : Value(255,255,255) );
+      }
     }
 
     
@@ -1758,7 +1834,8 @@ namespace DGtal {
     //   ( (int) round( x0 ), (int) round( y0 ), 
     // 	(int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
     // 	b, b, shading, color, stiffness, amplitude );
-    cviewer.view( tvT, discontinuities );
+    if ( shading != 4 ) cviewer.view( tvT, discontinuities );
+    else                cviewer.view2ndOrder( tvT, discontinuities );
     cviewer.save( fname.c_str() );
   }
   
@@ -1778,6 +1855,9 @@ namespace DGtal {
 			   discontinuities, stiffness, amplitude );
     if ( display & 0x8 )
       viewTVTriangulation( tvT, b, x0, y0, x1, y1, 3, color, fname + "-pu.png",
+			   discontinuities, stiffness, amplitude );
+    if ( display & 0x10 )
+      viewTVTriangulation( tvT, b, x0, y0, x1, y1, 4, color, fname + "-2nd.png",
 			   discontinuities, stiffness, amplitude );
   }
 
@@ -2288,6 +2368,13 @@ int main( int argc, char** argv )
   }
   trace.endBlock();
 
+  trace.beginBlock("regularizing contours");
+  {
+    int         N = vm[ "regularizeContour" ].as<int>();
+    TVT.regularizeContours( 0.001, N );
+  }
+  trace.endBlock();
+
   trace.beginBlock("Displaying triangulation");
   {
     int  display = vm[ "display-flip" ].as<int>();
@@ -2304,12 +2391,6 @@ int main( int argc, char** argv )
   }
   trace.endBlock();
 
-  trace.beginBlock("regularizing contours");
-  {
-    int         N = vm[ "regularizeContour" ].as<int>();
-    TVT.regularizeContours( 0.001, N );
-  }
-  trace.endBlock();
   trace.beginBlock("Export base triangulation");
 
   double epsScale = vm["epsScale"].as<double>();
