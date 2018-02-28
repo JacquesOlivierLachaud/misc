@@ -211,7 +211,8 @@ namespace DGtal {
     typedef Triangulation::FaceRange   FaceRange;
     typedef double                     Scalar;
     typedef PointVector< 3, Scalar >   Value;
-    typedef std::pair<DGtal::Color, std::vector<std::vector<TVTriangulation::Point> > > ColorContours;
+    typedef std::pair<DGtal::Color,
+		      std::vector<std::vector<RealPoint> > > ColorContours;
 
     // typedef std::array< Value, 2 >     VectorValue;
     struct VectorValue {
@@ -1853,7 +1854,7 @@ namespace DGtal {
       OutsideContourLines( const Self& viewer, Arc inv )
 	: _viewer( &viewer ), _invalid_arc( inv ) {}
 	bool operator()( Point p ) const {
-	  return _viewer->_arcimage( p ) != _invalid_arc;
+	  return _viewer->_arcimage( p ) == _invalid_arc;
 	}
     };
     
@@ -1888,10 +1889,22 @@ namespace DGtal {
       Voronoi2D voronoimap( _draw_domain, out_clines, l2 );
       for ( auto p : _draw_domain ) {
 	if ( _arcimage( p ) != invalid_arc ) continue;
-	auto cp = p + voronoimap( p ); // get closest contour points
+	auto cp = voronoimap( p ); // get closest contour points
 	PixelInformation pi = _pixinfo[ cp ];
-	drawPixel( p, pi.v );
+	// std::cout << p << " " << cp << " " << pi.v << std::endl;
+	drawPixel( p, evaluateValue( p, cp ) );
       }
+    }
+
+    Value evaluateValue( Point p, Point cp ) {
+      PixelInformation& pi = _pixinfo[ cp ];
+      RealVector ru( xy( RealVector( cp[ 0 ], cp[ 1 ] ) )
+		     - xy( RealVector( p[ 0 ], p[ 1 ] ) ) );
+      Value       v = pi.v;
+      VectorValue g = pi.grad;
+      for ( Dimension m = 0; m < 3; ++m ) 
+	v[ m ] += 2.0 * ( ru[ 0 ]*g.x[ m ] + ru[ 1 ]*g.y[ m ] );
+      return v;
     }
 
     
