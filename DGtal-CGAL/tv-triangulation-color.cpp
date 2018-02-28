@@ -8,17 +8,22 @@
 #include <DGtal/base/Common.h>
 #include <DGtal/base/ConstAlias.h>
 #include <DGtal/base/Alias.h>
+#include <DGtal/kernel/BasicPointPredicates.h>
 #include <DGtal/helpers/StdDefs.h>
 #include <DGtal/images/ImageContainerBySTLVector.h>
 #include <DGtal/images/ImageSelector.h>
+#include <DGtal/images/SimpleThresholdForegroundPredicate.h>
 #include <DGtal/shapes/TriangulatedSurface.h>
 #include <DGtal/io/boards/Board2D.h>
 #include <DGtal/io/colormaps/GradientColorMap.h>
 #include <DGtal/io/colormaps/GrayscaleColorMap.h>
-#include "DGtal/io/readers/GenericReader.h"
-#include "DGtal/io/writers/PPMWriter.h"
+#include <DGtal/io/readers/GenericReader.h>
+#include <DGtal/io/writers/PPMWriter.h>
 #include <DGtal/math/linalg/SimpleMatrix.h>
 #include <DGtal/geometry/helpers/ContourHelper.h>
+#include <DGtal/geometry/volumes/distance/ExactPredicateLpSeparableMetric.h>
+#include <DGtal/geometry/volumes/distance/VoronoiMap.h>
+#include <DGtal/geometry/volumes/distance/DistanceTransformation.h>
 #include "CairoViewer.h"
 #include "BasicVectoImageExporter.h"
 #include "ImageConnecter.h"
@@ -193,13 +198,11 @@ namespace DGtal {
   {
 
     typedef Z2i::Integer               Integer;
-    typedef Z2i::RealPoint             Point;
-    typedef Z2i::Point                 Point2i;
-    typedef Z2i::RealVector            Vector;
+    typedef Z2i::Point                 Point;
     typedef Z2i::RealPoint             RealPoint;
     typedef Z2i::RealVector            RealVector;
     typedef Z2i::Domain                Domain;
-    typedef TriangulatedSurface<Point> Triangulation;
+    typedef TriangulatedSurface<RealPoint> Triangulation;
     typedef Triangulation::VertexIndex VertexIndex;
     typedef Triangulation::Vertex      Vertex;
     typedef Triangulation::Arc         Arc;
@@ -226,16 +229,16 @@ namespace DGtal {
     struct Metric {
       Scalar _a, _b, _c;
       Metric() {}
-      Metric( Point p, Point q, Point r ) {
-	Vector sides  [ 3 ] = { q - p, r - q, p - r };
+      Metric( RealPoint p, RealPoint q, RealPoint r ) {
+	RealVector sides  [ 3 ] = { q - p, r - q, p - r };
 	Scalar lengths[ 3 ] = { sides[ 0 ].norm(),
 				sides[ 1 ].norm(),
 				sides[ 2 ].norm() };
 	int l = 0;
 	if ( lengths[ 1 ] > lengths[ l ] ) l = 1;
 	if ( lengths[ 2 ] > lengths[ l ] ) l = 2;
-	const Vector cst = sides[ l ] / lengths[ l ]; // [ cos t, sin t ]
-	const Vector ort = { -cst[ 1 ], cst[ 0 ] };
+	const RealVector cst = sides[ l ] / lengths[ l ]; // [ cos t, sin t ]
+	const RealVector ort = { -cst[ 1 ], cst[ 0 ] };
 	const Scalar  l1 = lengths[ l ];
 	const Scalar  l2 = fabs( sides[ (l+1)%3 ].dot( ort ) );
 	_a = cst[0] * cst[0] / ( l1 ) + cst[1] * cst[1] / ( l2 );
@@ -296,8 +299,8 @@ namespace DGtal {
     /// Width of the image
     Integer              _width;
     /// Domain of the input image
-    Point2i              _lo;
-    Point2i              _up;
+    Point              _lo;
+    Point              _up;
     /// Contains the metric of each triangle.
     std::vector<Metric>  _metrics;
     /// Contains information per face for 2nd order reconstruction.
@@ -397,9 +400,9 @@ namespace DGtal {
       // [ yj-yk yk-yi yi-yk ] * [ ui ]
       // [ xk-xj xi-xk xj-xi ]   [ uj ]
       //                         [ uk ]
-      const Point& pi = T.position( i );
-      const Point& pj = T.position( j );
-      const Point& pk = T.position( k );
+      const RealPoint& pi = T.position( i );
+      const RealPoint& pj = T.position( j );
+      const RealPoint& pk = T.position( k );
       const Value& ui = u[ i ];
       const Value& uj = u[ j ];
       const Value& uk = u[ k ];
@@ -428,9 +431,9 @@ namespace DGtal {
 	S[ v ] = Value{ 0, 0, 0 };
       for ( Face f = 0; f < T.nbFaces(); ++f ) {
 	auto V          = T.verticesAroundFace( f );
-	const Point& pi = T.position( V[ 0 ] );
-	const Point& pj = T.position( V[ 1 ] );
-	const Point& pk = T.position( V[ 2 ] );
+	const RealPoint& pi = T.position( V[ 0 ] );
+	const RealPoint& pj = T.position( V[ 1 ] );
+	const RealPoint& pk = T.position( V[ 2 ] );
 	const VectorValue& Gf = G[ f ];
 	for ( int m = 0; m < d; ++m ) {
 	  S[ V[ 0 ] ][ m ] -= ( pj[ 1 ] - pk[ 1 ] ) * Gf.x[ m ]
@@ -534,18 +537,18 @@ namespace DGtal {
     Scalar aspectRatio( const Face f ) const
     {
       VertexRange P  = T.verticesAroundFace( f );
-      const Point& a = T.position( P[ 0 ] );
-      const Point& b = T.position( P[ 1 ] );
-      const Point& c = T.position( P[ 2 ] );
-      Vector     ab = b - a;
-      Vector     bc = c - b;
-      Vector     ca = a - c;
+      const RealPoint& a = T.position( P[ 0 ] );
+      const RealPoint& b = T.position( P[ 1 ] );
+      const RealPoint& c = T.position( P[ 2 ] );
+      RealVector     ab = b - a;
+      RealVector     bc = c - b;
+      RealVector     ca = a - c;
       Scalar    dab = ab.norm();
       Scalar    dbc = bc.norm();
       Scalar    dca = ca.norm();
-      Vector    uab = ab / dab;
-      Vector    ubc = bc / dbc;
-      Vector    uca = ca / dca;
+      RealVector    uab = ab / dab;
+      RealVector    ubc = bc / dbc;
+      RealVector    uca = ca / dca;
       Scalar     ha = ( ab - ab.dot( ubc ) * ubc  ).norm();
       Scalar     hb = ( bc - bc.dot( uca ) * uca  ).norm();
       Scalar     hc = ( ca - ca.dot( uab ) * uab  ).norm();
@@ -556,12 +559,12 @@ namespace DGtal {
     Scalar diameter( const Face f ) const
     {
       VertexRange P  = T.verticesAroundFace( f );
-      const Point& a = T.position( P[ 0 ] );
-      const Point& b = T.position( P[ 1 ] );
-      const Point& c = T.position( P[ 2 ] );
-      Vector     ab = b - a;
-      Vector     bc = c - b;
-      Vector     ca = a - c;
+      const RealPoint& a = T.position( P[ 0 ] );
+      const RealPoint& b = T.position( P[ 1 ] );
+      const RealPoint& c = T.position( P[ 2 ] );
+      RealVector     ab = b - a;
+      RealVector     bc = c - b;
+      RealVector     ca = a - c;
       Scalar    dab = ab.norm();
       Scalar    dbc = bc.norm();
       Scalar    dca = ca.norm();
@@ -682,10 +685,10 @@ namespace DGtal {
       _flippable.resize( T.nbArcs() );
       int nbFlippable = 0;
       for ( Arc a = 0; a < T.nbArcs(); ++a ) {
-	Point p = T.position( T.head( a ) );
-	Point q = T.position( T.tail( a ) );
-	Point l = p.inf( q );
-	Point u = p.sup( q );
+	RealPoint p = T.position( T.head( a ) );
+	RealPoint q = T.position( T.tail( a ) );
+	RealPoint l = p.inf( q );
+	RealPoint u = p.sup( q );
 	auto  how = connecter.howConnected( l );
 	if ( ( l - u ).dot( l - u ) == 2 )
 	  _flippable[ a ] = ( how.diagonal == Connecter::Default );
@@ -717,18 +720,18 @@ namespace DGtal {
     }
 
     // @return the determinant of \a pq and \a qr.
-    static Scalar det( const Point& pq, const Point& qr )
+    static Scalar det( const RealPoint& pq, const RealPoint& qr )
     {
       return pq[ 0 ] * qr[ 1 ] - pq[ 1 ] * qr[ 0 ];
     }
 
-    static Scalar doesTurnLeft( const Point& p, const Point& q, const Point& r )
+    static Scalar doesTurnLeft( const RealPoint& p, const RealPoint& q, const RealPoint& r )
     {
-      const Point pq = q - p;
-      const Point qr = r - q;
+      const RealPoint pq = q - p;
+      const RealPoint qr = r - q;
       return det( pq, qr );
     }
-    static Scalar doesTurnLeft( const Point& pq, const Point& qr )
+    static Scalar doesTurnLeft( const RealPoint& pq, const RealPoint& qr )
     {
       return det( pq, qr );
     }
@@ -736,7 +739,7 @@ namespace DGtal {
     // Check strict convexity of quadrilateron.
     bool isConvex( const VertexRange& V ) const
     {
-      Point P[] = { T.position( V[ 1 ] ) - T.position( V[ 0 ] ),
+      RealPoint P[] = { T.position( V[ 1 ] ) - T.position( V[ 0 ] ),
 		    T.position( V[ 2 ] ) - T.position( V[ 1 ] ),
 		    T.position( V[ 3 ] ) - T.position( V[ 2 ] ),
 		    T.position( V[ 0 ] ) - T.position( V[ 3 ] ) };
@@ -960,7 +963,7 @@ namespace DGtal {
 	  const Face    f023 = T.faceAroundArc( T.opposite( a ) );
 	  Scalar     Ebefore = energyTV( f012 ) + energyTV( f023 );
 	  Scalar      Eafter = 0.0; 
-	  Point B = ( T.position( P[ 0 ] ) + T.position( P[ 1 ] )
+	  RealPoint B = ( T.position( P[ 0 ] ) + T.position( P[ 1 ] )
 		      + T.position( P[ 2 ] ) + T.position( P[ 3 ] ) ) * 0.25;
 	  VertexIndex v = T.split( a, B );
 	  FaceRange   F = T.facesAroundVertex( v );
@@ -1083,7 +1086,7 @@ namespace DGtal {
       for ( Face f = 0; f < T.nbFaces(); ++f )	{
 	auto     arcs = arcsAroundFace( f );
 	Scalar      w = 0.0;
-	Point       B = Point::zero;
+	RealPoint       B = RealPoint::zero;
 	std::array<Scalar,3> s;
 	int m = arcDissimilarities( s, arcs );
 	for ( int i = 0; i < 3; ++i ) {
@@ -1189,17 +1192,17 @@ namespace DGtal {
       
       const Arc    a2 = T.next( opp_a );
       const Face   f2 = T.faceAroundArc( a2 );
-      const Point   B = T.position( T.head( a ) );
-      const Point   A = T.position( T.head( opp_a ) );
+      const RealPoint   B = T.position( T.head( a ) );
+      const RealPoint   A = T.position( T.head( opp_a ) );
       const Scalar  t = _t[ a ];
       return -0.5 * ( det( t * ( B - A ), _b[ f ] - A )
 		     + det( _b[ f2 ] - A , t * ( B - A ) ) );
       // const Face   f = T.faceAroundArc( a );
       // const Arc   an = T.next( a );
       // const Arc  ann = T.next( an );
-      // const Point  B = T.position( T.head( a ) );
-      // const Point  C = T.position( T.head( an ) );
-      // const Point  A = T.position( T.head( ann ) );
+      // const RealPoint  B = T.position( T.head( a ) );
+      // const RealPoint  C = T.position( T.head( an ) );
+      // const RealPoint  A = T.position( T.head( ann ) );
       // const Arc   a2 = T.opposite( ann );
       // const Scalar t = _t[ a ];
       // const Scalar u = _t[ a2 ];
@@ -1219,12 +1222,12 @@ namespace DGtal {
     /// intersection point as two scalars (t,u) such that:
     /// I = A + t AB = C + u CD
     static 
-    std::pair<Scalar,Scalar> intersect( const Point& A, const Point& B,
-					const Point& C, const Point& D )
+    std::pair<Scalar,Scalar> intersect( const RealPoint& A, const RealPoint& B,
+					const RealPoint& C, const RealPoint& D )
     {
-      Vector AB = B - A;
-      Vector DC = C - D;
-      Vector AC = C - A;
+      RealVector AB = B - A;
+      RealVector DC = C - D;
+      RealVector AC = C - A;
       Scalar  d = det( AB, DC );
       if ( d == 0 ) return std::make_pair( 0.5, 0.5 );
       Scalar  t = ( DC[ 1 ] * AC[ 0 ] - DC[ 0 ] * AC[ 1 ] ) / d;
@@ -1295,8 +1298,8 @@ namespace DGtal {
 //           << " F=" << T.nbFaces()
 //           << " d=" << d << std::endl;
       const Scalar r = 1.5;
-      Point2i lo( (int) ( round( p[ 0 ] ) - r ), (int) ( round( p[ 1 ] ) - r ) );
-      Point2i hi( (int) ( round( p[ 0 ] ) + r ), (int) ( round( p[ 1 ] ) + r ) );
+      Point lo( (int) ( round( p[ 0 ] ) - r ), (int) ( round( p[ 1 ] ) - r ) );
+      Point hi( (int) ( round( p[ 0 ] ) + r ), (int) ( round( p[ 1 ] ) + r ) );
       lo = lo.sup( _lo );
       hi = hi.inf( _up );
       Value  R;
@@ -1389,11 +1392,11 @@ namespace DGtal {
       // return exp( -s*s*4 );
     }
     
-    Value evalPOU( const Point& p ) const {
+    Value evalPOU( const RealPoint& p ) const {
       const int    d = _color ? 3 : 1;
       const Scalar r = 3.0;
-      Point2i lo( (int) ( round( p[ 0 ] ) - r ), (int) ( round( p[ 1 ] ) - r ) );
-      Point2i hi( (int) ( round( p[ 0 ] ) + r ), (int) ( round( p[ 1 ] ) + r ) );
+      Point lo( (int) ( round( p[ 0 ] ) - r ), (int) ( round( p[ 1 ] ) - r ) );
+      Point hi( (int) ( round( p[ 0 ] ) + r ), (int) ( round( p[ 1 ] ) + r ) );
       lo = lo.sup( _lo );
       hi = hi.inf( _up );
       // Start scanning of values for POU
@@ -1401,7 +1404,7 @@ namespace DGtal {
       Value  R;
         Scalar wsum = 0;
       for ( auto qi : local ) {
-	Point q( qi[ 0 ], qi[ 1 ] );
+	RealPoint q( qi[ 0 ], qi[ 1 ] );
 	Scalar pq = (q - p).norm();
 	if ( pq <= r ) {
 	  Integer v = linearize( qi );
@@ -1418,7 +1421,7 @@ namespace DGtal {
     
     /// @param p any point
     /// @return the corresponding index in the 1-dimensional array.
-    Integer linearize( Point2i p ) const
+    Integer linearize( Point p ) const
     {
       return p[ 1 ] * _width + p[ 0 ];
     }
@@ -1453,6 +1456,7 @@ namespace DGtal {
   {
   public:
     typedef CairoViewer<Z2i::Space>  Base;
+    typedef CairoViewerTV            Self;
     typedef TVTriangulation          TVT;
     typedef TVT::Value               Value;
     typedef TVT::VectorValue         VectorValue;
@@ -1464,8 +1468,7 @@ namespace DGtal {
     typedef TVT::VertexRange         VertexRange;
     typedef TVT::Scalar              Scalar;
     typedef TVT::Point               Point;
-    typedef Z2i::Point               Point2i;
-    typedef Z2i::RealPoint           RealPoint;
+    typedef TVT::RealPoint           RealPoint;
     typedef Z2i::Domain              Domain;
     
     using Base::_color;
@@ -1490,8 +1493,8 @@ namespace DGtal {
     
   public:
 
-    Point2i _lo;
-    Point2i _up;
+    Point _lo;
+    Point _up;
 
     std::map< Point, PixelInformation > _pixinfo;
     ArcImage _arcimage;
@@ -1507,10 +1510,10 @@ namespace DGtal {
 		   double disc_amplitude = 0.75 )
       : Base( x0, y0, width, height, xfactor, yfactor, shading, color,
 	      disc_stiffness, disc_amplitude ),
-	_arcimage( Domain( Point2i(), Point2i() ) )
+	_arcimage( Domain( Point(), Point() ) )
     {
-      _lo = Point2i( x0, y0 );
-      _up = Point2i( width, height );
+      _lo = Point( x0, y0 );
+      _up = Point( width, height );
       _arcimage = ArcImage( _draw_domain );
     }
     
@@ -1520,9 +1523,9 @@ namespace DGtal {
     void viewTVTLinearGradientTriangle( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
-      Point a = tvT.T.position( V[ 0 ] );
-      Point b = tvT.T.position( V[ 1 ] );
-      Point c = tvT.T.position( V[ 2 ] );
+      RealPoint a = tvT.T.position( V[ 0 ] );
+      RealPoint b = tvT.T.position( V[ 1 ] );
+      RealPoint c = tvT.T.position( V[ 2 ] );
       drawLinearGradientTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
 				  RealPoint( b[ 0 ], b[ 1 ] ),
 				  RealPoint( c[ 0 ], c[ 1 ] ),
@@ -1533,9 +1536,9 @@ namespace DGtal {
     void viewTVTNonLinearGradientTriangle( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
-      Point a = tvT.T.position( V[ 0 ] );
-      Point b = tvT.T.position( V[ 1 ] );
-      Point c = tvT.T.position( V[ 2 ] );
+      RealPoint a = tvT.T.position( V[ 0 ] );
+      RealPoint b = tvT.T.position( V[ 1 ] );
+      RealPoint c = tvT.T.position( V[ 2 ] );
       drawNonLinearGradientTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
 				     RealPoint( b[ 0 ], b[ 1 ] ),
 				     RealPoint( c[ 0 ], c[ 1 ] ),
@@ -1546,9 +1549,9 @@ namespace DGtal {
     void viewTVTGouraudTriangle( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
-      Point a = tvT.T.position( V[ 0 ] );
-      Point b = tvT.T.position( V[ 1 ] );
-      Point c = tvT.T.position( V[ 2 ] );
+      RealPoint a = tvT.T.position( V[ 0 ] );
+      RealPoint b = tvT.T.position( V[ 1 ] );
+      RealPoint c = tvT.T.position( V[ 2 ] );
       drawGouraudTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
 			   RealPoint( b[ 0 ], b[ 1 ] ),
 			   RealPoint( c[ 0 ], c[ 1 ] ),
@@ -1559,9 +1562,9 @@ namespace DGtal {
     void viewTVTFlatTriangle( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
-      Point       a = tvT.T.position( V[ 0 ] );
-      Point       b = tvT.T.position( V[ 1 ] );
-      Point       c = tvT.T.position( V[ 2 ] );
+      RealPoint       a = tvT.T.position( V[ 0 ] );
+      RealPoint       b = tvT.T.position( V[ 1 ] );
+      RealPoint       c = tvT.T.position( V[ 2 ] );
       Value     val = tvT.u( V[ 0 ] )
 	+ tvT.u( V[ 1 ] ) + tvT.u( V[ 2 ] );
       val          /= 3.0;
@@ -1573,9 +1576,9 @@ namespace DGtal {
     void viewTVTTriangleDiscontinuity( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
-      Point       a = tvT.T.position( V[ 0 ] );
-      Point       b = tvT.T.position( V[ 1 ] );
-      Point       c = tvT.T.position( V[ 2 ] );
+      RealPoint       a = tvT.T.position( V[ 0 ] );
+      RealPoint       b = tvT.T.position( V[ 1 ] );
+      RealPoint       c = tvT.T.position( V[ 2 ] );
       Value     val = { 255, 0, 0 };
       drawFlatTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
 			RealPoint( b[ 0 ], b[ 1 ] ),
@@ -1585,9 +1588,9 @@ namespace DGtal {
     void viewTVTPartitionOfUnityTriangle( TVT & tvT, Face f )
     {
       VertexRange V = tvT.T.verticesAroundFace( f );
-      Point a = tvT.T.position( V[ 0 ] );
-      Point b = tvT.T.position( V[ 1 ] );
-      Point c = tvT.T.position( V[ 2 ] );
+      RealPoint a = tvT.T.position( V[ 0 ] );
+      RealPoint b = tvT.T.position( V[ 1 ] );
+      RealPoint c = tvT.T.position( V[ 2 ] );
       auto fa = tvT.uApprox( V[ 0 ] );
       auto fb = tvT.uApprox( V[ 1 ] );
       auto fc = tvT.uApprox( V[ 2 ] );
@@ -1739,9 +1742,9 @@ namespace DGtal {
       typedef SimpleMatrix<Scalar,2,2>      Matrix;
       typedef typename Matrix::ColumnVector CVector;
       std::array<Scalar,3> s;
-      std::function<Point2i( RealPoint )> dig
+      std::function<Point( RealPoint )> dig
 	= [&] (const RealPoint& p) { RealPoint q = ij( p );
-				     return Point2i( floor( q[ 0 ] ),
+				     return Point( floor( q[ 0 ] ),
 						     floor( q[ 1 ] ) ); };
       const auto        arcs = tvT.arcsAroundFace( f );
       const int            m = tvT.arcDissimilarities( s, arcs );
@@ -1779,7 +1782,7 @@ namespace DGtal {
 	      x[ j1 ] };
 	// Traces the digital Bezier curve.
 	BezierCurve<Space> B( bp );
-	std::vector<Point2i>   dp;
+	std::vector<Point>   dp;
 	std::vector<RealPoint> rp;
 	std::vector<Scalar>    dt;
 	B.trace( dig, dp, rp, dt );
@@ -1818,7 +1821,7 @@ namespace DGtal {
 	  std::vector<RealPoint> bp = { x[ i1 ], bb, b };
 	  // Traces the digital Bezier curve.
 	  BezierCurve<Space> B( bp );
-	  std::vector<Point2i>   dp;
+	  std::vector<Point>   dp;
 	  std::vector<RealPoint> rp;
 	  std::vector<Scalar>    dt;
 	  B.trace( dig, dp, rp, dt );
@@ -1842,6 +1845,18 @@ namespace DGtal {
 	}
       }
     }
+
+    struct OutsideContourLines {
+      typedef Self::Point Point;
+      const Self*     _viewer;
+      Arc        _invalid_arc;
+      OutsideContourLines( const Self& viewer, Arc inv )
+	: _viewer( &viewer ), _invalid_arc( inv ) {}
+	bool operator()( Point p ) const {
+	  return _viewer->_arcimage( p ) != _invalid_arc;
+	}
+    };
+    
     /**
        Displays the TV triangulation with discontinuities and
        second-order reconstruction.
@@ -1856,12 +1871,26 @@ namespace DGtal {
       // Resets the image that will be used to compute distance to contours.
       const Arc invalid_arc = tvT.T.nbArcs();
       for ( auto p : _draw_domain ) _arcimage.setValue( p, invalid_arc );
+      // Compute and trace the contour lines of the image.
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
 	drawFace( tvT, f );
+      // If you wish to display the obtained contour lines.
       for ( auto p : _draw_domain ) {
 	if ( _arcimage( p ) != invalid_arc )
 	  drawPixel( p, ( _pixinfo.find( p ) != _pixinfo.end() )
 		     ? _pixinfo[ p ].v : Value(255,255,255) );
+      }
+      // Compute Voronoi map and distance transformation.
+      typedef ExactPredicateLpSeparableMetric<Z2i::Space, 2>  L2Metric;
+      typedef VoronoiMap<Z2i::Space, OutsideContourLines, L2Metric > Voronoi2D;
+      L2Metric l2;
+      OutsideContourLines out_clines( *this, invalid_arc );
+      Voronoi2D voronoimap( _draw_domain, out_clines, l2 );
+      for ( auto p : _draw_domain ) {
+	if ( _arcimage( p ) != invalid_arc ) continue;
+	auto cp = p + voronoimap( p ); // get closest contour points
+	PixelInformation pi = _pixinfo[ cp ];
+	drawPixel( p, pi.v );
       }
     }
 
@@ -1917,7 +1946,7 @@ namespace DGtal {
     for(TVTriangulation::Face f = 0; f < tvT.T.nbFaces(); f++)
     {
       TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( f );
-      std::vector<TVTriangulation::Point> tr;
+      std::vector<TVTriangulation::RealPoint> tr;
       tr.push_back(tvT.T.position(V[0]));
       tr.push_back(tvT.T.position(V[1]));
       tr.push_back(tvT.T.position(V[2]));
@@ -1968,10 +1997,13 @@ namespace DGtal {
 
 
 
-  std::vector<TVTriangulation::Point> trackBorderFromFace(TVTriangulation& tvT,  TVTriangulation::Face startArc,
-                                                          TVTriangulation::Value valInside, std::vector<bool> &markedArcs)
+  std::vector<TVTriangulation::RealPoint>
+  trackBorderFromFace(TVTriangulation& tvT,
+		      TVTriangulation::Face startArc,
+		      TVTriangulation::Value valInside,
+		      std::vector<bool> &markedArcs)
   {
-    std::vector<TVTriangulation::Point> res;
+    std::vector<TVTriangulation::RealPoint> res;
     
     // starting ext point: arc tail
     TVTriangulation::Face faceIni = tvT.T.faceAroundArc(startArc);
@@ -1997,11 +2029,12 @@ namespace DGtal {
   }
   
   
-  std::vector<std::vector<TVTriangulation::Point> > trackBorders(TVTriangulation& tvT, unsigned int num)
+  std::vector<std::vector<TVTriangulation::RealPoint> >
+  trackBorders(TVTriangulation& tvT, unsigned int num)
   {
     typedef std::map<DGtal::Color, std::vector<unsigned int> >  MapColorContours;
     MapColorContours mapContours;
-    std::vector<std::vector<TVTriangulation::Point> > resAll;
+    std::vector<std::vector<TVTriangulation::RealPoint> > resAll;
     std::vector<bool> markedArcs(tvT.T.nbArcs());
     for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
     bool found = true;
@@ -2032,7 +2065,7 @@ namespace DGtal {
     }
     auto itMap = mapContours.begin();
       for(unsigned int i=0;i < num; i++)  itMap++;
-    std::vector<std::vector<TVTriangulation::Point> > res;
+    std::vector<std::vector<TVTriangulation::RealPoint> > res;
     for(unsigned int i=0; i< (itMap->second).size(); i++){
       res.push_back(resAll[(itMap->second)[i]]);
     }
@@ -2080,7 +2113,7 @@ namespace DGtal {
     typedef std::map<DGtal::Color, std::vector<unsigned int> >  MapColorContours;
     std::vector<TVTriangulation::ColorContours> res;
     MapColorContours mapContours;
-    std::vector<std::vector<TVTriangulation::Point> > resAll;
+    std::vector<std::vector<TVTriangulation::RealPoint> > resAll;
     std::vector<bool> markedArcs(tvT.T.nbArcs());
     for(unsigned int i = 0; i< markedArcs.size(); i++){ markedArcs[i]=false; }
     DGtal::Color med = invalidateImageBorder(tvT);
@@ -2088,10 +2121,11 @@ namespace DGtal {
     // Adding background:
     TVTriangulation::ColorContours c;
     c.first = med;
-    std::vector<std::vector<TVTriangulation::Point>> bg = {{TVTriangulation::Point(0, height),
-                                                            TVTriangulation::Point(width, height),
-                                                            TVTriangulation::Point(width, 0 ),
-                                                            TVTriangulation::Point(0,0)}};
+    std::vector<std::vector<TVTriangulation::RealPoint>>
+      bg = {{TVTriangulation::Point(0, height),
+	     TVTriangulation::Point(width, height),
+	     TVTriangulation::Point(width, 0 ),
+	     TVTriangulation::Point(0,0)}};
     c.second = bg;
     res.push_back(c);
    
@@ -2177,7 +2211,7 @@ namespace DGtal {
         for(TVTriangulation::Face f = 0; f < tvT.T.nbFaces(); f++)
 	  {
 	    TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( f );
-	    std::vector<TVTriangulation::Point> tr;
+	    std::vector<TVTriangulation::RealPoint> tr;
 	    tr.push_back(tvT.T.position(V[0]));
 	    tr.push_back(tvT.T.position(V[1]));
 	    tr.push_back(tvT.T.position(V[2]));
@@ -2185,7 +2219,7 @@ namespace DGtal {
 	    
 	    exp.addContour(tr, DGtal::Color(0, 200, 200), 0.01);        
 	  }
-        std::vector<std::vector<TVTriangulation::Point> > contour = trackBorders(tvT, numColor);
+        std::vector<std::vector<TVTriangulation::RealPoint> > contour = trackBorders(tvT, numColor);
         for (auto c: contour){
             DGtal::Color col;
             if(ContourHelper::isCounterClockWise(c) )
