@@ -262,8 +262,10 @@ namespace DGtal {
       Value          v; ///< the value at the barycenter of the face.
       VectorValue grad; ///< the constant gradient on the face.
       int        order; ///< Order according to TV discontinuity (0:highest)
+      Scalar    rel_tv; ///< relative tv energy wrt average
       Scalar  cumul_tv; ///< cumulative percent of total TV energy
       Scalar      disc; ///< between 0 and 1, means that you consider the face as a discontinuity, more means that you do not consider this face as discontinuous.
+      Scalar      cont; ///< below 0 is discontinuous, otherwise between 0 (almost discontinuous) and 1 (continuous).
     };
 
 
@@ -1264,8 +1266,10 @@ namespace DGtal {
 	Face f = tv_faces[ i ];
 	Ctv   += energyTV( f );
 	_finfos[ f ].order    = i;
+	_finfos[ f ].rel_tv   = energyTV( f ) / ( Etv / tv_faces.size() );
 	_finfos[ f ].cumul_tv = Ctv / Etv;
 	_finfos[ f ].disc     = Ctv / Otv;
+	_finfos[ f ].cont     = ( Ctv - Otv ) / Etv;
       }      
     }
     
@@ -1487,6 +1491,8 @@ namespace DGtal {
     struct PixelInformation {
       VectorValue grad; ///< grad in pixel coordinates
       Value          v; ///< value at pixel
+      Value      min_v; ///< min value in face around pixel
+      Value      max_v; ///< max value in face around pixel
       Scalar     crisp; ///< 0 is linear gradient wrt to distance d, otherwise some 1/2*(1+atan(d pi/2)^(1/crisp)).
     };
 
@@ -1703,6 +1709,16 @@ namespace DGtal {
       }	
     }
 
+    /// @return the crispness on the other side of the arc \a a
+    Scalar crispnessBeyondArc( TVT& tvT, const Arc a ) {
+      const Arc  oa = tvT.T.opposite( a );
+      if ( ! tvT.T.isArcBoundary( oa ) ) {
+	const Face of = tvT.T.faceAroundArc( oa );
+	return crispness( tvT, of );
+      } else {
+	return crispness( tvT, tvT.T.faceAroundArc( a ) );
+      }
+    }
     VectorValue combine( const VectorValue& g1, const VectorValue& g2,
 			 Scalar t = 0.5 ) {
       return VectorValue { (1.0-t) * g1.x + t * g2.x,
@@ -1712,9 +1728,22 @@ namespace DGtal {
 			 Scalar t = 0.5 ) {
       return (1.0-t) * g1 + t * g2;
     }
+    Scalar combine( const Scalar& g1, const Scalar& g2,
+		    Scalar t = 0.5 ) {
+      return (1.0-t) * g1 + t * g2;
+    }
     /// @return the value at an arc \a a.
     Value valueAtArc( TVT& tvT, const Arc a ) {
       return 0.5 * ( tvT.u( tvT.T.head( a ) ) + tvT.u( tvT.T.tail( a ) ) );
+    }
+    /// @return the value at an arc \a a.
+    std::pair<Value,Value> boundAtFace( TVT& tvT, const Face f ) {
+      auto V = tvT.T.verticesAroundFace( f );
+      Value m, M;
+      M = m = tvT.u( V[ 0 ] );
+      M = M.sup( tvT.u( V[ 1 ] ) ).sup( tvT.u( V[ 2 ] ) );
+      m = m.inf( tvT.u( V[ 1 ] ) ).inf( tvT.u( V[ 2 ] ) );
+      return std::make_pair( m, M );
     }
     /// @return the value at the barycenter of a face \a f.
     Value valueAtBarycenter( TVT& tvT, const Face f ) {
@@ -1738,6 +1767,19 @@ namespace DGtal {
 	return gf;
       }
     }
+
+    Scalar crispness( TVT& tvT, const Face f )  const {
+      auto & info = tvT.finfo( f );
+      Scalar discontinuities = ( info.cumul_tv == 0 )
+	? 1.0
+	: info.cumul_tv / info.disc;
+      return std::min( 20.0,
+		       std::max( 0.0, 20.0*discontinuities*info.rel_tv ) ); 
+      // return ( info.disc <= 1.0 )
+      // 	? 10.0
+      // 	: std::min( 10.0,
+      // 		    std::max( 0.0, discontinuities*info.rel_tv ) ); //(1.0 - info.cont, ) * 10.0 );
+    }
     
     void drawFace( TVT& tvT, const Face f ) {
       typedef SimpleMatrix<Scalar,2,2>      Matrix;
@@ -1753,6 +1795,8 @@ namespace DGtal {
 				 tvT.contourPoint( arcs[ 1 ] ),
 				 tvT.contourPoint( arcs[ 2 ] ) };
       const RealPoint      b = tvT.barycenter( f );
+      const auto      boundv = boundAtFace( tvT, f );
+      const Scalar   crisp_f = crispness( tvT,f );
       // if m = -1, this is an ordinary face, otherwise it is a contour face.
       if ( m >= 0 ) {
 	// This is a contour face, we have to connect two sides.
@@ -1761,9 +1805,6 @@ namespace DGtal {
 	const Dimension j1 = (m+2)%3;
 	const RealVector u = tangentAtArc( tvT, arcs[ i1 ] );
 	const RealVector v = tangentAtArc( tvT, arcs[ j1 ] );
-	/// Given two straight lines (AB) and (CD), returns their
-	/// intersection point as two scalars (t,u) such that:
-	/// I = A + t AB = C + u CD
 	auto tu = tvT.intersect( x[ i1 ], x[ i1 ] + u,
 				 x[ j1 ], x[ j1 ] + v );
 	RealPoint bb = 0.55 * b + 0.45 * ( x[ i1 ] + tu.first * u );
@@ -1774,8 +1815,6 @@ namespace DGtal {
 	CVector S = ( fabs( M.determinant() ) > 1e-4 )
 	  ? ( M.inverse() * R )
 	  : CVector { 0, 0 };
-	// trace.info() << f << " " << fabs( M.determinant() ) << " " << S
-	// 	     << std::endl;
 	std::vector<RealPoint> bp
 	  = { x[ i1 ],
 	      (S[0] != 0.0) ? (x[i1] + S[0]*u) : (0.66*x[i1] + 0.34*x[j1]),
@@ -1787,15 +1826,20 @@ namespace DGtal {
 	std::vector<RealPoint> rp;
 	std::vector<Scalar>    dt;
 	B.trace( dig, dp, rp, dt );
-	Value       vi = valueAtArc( tvT, arcs[ i1 ] );
-	Value       vj = valueAtArc( tvT, arcs[ j1 ] );
-	VectorValue gi = gradientAtArc( tvT, arcs[ i1 ] );  
-	VectorValue gj = gradientAtArc( tvT, arcs[ j1 ] );
+	Value        vi = valueAtArc( tvT, arcs[ i1 ] );
+	Value        vj = valueAtArc( tvT, arcs[ j1 ] );
+	VectorValue  gi = gradientAtArc( tvT, arcs[ i1 ] );  
+	VectorValue  gj = gradientAtArc( tvT, arcs[ j1 ] );
+	Scalar crisp_i1 = crispnessBeyondArc( tvT, arcs[ i1 ] );
+	Scalar crisp_j1 = crispnessBeyondArc( tvT, arcs[ j1 ] );
 	for ( int k = 0; k < dp.size(); ++k ) {
 	  PixelInformation pi = {
 	    combine( gi, gj, dt[ k ] ), // grad in pixel coordinates
 	    combine( vi, vj, dt[ k ] ), // value at pixel
-	    0.0 // 0 is linear gradient wrt to distance d, otherwise some 1/2*(1+atan(d pi/2)^(1/crisp)).
+	    boundv.first, // min value
+	    boundv.second, // max value
+	    ( dt[ k ] < 0.5 ) ? combine( crisp_i1, crisp_f, 2*dt[ k ] )
+	    :  combine( crisp_f, crisp_j1, 2*(dt[ k ]-0.5) )
 	  };
 	  //	  if ( 
 	  if ( tvT.isInTriangle( f, rp[ k ] )
@@ -1805,10 +1849,6 @@ namespace DGtal {
 				( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
 	  }
 	}
-	// Debug
-	// _arcimage.setValue( Point( i( b[ 0 ] ), j( b[ 1 ] ) ), arcs[ i1 ] );
-	// _arcimage.setValue( Point( i( x[ i1 ][ 0 ] ), j( x[ i1 ][ 1 ] ) ), arcs[ i1 ] );
-	// _arcimage.setValue( Point( i( x[ j1 ][ 0 ] ), j( x[ j1 ][ 1 ] ) ), arcs[ j1 ] );
       } else {
 	// This is a generic face, we connect the three sides to the barycenter.
 	for ( Dimension i1 = 0; i1 < 3; ++i1 ) {
@@ -1826,15 +1866,18 @@ namespace DGtal {
 	  std::vector<RealPoint> rp;
 	  std::vector<Scalar>    dt;
 	  B.trace( dig, dp, rp, dt );
-	  Value       vi = valueAtArc( tvT, arcs[ i1 ] );
-	  Value       vj = valueAtBarycenter( tvT, f );
-	  VectorValue gi = gradientAtArc( tvT, arcs[ i1 ] );  
-	  VectorValue gj = gradientAtBarycenter( tvT, f );
+	  Value        vi = valueAtArc( tvT, arcs[ i1 ] );
+	  Value        vj = valueAtBarycenter( tvT, f );
+	  VectorValue  gi = gradientAtArc( tvT, arcs[ i1 ] );  
+	  VectorValue  gj = gradientAtBarycenter( tvT, f );
+	  Scalar crisp_i1 = crispnessBeyondArc( tvT, arcs[ i1 ] );
 	  for ( int k = 0; k < dp.size(); ++k ) {
 	    PixelInformation pi = {
 	      combine( gi, gj, dt[ k ] ), // grad in pixel coordinates
 	      combine( vi, vj, dt[ k ] ), // value at pixel
-	      0.0 // 0 is linear gradient wrt to distance d, otherwise some 1/2*(1+atan(d pi/2)^(1/crisp)).
+	      boundv.first, // min value
+	      boundv.second, // max value
+	      combine( crisp_i1, crisp_f, dt[ k ] )
 	    };
 	    //	  if ( 
 	    if ( tvT.isInTriangle( f, rp[ k ] )
@@ -1868,8 +1911,10 @@ namespace DGtal {
       cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
       cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
       // Pre-compute soem information per faces (gradient, etc)
+      trace.info() << "Compute 2nd order information per face" << std::endl;
       tvT.compute2ndOrderInformation( discontinuities );
       // Resets the image that will be used to compute distance to contours.
+      trace.info() << "Draw contour lines" << std::endl;
       const Arc invalid_arc = tvT.T.nbArcs();
       for ( auto p : _draw_domain ) _arcimage.setValue( p, invalid_arc );
       // Compute and trace the contour lines of the image.
@@ -1882,6 +1927,7 @@ namespace DGtal {
 		     ? _pixinfo[ p ].v : Value(255,255,255) );
       }
       // Compute Voronoi map and distance transformation.
+      trace.info() << "Compute Voronoi diagram and evaluate all pixels" << std::endl;
       typedef ExactPredicateLpSeparableMetric<Z2i::Space, 2>  L2Metric;
       typedef VoronoiMap<Z2i::Space, OutsideContourLines, L2Metric > Voronoi2D;
       L2Metric l2;
@@ -1902,9 +1948,15 @@ namespace DGtal {
 		     - xy( RealVector( p[ 0 ], p[ 1 ] ) ) );
       Value       v = pi.v;
       VectorValue g = pi.grad;
+      Scalar      c = pi.crisp;
+      Scalar    lru = ru.norm();
+      ru /= lru;
+      // if ( c >= 1.0 ) lru = 1.0/(1.0+exp(-c*lru) );
+      if ( c >= 1.0 ) lru = 2.0/(1.0+exp(-c*lru) ) - 1.0;
+      ru *= lru;
       for ( Dimension m = 0; m < 3; ++m ) 
 	v[ m ] += 2.0 * ( ru[ 0 ]*g.x[ m ] + ru[ 1 ]*g.y[ m ] );
-      return v;
+      return v.inf( pi.max_v ).sup( pi.min_v );
     }
 
     
@@ -2135,10 +2187,10 @@ namespace DGtal {
     TVTriangulation::ColorContours c;
     c.first = med;
     std::vector<std::vector<TVTriangulation::RealPoint>>
-      bg = {{TVTriangulation::Point(0, height),
-	     TVTriangulation::Point(width, height),
-	     TVTriangulation::Point(width, 0 ),
-	     TVTriangulation::Point(0,0)}};
+      bg = {{TVTriangulation::RealPoint(0, height),
+	     TVTriangulation::RealPoint(width, height),
+	     TVTriangulation::RealPoint(width, 0 ),
+	     TVTriangulation::RealPoint(0,0)}};
     c.second = bg;
     res.push_back(c);
    
