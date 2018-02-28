@@ -255,7 +255,8 @@ namespace DGtal {
 
     /// Contains information per face for 2nd order reconstruction.
     struct FaceInformation {
-      VectorValue grad;
+      Value          v; ///< the value at the barycenter of the face.
+      VectorValue grad; ///< the constant gradient on the face.
       int        order; ///< Order according to TV discontinuity (0:highest)
       Scalar  cumul_tv; ///< cumulative percent of total TV energy
       Scalar      disc; ///< between 0 and 1, means that you consider the face as a discontinuity, more means that you do not consider this face as discontinuous.
@@ -1237,6 +1238,7 @@ namespace DGtal {
       for ( Face f = 0; f < T.nbFaces(); ++f ) {
 	auto V = T.verticesAroundFace( f );
 	_finfos[ f ].grad = grad( f, _u );
+	_finfos[ f ].v    = ( _u[ V[ 0 ] ] + _u[ V[ 1 ] ] + _u[ V[ 2 ] ] ) / 3.0;
       }	
       // We need first to sort faces according to their energyTV.
       std::vector<Face> tv_faces( T.nbFaces() );
@@ -1710,6 +1712,14 @@ namespace DGtal {
     Value valueAtArc( TVT& tvT, const Arc a ) {
       return 0.5 * ( tvT.u( tvT.T.head( a ) ) + tvT.u( tvT.T.tail( a ) ) );
     }
+    /// @return the value at the barycenter of a face \a f.
+    Value valueAtBarycenter( TVT& tvT, const Face f ) {
+      return tvT.finfo( f ).v;
+    }
+    /// @return the gradient at the barycenter of a face \a f.
+    VectorValue gradientAtBarycenter( TVT& tvT, const Face f ) {
+      return tvT.finfo( f ).grad;
+    }
     
     /// @return the gradient at an arc \a a.
     VectorValue gradientAtArc( TVT& tvT, const Arc a ) {
@@ -1741,6 +1751,7 @@ namespace DGtal {
       const RealPoint      b = tvT.barycenter( f );
       // if m = -1, this is an ordinary face, otherwise it is a contour face.
       if ( m >= 0 ) {
+	// This is a contour face, we have to connect two sides.
 	// Computes the control points of the Bezier curve
 	const Dimension i1 = (m+1)%3;
 	const Dimension j1 = (m+2)%3;
@@ -1761,15 +1772,17 @@ namespace DGtal {
 	  : CVector { 0, 0 };
 	// trace.info() << f << " " << fabs( M.determinant() ) << " " << S
 	// 	     << std::endl;
-	std::vector<RealPoint> bp = { x[ i1 ],
-				      x[ i1 ] + S[ 0 ] * u,
-				      x[ j1 ] + S[ 1 ] * v,
-				      x[ j1 ] };
+	std::vector<RealPoint> bp
+	  = { x[ i1 ],
+	      (S[0] != 0.0) ? (x[i1] + S[0]*u) : (0.66*x[i1] + 0.34*x[j1]),
+	      (S[1] != 0.0) ? (x[j1] + S[1]*v) : (0.34*x[i1] + 0.66*x[j1]),
+	      x[ j1 ] };
 	// Traces the digital Bezier curve.
 	BezierCurve<Space> B( bp );
-	std::vector<Point2i>  dp;
-	std::vector<Scalar>   dt;
-	B.trace( dig, dp, dt );
+	std::vector<Point2i>   dp;
+	std::vector<RealPoint> rp;
+	std::vector<Scalar>    dt;
+	B.trace( dig, dp, rp, dt );
 	Value       vi = valueAtArc( tvT, arcs[ i1 ] );
 	Value       vj = valueAtArc( tvT, arcs[ j1 ] );
 	VectorValue gi = gradientAtArc( tvT, arcs[ i1 ] );  
@@ -1781,18 +1794,52 @@ namespace DGtal {
 	    0.0 // 0 is linear gradient wrt to distance d, otherwise some 1/2*(1+atan(d pi/2)^(1/crisp)).
 	  };
 	  //	  if ( 
-	  if ( tvT.isInTriangle( f, xy( dp[ k ] ) )
+	  if ( tvT.isInTriangle( f, rp[ k ] )
 	       && _draw_domain.isInside( dp[ k ] ) ) {
 	    _pixinfo [ dp[ k ] ] = pi;
 	    _arcimage.setValue( dp[ k ],
 				( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
 	  }
 	}
-	_arcimage.setValue( Point( i( b[ 0 ] ), j( b[ 1 ] ) ), arcs[ i1 ] );
-	_arcimage.setValue( Point( i( x[ i1 ][ 0 ] ), j( x[ i1 ][ 1 ] ) ), arcs[ i1 ] );
-	_arcimage.setValue( Point( i( x[ j1 ][ 0 ] ), j( x[ j1 ][ 1 ] ) ), arcs[ j1 ] );
+	// Debug
+	// _arcimage.setValue( Point( i( b[ 0 ] ), j( b[ 1 ] ) ), arcs[ i1 ] );
+	// _arcimage.setValue( Point( i( x[ i1 ][ 0 ] ), j( x[ i1 ][ 1 ] ) ), arcs[ i1 ] );
+	// _arcimage.setValue( Point( i( x[ j1 ][ 0 ] ), j( x[ j1 ][ 1 ] ) ), arcs[ j1 ] );
       } else {
-	// todo
+	// This is a generic face, we connect the three sides to the barycenter.
+	for ( Dimension i1 = 0; i1 < 3; ++i1 ) {
+	  // Computes the control points of the Bezier curve
+	  const RealVector u = tangentAtArc( tvT, arcs[ i1 ] );
+	  const Scalar     a = 2.0 * ( x[ i1 ] - b ).dot( u );
+	  RealPoint       bb = ( fabs( a ) < 1e-4 )
+	    ? ( 0.5 * ( x[ i1 ] + b ) )
+	    : ( x[ i1 ] - ( ( x[ i1 ] - b ).dot( x[ i1 ] - b ) / a ) * u );
+	  if ( ! tvT.isInTriangle( f, bb ) ) bb = ( 0.5 * ( x[ i1 ] + b ) );
+	  std::vector<RealPoint> bp = { x[ i1 ], bb, b };
+	  // Traces the digital Bezier curve.
+	  BezierCurve<Space> B( bp );
+	  std::vector<Point2i>   dp;
+	  std::vector<RealPoint> rp;
+	  std::vector<Scalar>    dt;
+	  B.trace( dig, dp, rp, dt );
+	  Value       vi = valueAtArc( tvT, arcs[ i1 ] );
+	  Value       vj = valueAtBarycenter( tvT, f );
+	  VectorValue gi = gradientAtArc( tvT, arcs[ i1 ] );  
+	  VectorValue gj = gradientAtBarycenter( tvT, f );
+	  for ( int k = 0; k < dp.size(); ++k ) {
+	    PixelInformation pi = {
+	      combine( gi, gj, dt[ k ] ), // grad in pixel coordinates
+	      combine( vi, vj, dt[ k ] ), // value at pixel
+	      0.0 // 0 is linear gradient wrt to distance d, otherwise some 1/2*(1+atan(d pi/2)^(1/crisp)).
+	    };
+	    //	  if ( 
+	    if ( tvT.isInTriangle( f, rp[ k ] )
+		 && _draw_domain.isInside( dp[ k ] ) ) {
+	      _pixinfo [ dp[ k ] ] = pi;
+	      _arcimage.setValue( dp[ k ], arcs[ i1 ] );
+	    }
+	  }
+	}
       }
     }
     /**

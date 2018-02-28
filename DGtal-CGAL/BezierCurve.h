@@ -171,24 +171,30 @@ namespace DGtal
     /// Traces the digital points covered by the Bezier curve.
     ///
     /// @param[out] dp the vector of digital points traced by the Bezier curve.
+    /// @param[out] rp the vector of associated points traced by the Bezier curve.
     /// @param[out] dt the associated vector of parameters t, ie `dp[i]=B(t[i])`.
     void trace( const Digitizer& dig,
-		std::vector<Point>& dp, std::vector<Scalar>& dt ) const
+		std::vector<Point>& dp,
+		std::vector<RealPoint>& rp,
+		std::vector<Scalar>& dt ) const
     {
       std::vector<Scalar> dd;
-      trace( dig, dp, dt, dd, 0.0, 1.0 );
+      trace( dig, dp, rp, dt, dd, 0.0, 1.0 );
     }
     
     /// Traces the digital points covered by the Bezier curve.
     ///
     /// @param[out] dp the vector of digital points traced by the Bezier curve.
+    /// @param[out] rp the vector of associated points traced by the Bezier curve.
     /// @param[out] dt the associated vector of parameters t, ie `dp[i]=B(t[i])`.
     /// @param[out] dd the associated error in the digitization.
     ///
     /// @param[in] t0, t1 the current interval [t0,t1] in the
     /// recursion (should be called with [0,1]).
     void trace( const Digitizer& dig,
-		std::vector<Point>& dp, std::vector<Scalar>& dt,
+		std::vector<Point>& dp,
+		std::vector<RealPoint>& rp,
+		std::vector<Scalar>& dt,
 		std::vector<Scalar>& dd,
 		Scalar t0 = 0.0, Scalar t1 = 1.0 ) const
     {
@@ -203,9 +209,11 @@ namespace DGtal
 	  RealPoint rdr = RealPoint( dr[ 0 ], dr[ 1 ] );
 	  if ( dp.empty() || ( dr != dp.back() ) ) {
 	    dp.push_back( dr );
+	    rp.push_back( r );
 	    dd.push_back( (rdr - r).norm() );
 	    dt.push_back( t );
 	  } else if ( (rdr - r).norm() < dd.back() ) {
+	    rp.back() = r;
 	    dd.back() = (rdr - r).norm();
 	    dt.back() = t;
 	  }
@@ -224,8 +232,8 @@ namespace DGtal
 	}
 	Self bleft ( left  );
 	Self bright( right );
-	bleft .trace( dig, dp, dt, dd, t0, tm );
-	bright.trace( dig, dp, dt, dd, tm, t1 );
+	bleft .trace( dig, dp, rp, dt, dd, t0, tm );
+	bright.trace( dig, dp, rp, dt, dd, tm, t1 );
       }
     }
     
