@@ -109,13 +109,15 @@ namespace DGtal
 		 double disc_stiffness = 0.5,
 		 double disc_amplitude = 0.75 )
       : _redf( 1.0/255.0f ), _greenf( 1.0/255.0f ), _bluef( 1.0/255.0f ),
-	_x0( round( x0 ) ), _y0( round( y0 ) ),
-	_width( round( (x1-x0) * xfactor + 1 ) ),
-	_height(round( (y1-y0) * xfactor + 1 ) ),
+      _x0( round( x0 ) ), _y0( round( y0 ) ),
+      _width( round( (x1-x0) * xfactor + 1 ) ),
+      _height(round( (y1-y0) * xfactor + 1 ) ),
       _draw_domain( Point( _x0, _y0 ),
-                   Point( _x0 + _width - 2, _y0 + _height - 2 ) ),
-	_xf( xfactor ), _yf( yfactor ), _shading( shading ),
-	_color( color ), _st( disc_stiffness ), _am( disc_amplitude )
+		    Point( _x0 + _width - 1, _y0 + _height - 1 ) ),
+      /* _draw_domain( Point( _x0, _y0 ), */
+      /* 		    Point( _x0 + _width - 2, _y0 + _height - 2 ) ), */
+      _xf( xfactor ), _yf( yfactor ), _shading( shading ),
+      _color( color ), _st( disc_stiffness ), _am( disc_amplitude )
     {
       _surface = cairo_image_surface_create( CAIRO_FORMAT_ARGB32,
 					     _width, _height );

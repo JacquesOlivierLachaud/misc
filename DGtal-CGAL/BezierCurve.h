@@ -181,6 +181,81 @@ namespace DGtal
       std::vector<Scalar> dd;
       trace( dig, dp, rp, dt, dd, 0.0, 1.0 );
     }
+
+    /// Traces the digital points covered by the Bezier curve.
+    ///
+    /// @param[out] dp the vector of digital points traced by the Bezier curve.
+    /// @param[out] rp the vector of associated points traced by the Bezier curve.
+    /// @param[out] dt the associated vector of parameters t, ie `dp[i]=B(t[i])`.
+    void traceDirect( const Digitizer& dig,
+		      std::vector<Point>& dp,
+		      std::vector<RealPoint>& rp,
+		      std::vector<Scalar>& dt ) const
+    {
+      std::vector<Scalar> dd;
+      traceDirect( dig, dp, rp, dt, dd, 0.0, 1.0 );
+    }
+    
+    /// Traces the digital points covered by the Bezier curve.
+    ///
+    /// @param[out] dp the vector of digital points traced by the Bezier curve.
+    /// @param[out] rp the vector of associated points traced by the Bezier curve.
+    /// @param[out] dt the associated vector of parameters t, ie `dp[i]=B(t[i])`.
+    /// @param[out] dd the associated error in the digitization.
+    ///
+    /// @param[in] t0, t1 the current interval [t0,t1] in the
+    /// recursion (should be called with [0,1]).
+    void traceDirect( const Digitizer& dig,
+		      std::vector<Point>& dp,
+		      std::vector<RealPoint>& rp,
+		      std::vector<Scalar>& dt,
+		      std::vector<Scalar>& dd,
+		      Scalar t0 = 0.0, Scalar t1 = 1.0 ) const
+    {
+      // Add first point
+      const RealPoint rp0 = (*this)( t0 );
+      const RealPoint rp1 = (*this)( t1 );
+      addPoint( dig, rp0, t0, dp, rp, dt, dd );
+      Scalar delta_t = (t1 - t0) / ( (dig( rp1 ) - dig( rp0 )).norm() + 1.0 );
+      Scalar t = t0;
+      while ( t + delta_t < t1 ) {
+	RealPoint r = (*this)( t + delta_t );
+	Point    dr = dig( r );
+	auto      d = ( dr - dp.back() ).normInfinity();
+	if ( d <= 1 ) {
+	  addPoint( dig, r, t + delta_t, dp, rp, dt, dd );
+	  t += delta_t;
+	  // if ( d == 0 ) delta_t *= 1.5;
+	} else {
+	  delta_t *= 0.5;
+	}
+      }
+      addPoint( dig, rp1, t1, dp, rp, dt, dd );
+    }
+    
+    bool addPoint( const Digitizer& dig,
+		   const RealPoint& r,
+		   Scalar t,
+		   std::vector<Point>& dp,
+		   std::vector<RealPoint>& rp,
+		   std::vector<Scalar>& dt,
+		   std::vector<Scalar>& dd ) const
+    {
+      Point      dr = dig( r );
+      RealPoint rdr = RealPoint( dr[ 0 ], dr[ 1 ] );
+      if ( dp.empty() || ( dr != dp.back() ) ) {
+	dp.push_back( dr );
+	rp.push_back( r );
+	dd.push_back( (rdr - r).norm() );
+	dt.push_back( t );
+	return true;
+      } else if ( (rdr - r).norm() < dd.back() ) {
+	rp.back() = r;
+	dd.back() = (rdr - r).norm();
+	dt.back() = t;
+      }
+      return false;
+    }
     
     /// Traces the digital points covered by the Bezier curve.
     ///
@@ -203,7 +278,7 @@ namespace DGtal
       if ( isTwoPoints( dig, p, q ) ) {
 	Scalar        t = t0;
 	const Scalar ti = (t1-t0) / ( _bpoints.size() - 1 );
-	for ( Size i = 0; i < n; ++i ) {
+	for ( Size i = 0; i < n; i += n-1 ) {
 	  RealPoint   r = _bpoints[ i ];
 	  Point      dr = dig( r );
 	  RealPoint rdr = RealPoint( dr[ 0 ], dr[ 1 ] );
@@ -217,7 +292,7 @@ namespace DGtal
 	    dd.back() = (rdr - r).norm();
 	    dt.back() = t;
 	  }
-	  t += ti;
+	  t += ti * (n-1);
 	}
       } else {
 	const Scalar tm = (t0+t1)/2.0;

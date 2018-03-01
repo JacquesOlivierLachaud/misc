@@ -1507,6 +1507,7 @@ namespace DGtal {
     std::map< Point, PixelInformation > _pixinfo;
     ArcImage _arcimage_disc; ///< image storing discontinuities
     ArcImage _arcimage_simi; ///< image storing similarities
+    std::function<Point( RealPoint )>   _dig;
     
     /**
        Constructor. 
@@ -1526,6 +1527,9 @@ namespace DGtal {
       _up = Point( width, height );
       _arcimage_disc = ArcImage( _draw_domain );
       _arcimage_simi = ArcImage( _draw_domain );
+      _dig = [&] (const RealPoint& p) { RealPoint q = ij( p );
+					return Point( floor( q[ 0 ] ),
+						      floor( q[ 1 ] ) ); };
     }
     
     /// Destructor.
@@ -1788,7 +1792,7 @@ namespace DGtal {
     Scalar crispness( TVT& tvT, const Face f )  const {
       auto & info = tvT.finfo( f );
       Scalar discontinuities = ( info.cumul_tv == 0 )
-	? 0.0
+	? 1.0
 	: info.cumul_tv / info.disc;
       return std::min( 20.0,
 		       std::max( 0.0, 20.0*discontinuities*info.rel_tv ) ); 
@@ -1821,25 +1825,18 @@ namespace DGtal {
     // }
 
     void drawVertex( TVT& tvT, const Vertex vtx ) {
-      const std::function<Point( RealPoint )> dig
-	= [&] (const RealPoint& p) { RealPoint q = ij( p );
-				     return Point( round( q[ 0 ] ),
-						     round( q[ 1 ] ) ); };
       RealPoint  rpv = tvT.T.position( vtx );
       Value       vv = tvT.u( vtx );
-      Point       pv = dig( rpv );
+      Point       pv = _dig( rpv );
       _arcimage_simi.setValue( pv, 0 );
-      _pixinfo      [ pv ] = PixelInformation { VectorValue(), vv, vv, vv, 0.0 };
+      _pixinfo      [ pv ] = PixelInformation { VectorValue(), vv, vv, vv, 1.0 };
     }
 
-    void drawFace( TVT& tvT, const Face f ) {
+    void drawFace( TVT& tvT, const Face f, bool simi ) {
+      const Arc invalid_arc = tvT.T.nbArcs();
       typedef SimpleMatrix<Scalar,2,2>      Matrix;
       typedef typename Matrix::ColumnVector CVector;
       std::array<Scalar,3> s;
-      const std::function<Point( RealPoint )> dig
-	= [&] (const RealPoint& p) { RealPoint q = ij( p );
-				     return Point( round( q[ 0 ] ),
-						     round( q[ 1 ] ) ); };
       const auto        arcs = tvT.arcsAroundFace( f );
       const int            m = tvT.arcDissimilarities( s, arcs );
       const RealPoint x[ 3 ] = { tvT.contourPoint( arcs[ 0 ] ),
@@ -1849,7 +1846,7 @@ namespace DGtal {
       const auto      boundv = boundAtFace( tvT, f );
       const Scalar   crisp_f = crispness( tvT,f );
       // if m = -1, this is an ordinary face, otherwise it is a contour face.
-      if ( m >= 0 ) {
+      if ( simi && ( m >= 0 ) ) {
 	// Draw similarity arc
 	const Vertex         vtx1 = tvT.T.head( arcs[ m ] );
 	const Vertex         vtx2 = tvT.T.tail( arcs[ m ] );
@@ -1863,7 +1860,7 @@ namespace DGtal {
 	std::vector<Point>     dp;
 	std::vector<RealPoint> rp;
 	std::vector<Scalar>    dt;
-	B.trace( dig, dp, rp, dt );
+	B.traceDirect( _dig, dp, rp, dt );
 	for ( int k = 0; k < dp.size(); ++k ) {
 	  PixelInformation pi = {
 	    g, combine( v1, v2, dt[ k ] ), // value at pixel
@@ -1872,9 +1869,11 @@ namespace DGtal {
 	  if ( _draw_domain.isInside( dp[ k ] ) ) {
 	    _pixinfo [ dp[ k ] ] = pi;
 	    _arcimage_simi.setValue( dp[ k ], arcs[ m ] );
+	    _arcimage_disc.setValue( dp[ k ], invalid_arc );
 	  }
 	}
       }
+      if ( ! simi ) return;
       if ( m >= 0 ) {
 	// This is a contour face, we have to connect two sides.
 	// Computes the control points of the Bezier curve
@@ -1904,7 +1903,7 @@ namespace DGtal {
 	std::vector<Point>     dp;
 	std::vector<RealPoint> rp;
 	std::vector<Scalar>    dt;
-	B.trace( dig, dp, rp, dt );
+	B.traceDirect( _dig, dp, rp, dt );
 	Value        vi = valueAtArc( tvT, arcs[ i1 ] );
 	Value        vj = valueAtArc( tvT, arcs[ j1 ] );
 	VectorValue  gi = gradientAtArc( tvT, arcs[ i1 ] );  
@@ -1924,7 +1923,8 @@ namespace DGtal {
 	    // :  combine( crisp_f, crisp_j1, 2*(dt[ k ]-0.5) )
 	  };
 	  if ( tvT.isInTriangle( f, rp[ k ] )
-	       && _draw_domain.isInside( dp[ k ] ) ) {
+	       && _draw_domain.isInside( dp[ k ] ) 
+	       && _arcimage_simi( dp[ k ] ) == invalid_arc ) {
 	    _pixinfo [ dp[ k ] ] = pi;
 	    _arcimage_disc.setValue
 	      ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
@@ -1940,13 +1940,13 @@ namespace DGtal {
 	    ? ( 0.5 * ( x[ i1 ] + b ) )
 	    : ( x[ i1 ] - ( ( x[ i1 ] - b ).dot( x[ i1 ] - b ) / a ) * u );
 	  if ( ! tvT.isInTriangle( f, bb ) ) bb = ( 0.5 * ( x[ i1 ] + b ) );
-	  std::vector<RealPoint> bp = { x[ i1 ], bb, b };
+	  std::vector<RealPoint> bp = { b, bb, x[ i1 ] };
 	  // Traces the digital Bezier curve.
 	  BezierCurve<Space> B( bp );
 	  std::vector<Point>   dp;
 	  std::vector<RealPoint> rp;
 	  std::vector<Scalar>    dt;
-	  B.trace( dig, dp, rp, dt );
+	  B.traceDirect( _dig, dp, rp, dt );
 	  Value        vi = valueAtArc( tvT, arcs[ i1 ] );
 	  Value        vj = valueAtBarycenter( tvT, f );
 	  VectorValue  gi = gradientAtArc( tvT, arcs[ i1 ] );  
@@ -1954,19 +1954,18 @@ namespace DGtal {
 	  Scalar crisp_i1 = crispnessAtArc( tvT, arcs[ i1 ] );
 	  for ( int k = 0; k < dp.size(); ++k ) {
 	    PixelInformation pi = {
-	      combine( gi, gj, dt[ k ] ), // grad in pixel coordinates
-	      combine( vi, vj, dt[ k ] ), // value at pixel
+	      combine( gj, gi, dt[ k ] ), // grad in pixel coordinates
+	      combine( vj, vi, dt[ k ] ), // value at pixel
 	      boundv.first, // min value
 	      boundv.second, // max value
 	      crisp_f
 	      //combine( crisp_i1, crisp_f, dt[ k ] )
 	    };
-	    //	  if ( 
-	    if ( tvT.isInTriangle( f, rp[ k ] )
-		 && _draw_domain.isInside( dp[ k ] ) ) {
-	      _pixinfo [ dp[ k ] ] = pi;
-	      _arcimage_disc.setValue( dp[ k ], arcs[ i1 ] );
-	    }
+	    if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
+	    if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
+	    if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
+	    _pixinfo [ dp[ k ] ] = pi;
+	    _arcimage_disc.setValue( dp[ k ], arcs[ i1 ] );
 	  }
 	}
       }
@@ -2004,21 +2003,18 @@ namespace DGtal {
       }
       // Compute and trace the contour lines of the image.
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
-	drawFace( tvT, f );
+	drawFace( tvT, f, true );
+      for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
+	drawFace( tvT, f, false );
       for ( Vertex v = 0; v < tvT.T.nbVertices(); ++v )
 	drawVertex( tvT, v );
       // If you wish to display the obtained contour lines.
-      for ( auto p : _draw_domain ) {
-      	if ( ( _arcimage_disc( p ) != invalid_arc )
-	     || ( _arcimage_simi( p ) != invalid_arc ) )
-      	  drawPixel( p, ( _pixinfo.find( p ) != _pixinfo.end() )
-      		     ? _pixinfo[ p ].v : Value(255,255,255) );
-      }
-      // for ( Vertex v = 0; v < tvT.T.nbVertices(); ++v ) {
-      // 	RealPoint rpv = tvT.T.position( v );
-      // 	Value      vv = tvT.u( v );
-      // 	drawPixel( ij( rpv ), vv );
-      // }
+      // for ( auto p : _draw_domain ) {
+      // if ( ( _arcimage_disc( p ) != invalid_arc )
+      //      || ( _arcimage_simi( p ) != invalid_arc ) )
+      // drawPixel( p, ( _pixinfo.find( p ) != _pixinfo.end() )
+      // 	     ? _pixinfo[ p ].v : Value(255,255,255) );
+      //}
       // Compute Voronoi map and distance transformation.
       trace.info() << "Compute Voronoi diagram and evaluate all pixels" << std::endl;
       // typedef ExactPredicateLpSeparableMetric<Z2i::Space, 2>  L2Metric;
@@ -2046,12 +2042,12 @@ namespace DGtal {
     	}
       	const auto  cp_disc = voronoimap_disc( p ); // get closest contour points
       	const auto  cp_simi = voronoimap_simi( p ); // get closest contour points
-      	const Arc    a_disc = _arcimage_disc( cp_disc );  
-      	const Arc    a_simi = _arcimage_simi( cp_simi );  
+      	// const Arc    a_disc = _arcimage_disc( cp_disc );  
+      	// const Arc    a_simi = _arcimage_simi( cp_simi );  
       	const auto& pi_disc = _pixinfo[ cp_disc ];
       	const auto& pi_simi = _pixinfo[ cp_simi ];
-    	const Value  v_disc = evaluateValue( p, cp_disc );
-    	const Value  v_simi = evaluateValue( p, cp_simi );
+    	// const Value  v_disc = evaluateValue( p, cp_disc );
+    	// const Value  v_simi = evaluateValue( p, cp_simi );
     	const Scalar d_disc = evaluateWeight( p, cp_disc );
     	const Scalar d_simi = evaluateWeight( p, cp_simi );
     	const Scalar w_disc = std::max(0.0, 1.0 - std::min( d_disc, 0.99 ));
@@ -2063,6 +2059,12 @@ namespace DGtal {
       	// drawPixel( p, projectValue( tvT,
       	// 			    tvT.T.faceAroundArc( a ),
       	// 			    evaluateValue( p, cp ) ) );
+      }
+      for ( auto p : _draw_domain ) {
+      	if ( _arcimage_disc( p ) != invalid_arc )
+	  drawPixel( p, Value(255,0,0) );
+      	if ( _arcimage_simi( p ) != invalid_arc )
+	  drawPixel( p, Value(0,0,255) );
       }
       // typedef ExactPredicateLpSeparableMetric<Z2i::Space, 2>  L2Metric;
       // typedef VoronoiMap<Z2i::Space, OutsideLines, L2Metric > Voronoi2D;
@@ -2088,7 +2090,8 @@ namespace DGtal {
 		     - xy( RealVector( p[ 0 ], p[ 1 ] ) ) );
       Scalar      c = pi.crisp;
       Scalar    lru = ru.norm();
-      return ( c >= 0.0 ) ? 2.0/(1.0+exp(-c*lru) ) - 1.0 : lru;
+      //return 2.0 * lru;
+      return 2.0 *  ( ( c >= 1.0 ) ? 2.0/(1.0+exp(-c*lru) ) - 1.0 : lru );
     }
     
     Value evaluateValue( Point p, Point cp ) {
