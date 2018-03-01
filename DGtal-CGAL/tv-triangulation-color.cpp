@@ -342,12 +342,18 @@ namespace DGtal {
     /// @return the regularized barycenter at face f.
     const RealPoint& barycenter( const Face f ) const
     { return _b[ f ]; }
+
     /// @return the contour point at arc \a a.
     RealPoint contourPoint( const Arc a ) const
     {
       RealPoint B = T.position( T.head( a ) );
       RealPoint A = T.position( T.tail( a ) );
       return ( 1.0 - _t[ a ] ) * A + _t[ a ] * B;
+    }
+    /// @return the contour point at arc \a a.
+    RealPoint edgeContourPoint( const Arc a ) const
+    {
+      return 0.5 * ( contourPoint( a ) + contourPoint( T.opposite( a ) ) );
     }
     
     /// invalidate a vertex by using specific value (to process image border).
@@ -1450,6 +1456,24 @@ namespace DGtal {
 	&&   ( 0 <= bc[ 2 ] ) && ( bc[ 2 ] <= 1 );
     }
 
+    /// @return 'true' iff the given barycentric coordinates \a bc
+    /// indicates a point inside or on the boundary of the triangle.
+    bool isApproximatelyInTriangle( const Face f, const RealPoint& p,
+				    Scalar tol = 0.05 ) const
+    {
+      const auto     V = T.verticesAroundFace( f );
+      RealPoint b[ 3 ] = { T.position( V[ 0 ] ),
+			   T.position( V[ 1 ] ),
+			   T.position( V[ 2 ] ) };
+      Value         bc = { det( b[ 1 ] - p, b[ 2 ] - p ),
+			   det( b[ 2 ] - p, b[ 0 ] - p ),
+			   det( b[ 0 ] - p, b[ 1 ] - p ) };
+      bc /= ( bc[ 0 ] + bc[ 1 ] + bc[ 2 ] );
+      return ( -tol <= bc[ 0 ] ) && ( bc[ 0 ] <= 1.0+tol )
+	&&   ( -tol <= bc[ 1 ] ) && ( bc[ 1 ] <= 1.0+tol )
+	&&   ( -tol <= bc[ 2 ] ) && ( bc[ 2 ] <= 1.0+tol );
+    }
+
   };
 
   // Useful function for viewing triangulations.
@@ -1839,37 +1863,40 @@ namespace DGtal {
       std::array<Scalar,3> s;
       const auto        arcs = tvT.arcsAroundFace( f );
       const int            m = tvT.arcDissimilarities( s, arcs );
-      const RealPoint x[ 3 ] = { tvT.contourPoint( arcs[ 0 ] ),
-				 tvT.contourPoint( arcs[ 1 ] ),
-				 tvT.contourPoint( arcs[ 2 ] ) };
+      const RealPoint x[ 3 ] = { tvT.edgeContourPoint( arcs[ 0 ] ),
+				 tvT.edgeContourPoint( arcs[ 1 ] ),
+				 tvT.edgeContourPoint( arcs[ 2 ] ) };
       const RealPoint      b = tvT.barycenter( f );
       const auto      boundv = boundAtFace( tvT, f );
       const Scalar   crisp_f = crispness( tvT,f );
       // if m = -1, this is an ordinary face, otherwise it is a contour face.
-      if ( simi && ( m >= 0 ) ) {
-	// Draw similarity arc
-	const Vertex         vtx1 = tvT.T.head( arcs[ m ] );
-	const Vertex         vtx2 = tvT.T.tail( arcs[ m ] );
-	std::vector<RealPoint> bp = { tvT.T.position( vtx1 ),
-				      tvT.T.position( vtx2 ) };
-	const Value            v1 = tvT.u( vtx1 );
-	const Value            v2 = tvT.u( vtx2 );
-	const VectorValue       g = gradientAtArc( tvT, arcs[ m ] );  
-	// Traces the digital Bezier curve.
-	BezierCurve<Space> B( bp );
-	std::vector<Point>     dp;
-	std::vector<RealPoint> rp;
-	std::vector<Scalar>    dt;
-	B.traceDirect( _dig, dp, rp, dt );
-	for ( int k = 0; k < dp.size(); ++k ) {
-	  PixelInformation pi = {
-	    g, combine( v1, v2, dt[ k ] ), // value at pixel
-	    v1.inf( v2 ), v1.sup( v2 ), 0.0
-	  };
-	  if ( _draw_domain.isInside( dp[ k ] ) ) {
-	    _pixinfo [ dp[ k ] ] = pi;
-	    _arcimage_simi.setValue( dp[ k ], arcs[ m ] );
-	    _arcimage_disc.setValue( dp[ k ], invalid_arc );
+      if ( simi ) {
+	for ( Dimension mk = 0; mk < 3; ++mk ) {
+	  if ( s[ mk ] != 0.0 ) continue;
+	  // Draw similarity arc
+	  const Vertex         vtx1 = tvT.T.head( arcs[ mk ] );
+	  const Vertex         vtx2 = tvT.T.tail( arcs[ mk ] );
+	  std::vector<RealPoint> bp = { tvT.T.position( vtx1 ),
+					tvT.T.position( vtx2 ) };
+	  const Value            v1 = tvT.u( vtx1 );
+	  const Value            v2 = tvT.u( vtx2 );
+	  const VectorValue       g = gradientAtArc( tvT, arcs[ mk ] );  
+	  // Traces the digital Bezier curve.
+	  BezierCurve<Space> B( bp );
+	  std::vector<Point>     dp;
+	  std::vector<RealPoint> rp;
+	  std::vector<Scalar>    dt;
+	  B.traceDirect( _dig, dp, rp, dt );
+	  for ( int k = 0; k < dp.size(); ++k ) {
+	    PixelInformation pi = {
+	      g, combine( v1, v2, dt[ k ] ), // value at pixel
+	      v1.inf( v2 ), v1.sup( v2 ), 0.0
+	    };
+	    if ( _draw_domain.isInside( dp[ k ] ) ) {
+	      _pixinfo [ dp[ k ] ] = pi;
+	      _arcimage_simi.setValue( dp[ k ], arcs[ mk ] );
+	      _arcimage_disc.setValue( dp[ k ], invalid_arc );
+	    }
 	  }
 	}
       }
@@ -1922,7 +1949,7 @@ namespace DGtal {
 	    // ( dt[ k ] < 0.5 ) ? combine( crisp_i1, crisp_f, 2*dt[ k ] )
 	    // :  combine( crisp_f, crisp_j1, 2*(dt[ k ]-0.5) )
 	  };
-	  if ( tvT.isInTriangle( f, rp[ k ] )
+	  if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
 	       && _draw_domain.isInside( dp[ k ] ) 
 	       && _arcimage_simi( dp[ k ] ) == invalid_arc ) {
 	    _pixinfo [ dp[ k ] ] = pi;
@@ -1932,7 +1959,17 @@ namespace DGtal {
 	}
       } else {
 	// This is a generic face, we connect the three sides to the barycenter.
+	const Point  db = _dig( b );
+	Value        vj = valueAtBarycenter( tvT, f );
+	VectorValue  gj = gradientAtBarycenter( tvT, f );
+	PixelInformation pi = { gj, vj, vj, vj, crisp_f };
+	if ( _draw_domain.isInside( db )
+	     && ( _arcimage_simi( db ) == invalid_arc ) ) {
+	  _pixinfo [ db ] = pi;
+	  _arcimage_disc.setValue( db, 0 );
+	}
 	for ( Dimension i1 = 0; i1 < 3; ++i1 ) {
+	  if ( s[ i1 ] == 0.0 ) continue;
 	  // Computes the control points of the Bezier curve
 	  const RealVector u = tangentAtArc( tvT, arcs[ i1 ] );
 	  const Scalar     a = 2.0 * ( x[ i1 ] - b ).dot( u );
@@ -1948,9 +1985,7 @@ namespace DGtal {
 	  std::vector<Scalar>    dt;
 	  B.traceDirect( _dig, dp, rp, dt );
 	  Value        vi = valueAtArc( tvT, arcs[ i1 ] );
-	  Value        vj = valueAtBarycenter( tvT, f );
 	  VectorValue  gi = gradientAtArc( tvT, arcs[ i1 ] );  
-	  VectorValue  gj = gradientAtBarycenter( tvT, f );
 	  Scalar crisp_i1 = crispnessAtArc( tvT, arcs[ i1 ] );
 	  for ( int k = 0; k < dp.size(); ++k ) {
 	    PixelInformation pi = {
@@ -2060,12 +2095,13 @@ namespace DGtal {
       	// 			    tvT.T.faceAroundArc( a ),
       	// 			    evaluateValue( p, cp ) ) );
       }
-      for ( auto p : _draw_domain ) {
-      	if ( _arcimage_disc( p ) != invalid_arc )
-	  drawPixel( p, Value(255,0,0) );
-      	if ( _arcimage_simi( p ) != invalid_arc )
-	  drawPixel( p, Value(0,0,255) );
-      }
+      // To display contour lines
+      // for ( auto p : _draw_domain ) {
+      // 	if ( _arcimage_disc( p ) != invalid_arc )
+      // 	  drawPixel( p, Value(255,0,0) );
+      // 	if ( _arcimage_simi( p ) != invalid_arc )
+      // 	  drawPixel( p, Value(0,0,255) );
+      // }
       // typedef ExactPredicateLpSeparableMetric<Z2i::Space, 2>  L2Metric;
       // typedef VoronoiMap<Z2i::Space, OutsideLines, L2Metric > Voronoi2D;
       // L2Metric l2;
