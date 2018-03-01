@@ -2077,20 +2077,19 @@ namespace DGtal {
     	}
       	const auto  cp_disc = voronoimap_disc( p ); // get closest contour points
       	const auto  cp_simi = voronoimap_simi( p ); // get closest contour points
-      	// const Arc    a_disc = _arcimage_disc( cp_disc );  
-      	// const Arc    a_simi = _arcimage_simi( cp_simi );  
       	const auto& pi_disc = _pixinfo[ cp_disc ];
       	const auto& pi_simi = _pixinfo[ cp_simi ];
+	const auto  weights = evaluateWeights( p, cp_disc, cp_simi );
+      	drawPixel( p, weights.first * pi_disc.v + weights.second * pi_simi.v );
     	// const Value  v_disc = evaluateValue( p, cp_disc );
     	// const Value  v_simi = evaluateValue( p, cp_simi );
-    	const Scalar d_disc = evaluateWeight( p, cp_disc );
-    	const Scalar d_simi = evaluateWeight( p, cp_simi );
-    	const Scalar w_disc = std::max(0.0, 1.0 - std::min( d_disc, 0.99 ));
-    	const Scalar w_simi = std::max(0.0, 1.0 - std::min( d_simi, 0.99 ));
-	
-      	drawPixel( p,
-    		   (w_disc * pi_disc.v + w_simi * pi_simi.v )
-    		   / ( w_disc+w_simi ) );
+    	// const Scalar d_disc = evaluateWeight( p, cp_disc );
+    	// const Scalar d_simi = evaluateWeight( p, cp_simi );
+    	// const Scalar w_disc = std::max(0.0, 1.0 - std::min( d_disc, 0.99 ));
+    	// const Scalar w_simi = std::max(0.0, 1.0 - std::min( d_simi, 0.99 ));
+      	// drawPixel( p,
+    	// 	   (w_disc * pi_disc.v + w_simi * pi_simi.v )
+    	// 	   / ( w_disc+w_simi ) );
       	// drawPixel( p, projectValue( tvT,
       	// 			    tvT.T.faceAroundArc( a ),
       	// 			    evaluateValue( p, cp ) ) );
@@ -2128,6 +2127,17 @@ namespace DGtal {
       Scalar    lru = ru.norm();
       //return 2.0 * lru;
       return 2.0 *  ( ( c >= 1.0 ) ? 2.0/(1.0+exp(-c*lru) ) - 1.0 : lru );
+    }
+    
+    std::pair<Scalar,Scalar>
+    evaluateWeights( Point p, Point cp_disc, Point cp_simi ) {
+      PixelInformation& pi_disc = _pixinfo[ cp_disc ];
+      PixelInformation& pi_simi = _pixinfo[ cp_simi ];
+      Scalar  ldisc = (cp_disc - p).norm();
+      Scalar  lsimi = (cp_simi - p).norm();
+      ldisc        *= pi_disc.crisp + 1.0;
+      Scalar      l = ldisc + lsimi;
+      return std::make_pair( lsimi / l, ldisc / l );
     }
     
     Value evaluateValue( Point p, Point cp ) {
