@@ -2051,7 +2051,7 @@ namespace DGtal {
       // 	     ? _pixinfo[ p ].v : Value(255,255,255) );
       //}
       // Compute Voronoi map and distance transformation.
-      trace.info() << "Compute Voronoi diagram and evaluate all pixels" << std::endl;
+      trace.info() << "Compute Voronoi diagram of discontinuity lines" << std::endl;
       // typedef ExactPredicateLpSeparableMetric<Z2i::Space, 2>  L2Metric;
       // typedef VoronoiMap<Z2i::Space, OutsideLines, L2Metric > Voronoi2D;
       // L2Metric l2;
@@ -2063,12 +2063,14 @@ namespace DGtal {
       while ( ! voronoimap_disc.finished() )
     	voronoimap_disc.expand( out_similines );
       voronoimap_disc.computeRoots();
+      trace.info() << "Compute Voronoi diagram of similarity lines" << std::endl;
       BreadthFirstVisitorWithParent<Space> voronoimap_simi
     	( _arcimage_simi, [&] ( Arc a ) { return a != invalid_arc; } );
       while ( ! voronoimap_simi.finished() )
     	voronoimap_simi.expand( out_disclines );
       voronoimap_simi.computeRoots();
       // Voronoi2D voronoimap_simi( _draw_domain, out_similines, l2 );
+      trace.info() << "Interpolate value between lines" << std::endl;
       for ( auto p : _draw_domain ) {
       	if ( ( _arcimage_disc( p ) != invalid_arc )
     	     || ( _arcimage_simi( p ) != invalid_arc ) ) {
