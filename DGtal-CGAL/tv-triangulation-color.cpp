@@ -1553,6 +1553,7 @@ namespace DGtal {
     Point _up;
 
     PixelInformationImage _pixinfo; ///< image storing pixel values/crispness.
+    PixelInformationImage _pixinfo_disc; ///< image storing pix values/crispness.
     ArcImage              _arcimage_disc; ///< image storing discontinuities
     ArcImage              _arcimage_simi; ///< image storing similarities
     OutputImage           _output; ///< image storing output pixel
@@ -1570,6 +1571,7 @@ namespace DGtal {
       : Base( x0, y0, width, height, xfactor, yfactor, shading, color,
 	      disc_stiffness, disc_amplitude ),
 	_pixinfo      ( Domain( Point(), Point() ) ),
+	_pixinfo_disc ( Domain( Point(), Point() ) ),
 	_arcimage_disc( Domain( Point(), Point() ) ),
 	_arcimage_simi( Domain( Point(), Point() ) ),
 	_output       ( Domain( Point(), Point() ) )
@@ -1577,6 +1579,7 @@ namespace DGtal {
       _lo            = Point( x0, y0 );
       _up            = Point( width, height );
       _pixinfo       = PixelInformationImage( _draw_domain );
+      _pixinfo_disc  = PixelInformationImage( _draw_domain );
       _arcimage_disc = ArcImage( _draw_domain );
       _arcimage_simi = ArcImage( _draw_domain );
       _output        = OutputImage( _draw_domain );
@@ -1970,12 +1973,12 @@ namespace DGtal {
 	  // if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
 	  _arcimage_disc.setValue
 	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
-	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
+	  //if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
 	  PixelInformation pi = {
 	    combine( vi, vj, dt[ k ] ), // value at pixel
 	    combine( ci, cj, dt[ k ] )  // crisp_f
 	  };
-	  _pixinfo.setValue( dp[ k ], pi );
+	  _pixinfo_disc.setValue( dp[ k ], pi );
 	}
 	for ( int k = dp.size() / 2 + 1; k < dp.size(); ++k ) {
 	  if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
@@ -1983,12 +1986,12 @@ namespace DGtal {
 	  // if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
 	  _arcimage_disc.setValue
 	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
-	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
+	  //if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
 	  PixelInformation pi = {
 	    combine( vi, vj, dt[ k ] ), // value at pixel
 	    combine( ci, cj, dt[ k ] )  // crisp_f
 	  };
-	  _pixinfo.setValue( dp[ k ], pi );
+	  _pixinfo_disc.setValue( dp[ k ], pi );
 	}
       } else {
 	// This is a generic face, we connect the three sides to the barycenter.
@@ -1997,10 +2000,10 @@ namespace DGtal {
 	Value        vj = valueAtBarycenter( tvT, f );
 	if ( _draw_domain.isInside( db ) ) {
 	  _arcimage_disc.setValue( db, 0 );
-	  if ( _arcimage_simi( db ) == invalid_arc ) {
+	  //if ( _arcimage_simi( db ) == invalid_arc ) {
 	    PixelInformation pi = { vj, crisp_f };
-	    _pixinfo.setValue( db, pi );
-	  }
+	    _pixinfo_disc.setValue( db, pi );
+	    //}
 	}
 	for ( Dimension i1 = 0; i1 < 3; ++i1 ) {
 	  if ( tvT.arcDissimilarity( arcs[ i1 ] ) == 0.0 ) continue;
@@ -2024,12 +2027,12 @@ namespace DGtal {
 	    if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
 	    if ( ! tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 ) ) continue;
 	    _arcimage_disc.setValue( dp[ k ], arcs[ i1 ] );
-	    if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
+	    //if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
 	    PixelInformation pi = {
 	      combine( vj, vi, dt[ k ] ), // value at pixel
 	      combine( crisp_f, crisp_i1, dt[ k ] )
 	    };
-	    _pixinfo.setValue( dp[ k ], pi );
+	    _pixinfo_disc.setValue( dp[ k ], pi );
 	  }
 	}
       }
@@ -2096,11 +2099,16 @@ namespace DGtal {
       voronoimap_simi.computeRoots();
       trace.info() << "Interpolate value between lines" << std::endl;
       for ( auto p : _draw_domain ) {
-      	if ( ( _arcimage_disc( p ) != invalid_arc )
-    	     || ( _arcimage_simi( p ) != invalid_arc ) ) {
-    	  drawPixelInOutput( p, _pixinfo( p ).v );
-    	  continue;
-    	}
+      	// if ( ( _arcimage_disc( p ) != invalid_arc )
+    	//      && ( _arcimage_simi( p ) != invalid_arc ) ) {
+    	//   drawPixelInOutput( p, _pixinfo( p ).v );
+    	//   continue;
+    	// }
+      	// if ( ( _arcimage_disc( p ) != invalid_arc )
+    	//      || ( _arcimage_simi( p ) != invalid_arc ) ) {
+    	//   drawPixelInOutput( p, _pixinfo( p ).v );
+    	//   continue;
+    	// }
       	const auto  cp_disc = voronoimap_disc( p ); // get closest contour points
       	const auto  cp_simi = voronoimap_simi( p ); // get closest contour points
 	drawPixelInOutput( p, evaluateValue( p, cp_disc, cp_simi ) );
@@ -2161,7 +2169,7 @@ namespace DGtal {
     
     Value
     evaluateValue( Point p, Point cp_disc, Point cp_simi ) {
-      const PixelInformation& pi_disc = _pixinfo( cp_disc );
+      const PixelInformation& pi_disc = _pixinfo_disc( cp_disc );
       const PixelInformation& pi_simi = _pixinfo( cp_simi );
       Scalar  ldisc = (cp_disc - p).norm();
       Scalar  lsimi = (cp_simi - p).norm();
