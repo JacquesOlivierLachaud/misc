@@ -2087,28 +2087,29 @@ namespace DGtal {
       OutsideLines out_disclines( _arcimage_disc, invalid_arc );
       OutsideLines out_similines( _arcimage_simi, invalid_arc );
       BreadthFirstVisitorWithParent<Space> voronoimap_disc
-    	( _arcimage_disc, [&] ( Arc a ) { return a != invalid_arc; } );
+    	( _draw_domain,
+	  [&] ( Point p ) {
+	  return _arcimage_disc( p ) != invalid_arc
+	    &&  _arcimage_simi( p ) == invalid_arc; } );
       while ( ! voronoimap_disc.finished() )
     	voronoimap_disc.expand( out_similines );
       voronoimap_disc.computeRoots();
       trace.info() << "Compute Voronoi diagram of similarity lines" << std::endl;
       BreadthFirstVisitorWithParent<Space> voronoimap_simi
-    	( _arcimage_simi, [&] ( Arc a ) { return a != invalid_arc; } );
+    	( _draw_domain,
+	  [&] ( Point p ) {
+	  return _arcimage_simi( p ) != invalid_arc
+	    &&  _arcimage_disc( p ) == invalid_arc; } );
       while ( ! voronoimap_simi.finished() )
     	voronoimap_simi.expand( out_disclines );
       voronoimap_simi.computeRoots();
       trace.info() << "Interpolate value between lines" << std::endl;
       for ( auto p : _draw_domain ) {
-      	// if ( ( _arcimage_disc( p ) != invalid_arc )
-    	//      && ( _arcimage_simi( p ) != invalid_arc ) ) {
-    	//   drawPixelInOutput( p, _pixinfo( p ).v );
-    	//   continue;
-    	// }
-      	// if ( ( _arcimage_disc( p ) != invalid_arc )
-    	//      || ( _arcimage_simi( p ) != invalid_arc ) ) {
-    	//   drawPixelInOutput( p, _pixinfo( p ).v );
-    	//   continue;
-    	// }
+      	if ( ( _arcimage_disc( p ) != invalid_arc )
+	     && ( _arcimage_simi( p ) != invalid_arc ) ) {
+    	   drawPixelInOutput( p, _pixinfo( p ).v );
+    	   continue;
+	}
       	const auto  cp_disc = voronoimap_disc( p ); // get closest contour points
       	const auto  cp_simi = voronoimap_simi( p ); // get closest contour points
 	drawPixelInOutput( p, evaluateValue( p, cp_disc, cp_simi ) );

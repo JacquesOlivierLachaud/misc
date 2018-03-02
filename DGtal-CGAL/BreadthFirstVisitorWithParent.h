@@ -164,6 +164,17 @@ namespace DGtal
     template <typename Image, typename VertexPredicate>
     BreadthFirstVisitorWithParent( const Image& image,
 				   const VertexPredicate& vPred );
+    /**
+       Constructor from domain and a predicate telling if a vertex
+       belongs to the intial core of the breadth first
+       traversal. These vertices will all have a topological distance
+       0.
+
+       @tparam PointPredicate the type of a predicate Point toward bool
+    */
+    template <typename PointPredicate>
+    BreadthFirstVisitorWithParent( Domain aDomain,
+				   const PointPredicate& pPred );
 
 
     /**
