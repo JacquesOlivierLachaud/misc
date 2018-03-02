@@ -1882,63 +1882,28 @@ namespace DGtal {
     }
 
     
-    void drawFace( TVT& tvT, const Face f, bool simi ) {
-      const Arc invalid_arc = tvT.T.nbArcs();
+    void drawFaceDiscontinuities( TVT& tvT, const Face f ) {
       typedef SimpleMatrix<Scalar,2,2>      Matrix;
       typedef typename Matrix::ColumnVector CVector;
       std::array<Scalar,3> s;
+      const Arc  invalid_arc = tvT.T.nbArcs();
       const auto        arcs = tvT.arcsAroundFace( f );
       const int            m = tvT.arcDissimilarities( s, arcs );
       const RealPoint x[ 3 ] = { tvT.edgeContourPoint( arcs[ 0 ] ),
 				 tvT.edgeContourPoint( arcs[ 1 ] ),
 				 tvT.edgeContourPoint( arcs[ 2 ] ) };
       const RealPoint      b = tvT.barycenter( f );
-      const auto      boundv = boundAtFace( tvT, f );
       const Scalar   crisp_f = crispness( tvT,f );
-      // if m = -1, this is an ordinary face, otherwise it is a contour face.
-      if ( simi ) {
-	for ( Dimension mk = 0; mk < 3; ++mk ) {
-	  if ( s[ mk ] != 0.0 ) continue;
-	  // Draw similarity arc
-	  const Vertex         vtx1 = tvT.T.head( arcs[ mk ] );
-	  const Vertex         vtx2 = tvT.T.tail( arcs[ mk ] );
-	  std::vector<RealPoint> bp = { tvT.T.position( vtx1 ),
-					tvT.T.position( vtx2 ) };
-	  const Value            v1 = tvT.u( vtx1 );
-	  const Value            v2 = tvT.u( vtx2 );
-	  // const VectorValue       g = gradientAtArc( tvT, arcs[ mk ] );  
-	  // Traces the digital Bezier curve.
-	  BezierCurve<Space> B( bp );
-	  std::vector<Point>     dp;
-	  std::vector<RealPoint> rp;
-	  std::vector<Scalar>    dt;
-	  B.traceDirect( _dig, dp, rp, dt );
-	  for ( int k = 0; k < dp.size(); ++k ) {
-	    if ( _draw_domain.isInside( dp[ k ] ) ) {
-	      PixelInformation pi = {
-		combine( v1, v2, dt[ k ] ), // value at pixel
-		1.0
-	      };
-	      _pixinfo.setValue( dp[ k ], pi );
-	      _arcimage_simi.setValue( dp[ k ], arcs[ mk ] );
-	      _arcimage_disc.setValue( dp[ k ], invalid_arc );
-	    }
-	  }
-	}
-      }
-      if ( simi ) return;
       if ( m >= 0 ) {
 	// This is a contour face, we have to connect two sides.
 	// Computes the control points of the Bezier curve
 	const Dimension i1 = (m+1)%3;
 	const Dimension j1 = (m+2)%3;
-	// const auto boundi1 = boundAtArc( tvT, arcs[ i1 ] );
-	// const auto boundj1 = boundAtArc( tvT, arcs[ j1 ] );
 	const RealVector u = tangentAtArc( tvT, arcs[ i1 ] );
 	const RealVector v = tangentAtArc( tvT, arcs[ j1 ] );
-	auto tu = tvT.intersect( x[ i1 ], x[ i1 ] + u,
-				 x[ j1 ], x[ j1 ] + v );
-	RealPoint bb = 0.55 * b + 0.45 * ( x[ i1 ] + tu.first * u );
+	const auto      tu = tvT.intersect( x[ i1 ], x[ i1 ] + u,
+					    x[ j1 ], x[ j1 ] + v );
+	RealPoint       bb = 0.55 * b + 0.45 * ( x[ i1 ] + tu.first * u );
 	if ( ! tvT.isInTriangle( f, bb ) ) bb = b;
 	Matrix  M = { u[ 0 ], v[ 0 ], u[ 1 ], v[ 1 ] };
 	CVector R = { ( 8.0*bb[ 0 ] - 4.0*( x[ i1 ][ 0 ]+x[ j1 ][ 0 ] ) ) / 3.0,
@@ -1959,10 +1924,6 @@ namespace DGtal {
 	B.traceDirect( _dig, dp, rp, dt );
 	Value        vi = valueAtArc( tvT, arcs[ i1 ] );
 	Value        vj = valueAtArc( tvT, arcs[ j1 ] );
-	// VectorValue  gi = gradientAtArc( tvT, arcs[ i1 ] );  
-	// VectorValue  gj = gradientAtArc( tvT, arcs[ j1 ] );
-	// Scalar crisp_i1 = crispnessAtArc( tvT, arcs[ i1 ] );
-	// Scalar crisp_j1 = crispnessAtArc( tvT, arcs[ j1 ] );
 	for ( int k = 0; k < dp.size(); ++k ) {
 	  if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
 	       && _draw_domain.isInside( dp[ k ] ) 
@@ -1978,9 +1939,9 @@ namespace DGtal {
 	}
       } else {
 	// This is a generic face, we connect the three sides to the barycenter.
+	// We draw the barycenter in all cases.
 	const Point  db = _dig( b );
 	Value        vj = valueAtBarycenter( tvT, f );
-	// VectorValue  gj = gradientAtBarycenter( tvT, f );
 	if ( _draw_domain.isInside( db )
 	     && ( _arcimage_simi( db ) == invalid_arc ) ) {
 	  PixelInformation pi = { vj, crisp_f };
@@ -1998,13 +1959,12 @@ namespace DGtal {
 	  if ( ! tvT.isInTriangle( f, bb ) ) bb = ( 0.5 * ( x[ i1 ] + b ) );
 	  std::vector<RealPoint> bp = { b, bb, x[ i1 ] };
 	  // Traces the digital Bezier curve.
-	  BezierCurve<Space> B( bp );
-	  std::vector<Point>   dp;
+	  BezierCurve<Space>      B( bp );
+	  std::vector<Point>     dp;
 	  std::vector<RealPoint> rp;
 	  std::vector<Scalar>    dt;
 	  B.traceDirect( _dig, dp, rp, dt );
 	  Value        vi = valueAtArc( tvT, arcs[ i1 ] );
-	  VectorValue  gi = gradientAtArc( tvT, arcs[ i1 ] );  
 	  Scalar crisp_i1 = crispnessAtArc( tvT, arcs[ i1 ] );
 	  for ( int k = 0; k < dp.size(); ++k ) {
 	    if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
@@ -2056,10 +2016,9 @@ namespace DGtal {
       }
       // Compute and trace the contour lines of the image.
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
-	//drawFace( tvT, f, true );
 	drawFaceSimilarities( tvT, f );
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
-	drawFace( tvT, f, false );
+	drawFaceDiscontinuities( tvT, f );
       for ( Vertex v = 0; v < tvT.T.nbVertices(); ++v )
 	drawVertex( tvT, v );
       // Compute Voronoi map and distance transformation.
