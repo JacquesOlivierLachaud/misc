@@ -309,6 +309,9 @@ namespace DGtal {
     std::vector<Metric>  _metrics;
     /// Contains information per face for 2nd order reconstruction.
     std::vector<FaceInformation> _finfos;
+
+    /// Contains arc similarities.
+    std::vector<Scalar>   _arc_dissimilarities; 
     
     // Data needed for vectorization. Each contour is a succession of
     // arc, where head points outside.
@@ -334,6 +337,9 @@ namespace DGtal {
       ASSERT( f < _finfos.size() );
       return _finfos[ f ];
     }
+    /// @return the contour point at arc \a a.
+    Scalar arcDissimilarity( const Arc a ) const
+    { return _arc_dissimilarities[ a ]; }
     
     /// @return the regularized value at vertex v.
     const Value& u( const VertexIndex v ) const
@@ -1003,6 +1009,7 @@ namespace DGtal {
     void regularizeContours( Scalar max_dt = 0.001, int max_iter = 10 )
     {
       initContours();
+      computeArcDissimilarities();
       for ( int n = 0; n < max_iter; ++n ) {
 	std::vector<Scalar> former_t = _t;
 	updateBarycenters();
@@ -1052,7 +1059,7 @@ namespace DGtal {
     bool isArcContour( const Arc a ) const {
       return _u[ T.head( a ) ] != _u[ T.tail( a ) ];
     }
-    Scalar arcSimilarity( const Arc a ) const {
+    Scalar computeArcDissimilarity( const Arc a ) const {
       Value diff = _u[ T.head( a ) ] - _u[ T.tail( a ) ];
       return diff.dot( diff );
       // return ( _u[ T.head( a ) ] - _u[ T.tail( a ) ] ).norm();
@@ -1071,15 +1078,18 @@ namespace DGtal {
     }
 
     /// @param[out] dissim the (dis)similarity coefficient for each arc
-    /// @param[in]  arcs the three arcs belonging to some face.
+    /// @param[out] arcs the three arcs belonging to face \a f.
+    /// @param[in] f any valid face
     ///
     /// @return the arc whose vertices have similar values if it
     /// exists, or -1 otherwise.
-    int arcDissimilarities( std::array<Scalar,3>& dissim,
-			    const std::array<Arc,3>& arcs ) const
+    int arcDissimilaritiesAtFace( std::array<Scalar,3>& dissim,
+				  std::array<Arc,3>& arcs,
+				  Face f ) const
     {
+      arcs = arcsAroundFace( f );
       for ( int i = 0; i < 3; ++i ) {
-	dissim[ i ] = arcSimilarity( arcs[ i ] );
+	dissim[ i ] = computeArcDissimilarity( arcs[ i ] );
       }
       // Sort similarities...
       int  m  = std::min_element( dissim.begin(), dissim.end() ) - dissim.begin();
@@ -1096,27 +1106,15 @@ namespace DGtal {
       for ( Face f = 0; f < T.nbFaces(); ++f )	{
 	auto     arcs = arcsAroundFace( f );
 	Scalar      w = 0.0;
-	RealPoint       B = RealPoint::zero;
-	std::array<Scalar,3> s;
-	int m = arcDissimilarities( s, arcs );
+	RealPoint   B = RealPoint::zero;
+	// std::array<Scalar,3> s;
+	// int m = arcDissimilarities( s, arcs );
 	for ( int i = 0; i < 3; ++i ) {
-	  B += s[ i ] * contourPoint ( arcs[ i ] );
-	  w += s[ i ];
+	  const Scalar s = _arc_dissimilarities[ arcs[ i ] ];
+	  B += s * contourPoint ( arcs[ i ] );
+	  w += s;
 	}
 	if ( w  > 0.0 ) _b[ f ] += 0.5 * ( B / w - _b[ f ] );
-	// Arc    a = T.arc( V[ 0 ], V[ 1 ] );
-	// Scalar s = arcSimilarity( a );
-	// B       += s * ( ( 1 - _t[ a ] ) * P[ 0 ] + _t[ a ] * P[ 1 ] );
-	// w       += s;
-	// a        = T.next( a );
-	// s        = arcSimilarity( a );
-	// B       += s * ( ( 1 - _t[ a ] ) * P[ 1 ] + _t[ a ] * P[ 2 ] );
-	// w       += s;
-	// a        = T.next( a );
-	// s        = arcSimilarity( a );
-	// B       += s * ( ( 1 - _t[ a ] ) * P[ 2 ] + _t[ a ] * P[ 0 ] );
-	// w       += s;
-	// if ( w  > 0.0 ) _b[ f ] += 0.5 * ( B / w - _b[ f ] );
       }
     }
 
@@ -1474,6 +1472,25 @@ namespace DGtal {
 	&&   ( -tol <= bc[ 2 ] ) && ( bc[ 2 ] <= 1.0+tol );
     }
 
+
+    /// Precompute arcs similarities
+    void computeArcDissimilarities() {
+      _arc_dissimilarities.resize( T.nbArcs() );
+      for ( Face f = 0; f < T.nbFaces(); ++f ) {
+	std::array<Scalar,3> s;
+	std::array<Arc,3>    arcs;;
+	const int            m = arcDissimilaritiesAtFace( s, arcs, f );
+	_arc_dissimilarities[ arcs[ 0 ] ] = s[ 0 ];
+	_arc_dissimilarities[ arcs[ 1 ] ] = s[ 1 ];
+	_arc_dissimilarities[ arcs[ 2 ] ] = s[ 2 ];
+      }
+      for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+	Arc oa = T.opposite( a );
+	_arc_dissimilarities[ a ] = std::max( _arc_dissimilarities[ a ],
+					   _arc_dissimilarities[ oa ] );
+      }
+    }
+    
   };
 
   // Useful function for viewing triangulations.
@@ -1539,7 +1556,6 @@ namespace DGtal {
     ArcImage              _arcimage_disc; ///< image storing discontinuities
     ArcImage              _arcimage_simi; ///< image storing similarities
     OutputImage           _output; ///< image storing output pixel
-    std::vector<Scalar>   _arc_similarities; ///< stores arc similarities
     std::function<Point( RealPoint )> _dig; ///< discretization function (input image domain -> output draw image domain)
     
     /**
@@ -1866,7 +1882,7 @@ namespace DGtal {
       // const int            m = tvT.arcDissimilarities( s, arcs );
       const RealPoint      b = tvT.barycenter( f );
       for ( Dimension mk = 0; mk < 3; ++mk ) {
-	if ( _arc_similarities[ arcs[ mk ] ] != 0.0 ) continue;
+	if ( tvT.arcDissimilarity( arcs[ mk ] ) != 0.0 ) continue;
 	// Draw similarity arc
 	const Vertex         vtx1 = tvT.T.head( arcs[ mk ] );
 	const Vertex         vtx2 = tvT.T.tail( arcs[ mk ] );
@@ -1890,7 +1906,7 @@ namespace DGtal {
 	    };
 	    _pixinfo.setValue( dp[ k ], pi );
 	    _arcimage_simi.setValue( dp[ k ], arcs[ mk ] );
-	    _arcimage_disc.setValue( dp[ k ], invalid_arc );
+	    //_arcimage_disc.setValue( dp[ k ], invalid_arc );
 	  }
 	}
       }
@@ -1911,9 +1927,9 @@ namespace DGtal {
       const Scalar   crisp_f = crispness( tvT,f );
       int m = -1;
       for ( int i = 0; i < 3; ++i ) {
-	if ( ( _arc_similarities[ arcs[ i ] ] == 0.0 )
-	     && ( _arc_similarities[ arcs[ (i+1)%3 ] ] > 0.0 )
-	     && ( _arc_similarities[ arcs[ (i+2)%3 ] ] > 0.0 ) )
+	if ( ( tvT.arcDissimilarity( arcs[ i ] ) == 0.0 )
+	     && ( tvT.arcDissimilarity( arcs[ (i+1)%3 ] ) > 0.0 )
+	     && ( tvT.arcDissimilarity( arcs[ (i+2)%3 ] ) > 0.0 ) )
 	  m = i;
       }
       if ( m >= 0 ) {
@@ -1952,43 +1968,42 @@ namespace DGtal {
 	  if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
 	  if ( ! tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 ) ) continue;
 	  // if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
-	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
-	  //if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
+	  _arcimage_disc.setValue
+	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
+	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
 	  PixelInformation pi = {
 	    combine( vi, vj, dt[ k ] ), // value at pixel
 	    combine( ci, cj, dt[ k ] )  // crisp_f
 	  };
 	  _pixinfo.setValue( dp[ k ], pi );
-	  _arcimage_disc.setValue
-	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
 	}
 	for ( int k = dp.size() / 2 + 1; k < dp.size(); ++k ) {
 	  if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
 	  if ( ! tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 ) ) continue;
 	  // if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
-	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
-	  // if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
+	  _arcimage_disc.setValue
+	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
+	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
 	  PixelInformation pi = {
 	    combine( vi, vj, dt[ k ] ), // value at pixel
 	    combine( ci, cj, dt[ k ] )  // crisp_f
 	  };
 	  _pixinfo.setValue( dp[ k ], pi );
-	  _arcimage_disc.setValue
-	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
 	}
       } else {
 	// This is a generic face, we connect the three sides to the barycenter.
 	// We draw the barycenter in all cases.
 	const Point  db = _dig( b );
 	Value        vj = valueAtBarycenter( tvT, f );
-	if ( _draw_domain.isInside( db )
-	     && ( _arcimage_simi( db ) == invalid_arc ) ) {
-	  PixelInformation pi = { vj, crisp_f };
-	  _pixinfo.setValue( db, pi );
+	if ( _draw_domain.isInside( db ) ) {
 	  _arcimage_disc.setValue( db, 0 );
+	  if ( _arcimage_simi( db ) == invalid_arc ) {
+	    PixelInformation pi = { vj, crisp_f };
+	    _pixinfo.setValue( db, pi );
+	  }
 	}
 	for ( Dimension i1 = 0; i1 < 3; ++i1 ) {
-	  if ( _arc_similarities[ arcs[ i1 ] ] == 0.0 ) continue;
+	  if ( tvT.arcDissimilarity( arcs[ i1 ] ) == 0.0 ) continue;
 	  // Computes the control points of the Bezier curve
 	  const RealVector u = tangentAtArc( tvT, arcs[ i1 ] );
 	  const Scalar     a = 2.0 * ( x[ i1 ] - b ).dot( u );
@@ -2007,14 +2022,14 @@ namespace DGtal {
 	  Scalar crisp_i1 = crispnessAtArc( tvT, arcs[ i1 ] );
 	  for ( int k = 0; k < dp.size(); ++k ) {
 	    if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
-	    if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
-	    if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
+	    if ( ! tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 ) ) continue;
+	    _arcimage_disc.setValue( dp[ k ], arcs[ i1 ] );
+	    if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) continue; //break;
 	    PixelInformation pi = {
 	      combine( vj, vi, dt[ k ] ), // value at pixel
 	      combine( crisp_f, crisp_i1, dt[ k ] )
 	    };
 	    _pixinfo.setValue( dp[ k ], pi );
-	    _arcimage_disc.setValue( dp[ k ], arcs[ i1 ] );
 	  }
 	}
       }
@@ -2034,23 +2049,6 @@ namespace DGtal {
       }
     };
 
-    /// Precompute arcs similarities
-    void computeArcSimilarities( TVT & tvT ) {
-      _arc_similarities.resize( tvT.T.nbArcs() );
-      for ( Face f = 0; f < tvT.T.nbFaces(); ++f ) {
-	std::array<Scalar,3> s;
-	const auto        arcs = tvT.arcsAroundFace( f );
-	const int            m = tvT.arcDissimilarities( s, arcs );
-	_arc_similarities[ arcs[ 0 ] ] = s[ 0 ];
-	_arc_similarities[ arcs[ 1 ] ] = s[ 1 ];
-	_arc_similarities[ arcs[ 2 ] ] = s[ 2 ];
-      }
-      for ( Arc a = 0; a < tvT.T.nbArcs(); ++a ) {
-	Arc oa = tvT.T.opposite( a );
-	_arc_similarities[ a ] = std::max( _arc_similarities[ a ],
-					   _arc_similarities[ oa ] );
-      }
-    }
     /**
        Displays the TV triangulation with discontinuities and
        second-order reconstruction.
@@ -2064,8 +2062,6 @@ namespace DGtal {
       // Pre-compute soem information per faces (gradient, etc)
       trace.info() << "Compute 2nd order information per face" << std::endl;
       tvT.compute2ndOrderInformation( discontinuities );
-      trace.info() << "Compute Arc (dis)similarities" << std::endl;
-      computeArcSimilarities( tvT );
       // Resets the image that will be used to compute distance to contours.
       trace.info() << "Invalidate images" << std::endl;
       const Arc invalid_arc = tvT.T.nbArcs();
@@ -2102,24 +2098,67 @@ namespace DGtal {
       for ( auto p : _draw_domain ) {
       	if ( ( _arcimage_disc( p ) != invalid_arc )
     	     || ( _arcimage_simi( p ) != invalid_arc ) ) {
-    	  drawPixel( p, _pixinfo( p ).v );
+    	  drawPixelInOutput( p, _pixinfo( p ).v );
     	  continue;
     	}
       	const auto  cp_disc = voronoimap_disc( p ); // get closest contour points
       	const auto  cp_simi = voronoimap_simi( p ); // get closest contour points
-	drawPixel( p, evaluateValue( p, cp_disc, cp_simi ) );
+	drawPixelInOutput( p, evaluateValue( p, cp_disc, cp_simi ) );
       }
+      trace.info() << "Antialias discontinuity pixels" << std::endl;
+      antialiasDiscontinuities( tvT );
       // To display contour lines
       if ( display_lines ) {
+	trace.info() << "Debug similarity and discontinuity lines" << std::endl;
 	for ( auto p : _draw_domain ) {
-	  if ( _arcimage_disc( p ) != invalid_arc )
-	    drawPixel( p, Value(255,0,0) );
-	  if ( _arcimage_simi( p ) != invalid_arc )
-	    drawPixel( p, Value(0,0,255) );
+	  if ( ( _arcimage_disc( p ) != invalid_arc )
+	       && ( _arcimage_simi( p ) != invalid_arc ) )
+	    drawPixelInOutput( p, Value(180,0,180) );
+	  else if ( _arcimage_disc( p ) != invalid_arc )
+	    drawPixelInOutput( p, Value(255,0,0) );
+	  else if ( _arcimage_simi( p ) != invalid_arc )
+	    drawPixelInOutput( p, Value(0,0,255) );
 	}
       }
+      trace.info() << "Draw image in cairo buffer" << std::endl;
+      drawImage();
     }
 
+    void antialiasDiscontinuities( TVT & tvT ) {
+      const Arc invalid_arc = tvT.T.nbArcs();
+      std::array<Vector,8> deltas =
+	{ Vector( 1,0 ), Vector( 1,1 ), Vector( 0,1 ),
+	  Vector( -1,1 ), Vector( -1,0 ), Vector( -1,-1 ),
+	  Vector( 0,-1 ), Vector( 1,-1 ) };
+      for ( auto p : _draw_domain ) {
+	if ( _arcimage_disc( p ) == invalid_arc ) continue;
+	if ( _arcimage_simi( p ) != invalid_arc ) continue;
+	Value acc = Value::zero;
+	Scalar  w = 0;
+	for ( auto v : deltas ) {
+	  const Point q = p + v;
+	  if ( _draw_domain.isInside( q ) ) {
+	    Scalar qw = 1.0;
+	    if ( _arcimage_disc( q ) != invalid_arc ) qw /= 4.0;
+	    if ( _arcimage_simi( q ) != invalid_arc ) qw *= 4.0;
+	    acc += qw * _output( q );
+	    w   += qw;
+	  }
+	}
+	_output.setValue( p, acc / w );
+      }
+    }
+    
+    void drawPixelInOutput( Point p, Value v ) {
+      _output.setValue( p, v );
+    }
+
+    void drawImage() {
+      for ( auto p : _draw_domain ) {
+	drawPixel( p, _output( p ) );
+      }
+    }
+    
     Value
     evaluateValue( Point p, Point cp_disc, Point cp_simi ) {
       const PixelInformation& pi_disc = _pixinfo( cp_disc );
@@ -2128,6 +2167,7 @@ namespace DGtal {
       Scalar  lsimi = (cp_simi - p).norm();
       ldisc        *= pi_disc.crisp + 1.0;
       // lsimi        *= pi_simi.crisp + 1.0;
+      if ( lsimi == 0.0 && ldisc == 0.0 ) { lsimi = ldisc = 1.0; }
       Scalar      l = ldisc + lsimi;
       return ( lsimi / l ) * pi_disc.v
 	+    ( ldisc / l ) * pi_simi.v;

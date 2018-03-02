@@ -188,12 +188,12 @@ namespace DGtal
     /// @param[out] rp the vector of associated points traced by the Bezier curve.
     /// @param[out] dt the associated vector of parameters t, ie `dp[i]=B(t[i])`.
     void traceDirect( const Digitizer& dig,
-		      std::vector<Point>& dp,
-		      std::vector<RealPoint>& rp,
-		      std::vector<Scalar>& dt ) const
+    		      std::vector<Point>& dp,
+    		      std::vector<RealPoint>& rp,
+    		      std::vector<Scalar>& dt ) const
     {
       std::vector<Scalar> dd;
-      traceDirect( dig, dp, rp, dt, dd, 0.0, 1.0 );
+      traceDirect( dig, dp, rp, dt, dd );
     }
     
     /// Traces the digital points covered by the Bezier curve.
@@ -209,15 +209,16 @@ namespace DGtal
 		      std::vector<Point>& dp,
 		      std::vector<RealPoint>& rp,
 		      std::vector<Scalar>& dt,
-		      std::vector<Scalar>& dd,
-		      Scalar t0 = 0.0, Scalar t1 = 1.0 ) const
+		      std::vector<Scalar>& dd ) const
     {
       // Add first point
-      const RealPoint rp0 = (*this)( t0 );
-      const RealPoint rp1 = (*this)( t1 );
+      const Scalar t0 = 0.0;
+      const Scalar t1 = 1.0;
+      const RealPoint rp0 = b( 0 ); 
+      const RealPoint rp1 = b( _bpoints.size() - 1 ); 
       addPoint( dig, rp0, t0, dp, rp, dt, dd );
-      Scalar delta_t = (t1 - t0) / ( (dig( rp1 ) - dig( rp0 )).norm() + 1.0 );
-      Scalar t = t0;
+      Scalar delta_t = 1.0 / ( (dig( rp1 ) - dig( rp0 )).norm() + 1.0 );
+      Scalar t = t0 - 1.e-4;
       while ( t + delta_t < t1 ) {
 	RealPoint r = (*this)( t + delta_t );
 	Point    dr = dig( r );
