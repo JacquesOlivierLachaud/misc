@@ -1538,6 +1538,8 @@ namespace DGtal {
     PixelInformationImage _pixinfo; ///< image storing pixel values/crispness.
     ArcImage              _arcimage_disc; ///< image storing discontinuities
     ArcImage              _arcimage_simi; ///< image storing similarities
+    OutputImage           _output; ///< image storing output pixel
+    std::vector<Scalar>   _arc_similarities; ///< stores arc similarities
     std::function<Point( RealPoint )> _dig; ///< discretization function (input image domain -> output draw image domain)
     
     /**
@@ -1551,18 +1553,20 @@ namespace DGtal {
 		   double disc_amplitude = 0.75 )
       : Base( x0, y0, width, height, xfactor, yfactor, shading, color,
 	      disc_stiffness, disc_amplitude ),
-	_pixinfo( Domain( Point(), Point() ) ),
+	_pixinfo      ( Domain( Point(), Point() ) ),
 	_arcimage_disc( Domain( Point(), Point() ) ),
-	_arcimage_simi( Domain( Point(), Point() ) )
+	_arcimage_simi( Domain( Point(), Point() ) ),
+	_output       ( Domain( Point(), Point() ) )
     {
-      _lo = Point( x0, y0 );
-      _up = Point( width, height );
-      _pixinfo = PixelInformationImage( _draw_domain );
+      _lo            = Point( x0, y0 );
+      _up            = Point( width, height );
+      _pixinfo       = PixelInformationImage( _draw_domain );
       _arcimage_disc = ArcImage( _draw_domain );
       _arcimage_simi = ArcImage( _draw_domain );
-      _dig = [&] (const RealPoint& p) { RealPoint q = ij( p );
-					return Point( floor( q[ 0 ] ),
-						      floor( q[ 1 ] ) ); };
+      _output        = OutputImage( _draw_domain );
+      _dig           = [&] (const RealPoint& p)
+	{ RealPoint q = ij( p );
+	  return Point( floor( q[ 0 ] ), floor( q[ 1 ] ) ); };
     }
     
     /// Destructor.
@@ -1761,6 +1765,14 @@ namespace DGtal {
 	return crispness( tvT, f );
       }
     }
+    /// @return the crispness at vertex \a v
+    Scalar crispnessAtVertex( TVT& tvT, const Vertex v ) {
+      Scalar     c = 0.0;
+      const auto F = tvT.T.facesAroundVertex( v );
+      for ( auto f : F ) c += crispness( tvT, f );
+      return c / F.size();
+    }
+    
     VectorValue combine( const VectorValue& g1, const VectorValue& g2,
 			 Scalar t = 0.5 ) {
       return VectorValue { (1.0-t) * g1.x + t * g2.x,
@@ -1837,11 +1849,12 @@ namespace DGtal {
 
 
     void drawVertex( TVT& tvT, const Vertex vtx ) {
-      RealPoint  rpv = tvT.T.position( vtx );
-      Value       vv = tvT.u( vtx );
-      Point       pv = _dig( rpv );
+      const RealPoint  rpv = tvT.T.position( vtx );
+      const Value       vv = tvT.u( vtx );
+      const Point       pv = _dig( rpv );
+      // const Scalar       c = crispnessAtVertex( tvT, vtx );
       _arcimage_simi.setValue( pv, 0 );
-      _pixinfo.setValue( pv, PixelInformation { vv, 1.0 } );
+      _pixinfo.setValue( pv, PixelInformation { vv, 0.0 } );
     }
 
     void drawFaceSimilarities( TVT& tvT, const Face f ) {
@@ -1850,10 +1863,10 @@ namespace DGtal {
       typedef typename Matrix::ColumnVector CVector;
       std::array<Scalar,3> s;
       const auto        arcs = tvT.arcsAroundFace( f );
-      const int            m = tvT.arcDissimilarities( s, arcs );
+      // const int            m = tvT.arcDissimilarities( s, arcs );
       const RealPoint      b = tvT.barycenter( f );
       for ( Dimension mk = 0; mk < 3; ++mk ) {
-	if ( s[ mk ] != 0.0 ) continue;
+	if ( _arc_similarities[ arcs[ mk ] ] != 0.0 ) continue;
 	// Draw similarity arc
 	const Vertex         vtx1 = tvT.T.head( arcs[ mk ] );
 	const Vertex         vtx2 = tvT.T.tail( arcs[ mk ] );
@@ -1861,7 +1874,8 @@ namespace DGtal {
 				      tvT.T.position( vtx2 ) };
 	const Value            v1 = tvT.u( vtx1 );
 	const Value            v2 = tvT.u( vtx2 );
-	// const VectorValue       g = gradientAtArc( tvT, arcs[ mk ] );  
+	// const Scalar           c1 = crispnessAtVertex( tvT, vtx1 );
+	// const Scalar           c2 = crispnessAtVertex( tvT, vtx2 );
 	// Traces the digital Bezier curve.
 	BezierCurve<Space> B( bp );
 	std::vector<Point>     dp;
@@ -1872,7 +1886,7 @@ namespace DGtal {
 	  if ( _draw_domain.isInside( dp[ k ] ) ) {
 	    PixelInformation pi = {
 	      combine( v1, v2, dt[ k ] ), // value at pixel
-	      0.0
+	      0.0 // combine( c1, c2, dt[ k ] )
 	    };
 	    _pixinfo.setValue( dp[ k ], pi );
 	    _arcimage_simi.setValue( dp[ k ], arcs[ mk ] );
@@ -1889,12 +1903,19 @@ namespace DGtal {
       std::array<Scalar,3> s;
       const Arc  invalid_arc = tvT.T.nbArcs();
       const auto        arcs = tvT.arcsAroundFace( f );
-      const int            m = tvT.arcDissimilarities( s, arcs );
+      //      const int            m = tvT.arcDissimilarities( s, arcs );
       const RealPoint x[ 3 ] = { tvT.edgeContourPoint( arcs[ 0 ] ),
 				 tvT.edgeContourPoint( arcs[ 1 ] ),
 				 tvT.edgeContourPoint( arcs[ 2 ] ) };
       const RealPoint      b = tvT.barycenter( f );
       const Scalar   crisp_f = crispness( tvT,f );
+      int m = -1;
+      for ( int i = 0; i < 3; ++i ) {
+	if ( ( _arc_similarities[ arcs[ i ] ] == 0.0 )
+	     && ( _arc_similarities[ arcs[ (i+1)%3 ] ] > 0.0 )
+	     && ( _arc_similarities[ arcs[ (i+2)%3 ] ] > 0.0 ) )
+	  m = i;
+      }
       if ( m >= 0 ) {
 	// This is a contour face, we have to connect two sides.
 	// Computes the control points of the Bezier curve
@@ -1923,16 +1944,19 @@ namespace DGtal {
 	std::vector<RealPoint> rp;
 	std::vector<Scalar>    dt;
 	B.traceDirect( _dig, dp, rp, dt );
-	Value        vi = valueAtArc( tvT, arcs[ i1 ] );
-	Value        vj = valueAtArc( tvT, arcs[ j1 ] );
+	const Value   vi = valueAtArc( tvT, arcs[ i1 ] );
+	const Value   vj = valueAtArc( tvT, arcs[ j1 ] );
+	const Scalar  ci = crispnessAtArc( tvT, arcs[ i1 ] );
+	const Scalar  cj = crispnessAtArc( tvT, arcs[ j1 ] );
 	for ( int k = dp.size() / 2; k >= 0; --k ) {
 	  if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
-	  if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
+	  if ( ! tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 ) ) continue;
+	  // if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
 	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
 	  //if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
 	  PixelInformation pi = {
 	    combine( vi, vj, dt[ k ] ), // value at pixel
-	    crisp_f
+	    combine( ci, cj, dt[ k ] )  // crisp_f
 	  };
 	  _pixinfo.setValue( dp[ k ], pi );
 	  _arcimage_disc.setValue
@@ -1940,12 +1964,13 @@ namespace DGtal {
 	}
 	for ( int k = dp.size() / 2 + 1; k < dp.size(); ++k ) {
 	  if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
-	  if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
+	  if ( ! tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 ) ) continue;
+	  // if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
 	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
 	  // if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
 	  PixelInformation pi = {
 	    combine( vi, vj, dt[ k ] ), // value at pixel
-	    crisp_f
+	    combine( ci, cj, dt[ k ] )  // crisp_f
 	  };
 	  _pixinfo.setValue( dp[ k ], pi );
 	  _arcimage_disc.setValue
@@ -1963,7 +1988,7 @@ namespace DGtal {
 	  _arcimage_disc.setValue( db, 0 );
 	}
 	for ( Dimension i1 = 0; i1 < 3; ++i1 ) {
-	  if ( s[ i1 ] == 0.0 ) continue;
+	  if ( _arc_similarities[ arcs[ i1 ] ] == 0.0 ) continue;
 	  // Computes the control points of the Bezier curve
 	  const RealVector u = tangentAtArc( tvT, arcs[ i1 ] );
 	  const Scalar     a = 2.0 * ( x[ i1 ] - b ).dot( u );
@@ -1986,7 +2011,7 @@ namespace DGtal {
 	    if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
 	    PixelInformation pi = {
 	      combine( vj, vi, dt[ k ] ), // value at pixel
-	      crisp_f
+	      combine( crisp_f, crisp_i1, dt[ k ] )
 	    };
 	    _pixinfo.setValue( dp[ k ], pi );
 	    _arcimage_disc.setValue( dp[ k ], arcs[ i1 ] );
@@ -2008,7 +2033,24 @@ namespace DGtal {
 	return _arcimage->operator()( p ) == _invalid_arc;
       }
     };
-    
+
+    /// Precompute arcs similarities
+    void computeArcSimilarities( TVT & tvT ) {
+      _arc_similarities.resize( tvT.T.nbArcs() );
+      for ( Face f = 0; f < tvT.T.nbFaces(); ++f ) {
+	std::array<Scalar,3> s;
+	const auto        arcs = tvT.arcsAroundFace( f );
+	const int            m = tvT.arcDissimilarities( s, arcs );
+	_arc_similarities[ arcs[ 0 ] ] = s[ 0 ];
+	_arc_similarities[ arcs[ 1 ] ] = s[ 1 ];
+	_arc_similarities[ arcs[ 2 ] ] = s[ 2 ];
+      }
+      for ( Arc a = 0; a < tvT.T.nbArcs(); ++a ) {
+	Arc oa = tvT.T.opposite( a );
+	_arc_similarities[ a ] = std::max( _arc_similarities[ a ],
+					   _arc_similarities[ oa ] );
+      }
+    }
     /**
        Displays the TV triangulation with discontinuities and
        second-order reconstruction.
@@ -2022,6 +2064,8 @@ namespace DGtal {
       // Pre-compute soem information per faces (gradient, etc)
       trace.info() << "Compute 2nd order information per face" << std::endl;
       tvT.compute2ndOrderInformation( discontinuities );
+      trace.info() << "Compute Arc (dis)similarities" << std::endl;
+      computeArcSimilarities( tvT );
       // Resets the image that will be used to compute distance to contours.
       trace.info() << "Invalidate images" << std::endl;
       const Arc invalid_arc = tvT.T.nbArcs();
