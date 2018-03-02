@@ -1525,9 +1525,10 @@ namespace DGtal {
       { return ( v != other.v ) || ( crisp != other.crisp ); }
     };
 
-    typedef ImageContainerBySTLVector< Domain, Arc > ArcImage;
+    typedef ImageContainerBySTLVector< Domain, Arc >   ArcImage;
     typedef ImageContainerBySTLVector< Domain, PixelInformation >
     PixelInformationImage;
+    typedef ImageContainerBySTLVector< Domain, Value > OutputImage;
     
   public:
 
@@ -1924,18 +1925,31 @@ namespace DGtal {
 	B.traceDirect( _dig, dp, rp, dt );
 	Value        vi = valueAtArc( tvT, arcs[ i1 ] );
 	Value        vj = valueAtArc( tvT, arcs[ j1 ] );
-	for ( int k = 0; k < dp.size(); ++k ) {
-	  if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
-	       && _draw_domain.isInside( dp[ k ] ) 
-	       && _arcimage_simi( dp[ k ] ) == invalid_arc ) {
-	    PixelInformation pi = {
-	      combine( vi, vj, dt[ k ] ), // value at pixel
-	      crisp_f
-	    };
-	    _pixinfo.setValue( dp[ k ], pi );
-	    _arcimage_disc.setValue
-	      ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
-	  }
+	for ( int k = dp.size() / 2; k >= 0; --k ) {
+	  if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
+	  if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
+	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
+	  //if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
+	  PixelInformation pi = {
+	    combine( vi, vj, dt[ k ] ), // value at pixel
+	    crisp_f
+	  };
+	  _pixinfo.setValue( dp[ k ], pi );
+	  _arcimage_disc.setValue
+	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
+	}
+	for ( int k = dp.size() / 2 + 1; k < dp.size(); ++k ) {
+	  if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
+	  if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
+	  if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
+	  // if ( tvT.isApproximatelyInTriangle( f, rp[ k ], 0.05 )
+	  PixelInformation pi = {
+	    combine( vi, vj, dt[ k ] ), // value at pixel
+	    crisp_f
+	  };
+	  _pixinfo.setValue( dp[ k ], pi );
+	  _arcimage_disc.setValue
+	    ( dp[ k ], ( dt[ k ] < 0.5 ) ? arcs[ i1 ] : arcs[ j1 ] );
 	}
       } else {
 	// This is a generic face, we connect the three sides to the barycenter.
@@ -1967,8 +1981,8 @@ namespace DGtal {
 	  Value        vi = valueAtArc( tvT, arcs[ i1 ] );
 	  Scalar crisp_i1 = crispnessAtArc( tvT, arcs[ i1 ] );
 	  for ( int k = 0; k < dp.size(); ++k ) {
-	    if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
 	    if ( ! _draw_domain.isInside( dp[ k ] ) )       continue;
+	    if ( ! tvT.isInTriangle( f, rp[ k ] ) )         continue;
 	    if ( _arcimage_simi( dp[ k ] ) != invalid_arc ) break;
 	    PixelInformation pi = {
 	      combine( vj, vi, dt[ k ] ), // value at pixel
@@ -1999,7 +2013,8 @@ namespace DGtal {
        Displays the TV triangulation with discontinuities and
        second-order reconstruction.
     */
-    void view2ndOrder( TVT & tvT, Scalar discontinuities ) {
+    void view2ndOrder( TVT & tvT, Scalar discontinuities,
+		       bool display_lines = false ) {
       cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
       cairo_set_line_width( _cr, 0.0 ); 
       cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
@@ -2008,17 +2023,20 @@ namespace DGtal {
       trace.info() << "Compute 2nd order information per face" << std::endl;
       tvT.compute2ndOrderInformation( discontinuities );
       // Resets the image that will be used to compute distance to contours.
-      trace.info() << "Draw contour lines" << std::endl;
+      trace.info() << "Invalidate images" << std::endl;
       const Arc invalid_arc = tvT.T.nbArcs();
       for ( auto p : _draw_domain ) {
 	_arcimage_disc.setValue( p, invalid_arc );
 	_arcimage_simi.setValue( p, invalid_arc );
       }
+      trace.info() << "Draw similarity contours" << std::endl;
       // Compute and trace the contour lines of the image.
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
 	drawFaceSimilarities( tvT, f );
+      trace.info() << "Draw discontinuity contours" << std::endl;
       for ( Face f = 0; f < tvT.T.nbFaces(); ++f )
 	drawFaceDiscontinuities( tvT, f );
+      trace.info() << "Draw vertices" << std::endl;
       for ( Vertex v = 0; v < tvT.T.nbVertices(); ++v )
 	drawVertex( tvT, v );
       // Compute Voronoi map and distance transformation.
@@ -2048,12 +2066,14 @@ namespace DGtal {
 	drawPixel( p, evaluateValue( p, cp_disc, cp_simi ) );
       }
       // To display contour lines
-      // for ( auto p : _draw_domain ) {
-      // 	if ( _arcimage_disc( p ) != invalid_arc )
-      // 	  drawPixel( p, Value(255,0,0) );
-      // 	if ( _arcimage_simi( p ) != invalid_arc )
-      // 	  drawPixel( p, Value(0,0,255) );
-      // }
+      if ( display_lines ) {
+	for ( auto p : _draw_domain ) {
+	  if ( _arcimage_disc( p ) != invalid_arc )
+	    drawPixel( p, Value(255,0,0) );
+	  if ( _arcimage_simi( p ) != invalid_arc )
+	    drawPixel( p, Value(0,0,255) );
+	}
+      }
     }
 
     Value
@@ -2068,16 +2088,6 @@ namespace DGtal {
       return ( lsimi / l ) * pi_disc.v
 	+    ( ldisc / l ) * pi_simi.v;
     }
-    // std::pair<Scalar,Scalar>
-    // evaluateWeights( Point p, Point cp_disc, Point cp_simi ) {
-    //   PixelInformation& pi_disc = _pixinfo( cp_disc );
-    //   PixelInformation& pi_simi = _pixinfo( cp_simi );
-    //   Scalar  ldisc = (cp_disc - p).norm();
-    //   Scalar  lsimi = (cp_simi - p).norm();
-    //   ldisc        *= pi_disc.crisp + 1.0;
-    //   Scalar      l = ldisc + lsimi;
-    //   return std::make_pair( lsimi / l, ldisc / l );
-    // }
     
     // Value evaluateValue( Point p, Point cp ) {
     //   PixelInformation& pi = _pixinfo[ cp ];
@@ -2113,8 +2123,9 @@ namespace DGtal {
     //   ( (int) round( x0 ), (int) round( y0 ), 
     // 	(int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
     // 	b, b, shading, color, stiffness, amplitude );
-    if ( shading != 4 ) cviewer.view( tvT, discontinuities );
-    else                cviewer.view2ndOrder( tvT, discontinuities );
+    if ( shading < 4 ) cviewer.view( tvT, discontinuities );
+    else               cviewer.view2ndOrder( tvT, discontinuities,
+					     shading == 5 );
     cviewer.save( fname.c_str() );
   }
   
@@ -2137,6 +2148,9 @@ namespace DGtal {
 			   discontinuities, stiffness, amplitude );
     if ( display & 0x10 )
       viewTVTriangulation( tvT, b, x0, y0, x1, y1, 4, color, fname + "-2nd.png",
+			   discontinuities, stiffness, amplitude );
+    if ( display & 0x20 )
+      viewTVTriangulation( tvT, b, x0, y0, x1, y1, 5, color, fname + "-2nd-with-lines.png",
 			   discontinuities, stiffness, amplitude );
   }
 
