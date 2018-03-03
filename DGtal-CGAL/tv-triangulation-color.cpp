@@ -495,10 +495,10 @@ namespace DGtal {
 			   const Scalar b, const ValueForm& v ) const
     {
       ValueForm S( T.nbVertices() );
-      trace.info() << "[combination] variation is ["
-		   << ( b * *( std::min_element( v.begin(), v.end() ) ) )
-		   << " " << ( b * *( std::max_element( v.begin(), v.end() ) ) )
-		   << std::endl;
+      // trace.info() << "[combination] variation is ["
+      // 		   << ( b * *( std::min_element( v.begin(), v.end() ) ) )
+      // 		   << " " << ( b * *( std::max_element( v.begin(), v.end() ) ) )
+      // 		   << std::endl;
       for ( VertexIndex i = 0; i < T.nbVertices(); ++i )
 	S[ i ] = a * u[ i ] + b * v[ i ];
       return S;
@@ -606,19 +606,19 @@ namespace DGtal {
 	  {
 	    return pow( square( v[ 0 ] ) + square( v[ 1 ] ) + square( v[ 2 ] ), p);
 	  };
-	_normY = [p] ( const VectorValue& v ) -> Scalar
-	  {
-	    return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] ), p )
-	    + pow( square( v.x[ 1 ] ) + square( v.y[ 1 ] ), p )
-	    + pow( square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
-	  };
-	// // Standard ColorTV is
 	// _normY = [p] ( const VectorValue& v ) -> Scalar
-	// {
-	//   return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] )
-	// 		+ square( v.x[ 1 ] ) + square( v.y[ 1 ] )
-	// 		+ square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
-	// };
+	//   {
+	//     return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] ), p )
+	//     + pow( square( v.x[ 1 ] ) + square( v.y[ 1 ] ), p )
+	//     + pow( square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
+	//   };
+	// Standard ColorTV is
+	_normY = [p] ( const VectorValue& v ) -> Scalar
+	{
+	  return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] )
+			+ square( v.x[ 1 ] ) + square( v.y[ 1 ] )
+			+ square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
+	};
       } else {
 	_normX = [p] ( const Value& v ) -> Scalar
 	  {
@@ -1162,16 +1162,6 @@ namespace DGtal {
 	  // _t[ a ] /= ( 0.2 + 0.8 * ratio );
 	  _t[ a ] = 0.5 * _t[ a ] * ( 1.0 + 1.0 / ratio );
 	}
-	// // Checks the evolution of the vertex area.
-	// Scalar ratio = areaAtVertex( v ) / _A[ v ];
-	// if ( ratio <= 0.0 )
-	//   trace.warning() << "Negative ratio " << ratio
-	// 		  << " for area[ " << v << " ]="
-	// 		  << _A[ v ] << std::endl;
-	// // Rescale all points to recover the correct area.
-	// auto  out_arcs = T.outArcs( v );
-	// // Todo: not the right formula
-	// for ( Arc a : out_arcs ) _t[ a ] /= ( 0.5 + 0.5 * ratio );
       }
       // Averages movements on each edge.
       for ( Arc a = 0; a < T.nbArcs(); ++a ) {
@@ -1181,7 +1171,6 @@ namespace DGtal {
 	Scalar     t = 0.5 * ( _t[ a ] + ( 1.0 - _t[ opp_a ] ) );
 	t            = std::min( 0.999, std::max( 0.001, t ) );
 	max_t        = std::max( max_t, fabs( t - prev_t[ a ] ) );
-	// max_t        = std::max( max_t, fabs( 1.0 - t - _t[ opp_a ] ) );
 	_t[ a ]      = t;
 	_t[ opp_a ]  = 1.0 - t;
       }
@@ -2582,6 +2571,7 @@ int main( int argc, char** argv )
   general_opt.add_options()
     ("help,h", "display this message")
     ("input,i", po::value<std::string>(), "Specifies the input shape as a 2D image PPM filename.")
+    ("output,o", po::value<std::string>()->default_value("after-tv-opt"), "Specifies the basename of output displayed images. See option -D, file name is completed by -g, -lg, -pu, -2nd, -2nd-with-slices depending on display choice.")
     ("limit,L", po::value<int>()->default_value(200), "Gives the maximum number of passes (default is 200).")  
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("strategy,s", po::value<int>()->default_value(4), "Strategy for quadrilatera with equal energy: 0: do nothing, 1: subdivide, 2: flip all, 3: flip all when #flipped normal = 0, 4: flip approximately half when #flipped normal = 0, 5: flip approximately half when #flipped normal = 0, subdivide if everything fails." )
@@ -2592,11 +2582,11 @@ int main( int argc, char** argv )
     ("quantify,q", po::value<int>()->default_value( 256 ), "The quantification for colors (number of levels, q=2 means binary." ) 
     ("tv-max-iter,N", po::value<int>()->default_value( 20 ), "The maximum number of iteration in TV's algorithm." )
     ("nb-alt-iter,A", po::value<int>()->default_value( 1 ), "The number of iteration for alternating TV and TV-flip." )
-    ("display-tv,d", po::value<int>()->default_value( 0 ), "Tells the display mode after TV of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
-    ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode after flips of output files per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
-    ("discontinuities", po::value<double>()->default_value( 0.0 ), "Tells to display a % of the TV discontinuities (the triangles with greatest energy)." ) 
+    ("display-tv,d", po::value<int>()->default_value( 0 ), "Tells the display mode after standard TV regularization per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
+    ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode aftergeometric TV flips per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles (quite nice and flat), 0x8: output partition of unity Bezier triangles (slow and not good), 0x16: output 2nd order reconstruction with Bezier curve (nicest but slower than 0x4), 0x32: same as 0x16 but displays also the similarity/discontinuity graph (for debug/illustrations)" )
+    ("discontinuities,S", po::value<double>()->default_value( 0.1 ), "Tells to display a % of the TV discontinuities (the triangles with greatest energy)." ) 
     ("stiffness", po::value<double>()->default_value( 0.9 ), "Tells how to stiff the gradient around discontinuities (amplitude value is changed at stiffness * middle)." ) 
-    ("amplitude", po::value<double>()->default_value( 0.75 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." )
+    ("amplitude", po::value<double>()->default_value( 1.0 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." )
     ("similarity", po::value<double>()->default_value( 0.0 ), "Tells when two colors are considered identical for connectedness." )
     ("connectivity", po::value<std::string>()->default_value( "Order" ), "Indicates the strategy for determining the connectivity of ambiguous pixels: Size | Order. Size is best for 1-bit images, Order is best for color images." )
     ("debug", "specifies the DEBUG mode: output some intermediate results in cc.ppm and order.ppm." )
@@ -2606,7 +2596,7 @@ int main( int argc, char** argv )
     ("exportEPSContoursDual,C", po::value<std::string>(), "Export the image regions filled." )
     ("epsScale", po::value<double>()->default_value( 1.0 ), "Change the default eps scale to increase display size on small images (using 10 will display easely small images while 1.0 is more adapted to bigger images) . " )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
-    ("regularizeContour,R", po::value<int>()->default_value( 0 ), "regularizes the dual contours for <nb> iterations." )
+    ("regularizeContour,R", po::value<int>()->default_value( 20 ), "regularizes the dual contours for <nb> iterations." )
     ;
 
   bool parseOK = true;
@@ -2737,7 +2727,10 @@ int main( int argc, char** argv )
     trace.warning() << "Quantification is not compatible with alternating TV + flips" << std::endl;
   }
   std::pair<int,int> nbs;
+  double last_energy = -1;
   for ( int n = 0; n < nbAlt; ++n ) {
+    trace.info() << "******************** PASS " << n << " *******************"
+		 << endl;
     if ( n > 0 && lambda > 0.0 ) {
       TVT.tvPass( lambda, dt, tol, N );
     }
@@ -2756,6 +2749,9 @@ int main( int argc, char** argv )
       }
       last = nbs.first;
     }
+    if ( last_energy >= 0.0 && TVT.getEnergyTV() >= last_energy )
+      break;
+    else last_energy = TVT.getEnergyTV();
   }
   trace.endBlock();
 
@@ -2777,7 +2773,9 @@ int main( int argc, char** argv )
     double    y0 = 0.0;
     double    x1 = (double) image.domain().upperBound()[ 0 ];
     double    y1 = (double) image.domain().upperBound()[ 1 ];
-    viewTVTriangulationAll( TVT, b, x0, y0, x1, y1, color, "after-tv-opt",
+    std::string bname = vm[ "output" ].as<std::string>();
+    
+    viewTVTriangulationAll( TVT, b, x0, y0, x1, y1, color, bname,
 			    display, disc, st, am );
   }
   trace.endBlock();
