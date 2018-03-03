@@ -1012,11 +1012,12 @@ namespace DGtal {
       computeArcDissimilarities();
       for ( int n = 0; n < max_iter; ++n ) {
 	std::vector<Scalar> former_t = _t;
-	updateBarycenters();
-	updateContours();
+	updateBarycenters(); 
+	updateContours(); 
 	Scalar dt = enforceContoursArea( former_t );
 	if ( dt < max_dt ) break;
-	std::cout << n << " dt = " << dt << " max_dt = " << max_dt << std::endl;
+	std::cout << n << " dt = " << dt << " max_dt = " << max_dt
+		  << std::endl;
       }
     }
 
@@ -1146,7 +1147,7 @@ namespace DGtal {
       Scalar max_t = 0.0;
       // Update t to keep volume constant
       for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
-	auto  out_arcs = T.outArcs( v );
+ 	auto  out_arcs = T.outArcs( v );
 	for ( Arc a : out_arcs ) {
 	   // Checks the evolution of the arc area.
 	  Scalar ratio = areaAtArc( a ) / ( _A[ v ] / T.degree( v ) );
@@ -1170,7 +1171,8 @@ namespace DGtal {
 	if ( T.head( a ) < T.head( opp_a ) ) continue;
 	Scalar     t = 0.5 * ( _t[ a ] + ( 1.0 - _t[ opp_a ] ) );
 	t            = std::min( 0.999, std::max( 0.001, t ) );
-	max_t        = std::max( max_t, fabs( t - prev_t[ a ] ) );
+	Scalar    dt = fabs( t - prev_t[ a ] );
+	max_t        = std::max( max_t, dt );
 	_t[ a ]      = t;
 	_t[ opp_a ]  = 1.0 - t;
       }
