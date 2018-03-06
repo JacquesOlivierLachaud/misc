@@ -1541,6 +1541,7 @@ namespace DGtal {
     using Base::_draw_domain;
     using Base::_xf;
     using Base::_yf;
+    using Base::_am;
     using Base::i;
     using Base::j;
     using Base::ij;
@@ -1877,8 +1878,8 @@ namespace DGtal {
       Scalar discontinuities = ( info.cumul_tv == 0 )
 	? 1.0
 	: info.cumul_tv / info.disc;
-      return std::min( 50.0,
-		       std::max( 0.0, 50.0*discontinuities*info.rel_tv ) ); 
+      return std::min( 10.0,
+		       std::max( 0.0, 10.0*discontinuities*info.rel_tv ) ); 
       // return ( info.disc <= 1.0 )
       // 	? 10.0
       // 	: std::min( 10.0,
@@ -2222,9 +2223,21 @@ namespace DGtal {
       ldisc        *= pi_disc.crisp + 1.0;
       // lsimi        *= pi_simi.crisp + 1.0;
       if ( lsimi == 0.0 && ldisc == 0.0 ) { lsimi = ldisc = 1.0; }
-      Scalar      l = ldisc + lsimi;
-      return ( lsimi / l ) * pi_disc.v
-	+    ( ldisc / l ) * pi_simi.v;
+      if ( pi_disc.crisp <= 1.0 ) {
+	Scalar      l = ldisc + lsimi;
+	return ( lsimi / l ) * pi_disc.v
+	   	+    ( ldisc / l ) * pi_simi.v;
+      } else {
+	Scalar      l = ( ldisc + lsimi ) / 2.0;
+	Value     mid = pi_disc.v + _am * ( pi_simi.v - pi_disc.v );
+	if ( ldisc <= lsimi ) {
+	  Scalar t = ldisc / l;
+	  return ( 1.0 - t ) * pi_disc.v + t * mid;
+	} else {
+	  Scalar t = lsimi / l;
+	  return ( 1.0 - t ) * pi_simi.v + t * mid;
+	}
+      }
     }
     
     // Value evaluateValue( Point p, Point cp ) {
