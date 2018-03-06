@@ -309,7 +309,10 @@ namespace DGtal {
     std::vector<Metric>  _metrics;
     /// Contains information per face for 2nd order reconstruction.
     std::vector<FaceInformation> _finfos;
-
+    /// Tells if arcs needs to be updated in regularization
+    std::vector<bool> _arc_updatable;
+    /// Tells if faces needs to be updated in regularization
+    std::vector<bool> _face_updatable;
     /// Contains arc similarities.
     std::vector<Scalar>   _arc_dissimilarities; 
     
@@ -1008,8 +1011,8 @@ namespace DGtal {
     /// Initializes the regularization process for vectorization.
     void regularizeContours( Scalar max_dt = 0.001, int max_iter = 10 )
     {
-      initContours();
       computeArcDissimilarities();
+      initContours();
       for ( int n = 0; n < max_iter; ++n ) {
 	std::vector<Scalar> former_t = _t;
 	updateBarycenters(); 
@@ -1024,6 +1027,8 @@ namespace DGtal {
     /// Initializes the regularization process for vectorization.
     void initContours()
     {
+      _arc_updatable.resize ( T.nbArcs() );
+      _face_updatable.resize( T.nbFaces() );
       // Computes the barycenter for each valid face.
       _b.resize( T.nbFaces() );
       for ( Face f = 0; f < T.nbFaces(); ++f )	{
@@ -1031,6 +1036,16 @@ namespace DGtal {
 	_b[ f ] = ( T.position( V[ 0 ] )
 		    + T.position( V[ 1 ] )
 		    + T.position( V[ 2 ] ) ) / 3.0;
+	auto arcs = arcsAroundFace( f );
+	// _face_updatable[ f ] = _flippable[ arcs[ 0 ] ]
+	//   || _flippable[ arcs[ 1 ] ]
+	//   || _flippable[ arcs[ 2 ] ];
+	 _face_updatable[ f ] =
+	   ( _arc_dissimilarities[ arcs[ 0 ] ] != 0.0 )
+	   || ( _arc_dissimilarities[ arcs[ 1 ] ] != 0.0 )
+	   || ( _arc_dissimilarities[ arcs[ 2 ] ] != 0.0 );
+ 	 // if ( _face_updatable[ f ] )
+	 // _faces_to_update.push_back( f );
       }
       // Computes the contour intersections at each arc.
       _t.resize( T.nbArcs() );
@@ -1042,10 +1057,18 @@ namespace DGtal {
 	}
 	Face     f_a = T.faceAroundArc( a );
 	Face f_opp_a = T.faceAroundArc( opp_a );
-	RealPoint  B = T.position( T.head( a ) );
-	RealPoint  A = T.position( T.head( opp_a ) );
-	auto       I = intersect( A, B, _b[ f_a ], _b[ f_opp_a ] );
-	_t[ a ]      = std::min( 0.999, std::max( 0.001, I.first ) );
+	if ( ! _face_updatable[ f_a ] && ! _face_updatable[ f_opp_a ] ) {
+	  _arc_updatable[ a ]     = false;
+	  _arc_updatable[ opp_a ] = false;
+	  _t[ a ]                 = 0.5;
+	} else {
+	  RealPoint  B = T.position( T.head( a ) );
+	  RealPoint  A = T.position( T.head( opp_a ) );
+	  auto       I = intersect( A, B, _b[ f_a ], _b[ f_opp_a ] );
+	  _arc_updatable[ a ]     = true;
+	  _arc_updatable[ opp_a ] = true;
+	  _t[ a ]      = std::min( 0.999, std::max( 0.001, I.first ) );
+	}
 	// std::cout << "t[" << a << "]=" << _t[ a ] << std::endl;
       }
       // Computes the areas associated with each vertex
@@ -1104,7 +1127,9 @@ namespace DGtal {
     /// count only arcs with different values.
     void updateBarycenters()
     {
+      // for ( Face f : _faces_to_update ) {
       for ( Face f = 0; f < T.nbFaces(); ++f )	{
+      	if ( ! _face_updatable[ f ] ) continue;
 	auto     arcs = arcsAroundFace( f );
 	Scalar      w = 0.0;
 	RealPoint   B = RealPoint::zero;
@@ -1124,6 +1149,7 @@ namespace DGtal {
     void updateContours()
     {
       for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+      	if ( ! _arc_updatable[ a ] ) continue;
 	Arc    opp_a = T.opposite( a );
 	// if ( T.isArcBoundary( a ) || T.isArcBoundary( opp_a ) ) continue;
 	Face     f_a = T.faceAroundArc( a );
@@ -1149,6 +1175,7 @@ namespace DGtal {
       for ( Vertex v = 0; v < T.nbVertices(); ++v ) {
  	auto  out_arcs = T.outArcs( v );
 	for ( Arc a : out_arcs ) {
+	  if ( ! _arc_updatable[ a ] ) continue;
 	   // Checks the evolution of the arc area.
 	  Scalar ratio = areaAtArc( a ) / ( _A[ v ] / T.degree( v ) );
 	  if ( ratio <= 0.001 ) {
@@ -1166,6 +1193,7 @@ namespace DGtal {
       }
       // Averages movements on each edge.
       for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+      	if ( ! _arc_updatable[ a ] ) continue;
 	const Arc opp_a = T.opposite( a );
 	// if ( T.isArcBoundary( a ) || T.isArcBoundary( opp_a ) ) continue;
 	if ( T.head( a ) < T.head( opp_a ) ) continue;
@@ -1849,8 +1877,8 @@ namespace DGtal {
       Scalar discontinuities = ( info.cumul_tv == 0 )
 	? 1.0
 	: info.cumul_tv / info.disc;
-      return std::min( 20.0,
-		       std::max( 0.0, 20.0*discontinuities*info.rel_tv ) ); 
+      return std::min( 50.0,
+		       std::max( 0.0, 50.0*discontinuities*info.rel_tv ) ); 
       // return ( info.disc <= 1.0 )
       // 	? 10.0
       // 	: std::min( 10.0,
@@ -2105,8 +2133,11 @@ namespace DGtal {
       	const auto  cp_simi = voronoimap_simi( p ); // get closest contour points
 	drawPixelInOutput( p, evaluateValue( p, cp_disc, cp_simi ) );
       }
-      trace.info() << "Antialias discontinuity pixels" << std::endl;
-      antialiasDiscontinuities( tvT );
+      if ( ! display_lines ) {
+	trace.info() << "Antialias discontinuity pixels" << std::endl;
+	antialiasDiscontinuities( tvT );
+	antialiasDiscontinuities2ndPass( tvT );
+      }
       // To display contour lines
       if ( display_lines ) {
 	trace.info() << "Debug similarity and discontinuity lines" << std::endl;
@@ -2143,6 +2174,29 @@ namespace DGtal {
 	    if ( _arcimage_simi( q ) != invalid_arc ) qw *= 4.0;
 	    acc += qw * _output( q );
 	    w   += qw;
+	  }
+	}
+	_output.setValue( p, acc / w );
+      }
+    }
+
+    void antialiasDiscontinuities2ndPass( TVT & tvT ) {
+      const Arc invalid_arc = tvT.T.nbArcs();
+      std::array<Vector,9> deltas =
+	{ Vector( 0,0 ), Vector( 1,0 ), Vector( 1,1 ), Vector( 0,1 ),
+	  Vector( -1,1 ), Vector( -1,0 ), Vector( -1,-1 ),
+	  Vector( 0,-1 ), Vector( 1,-1 ) };
+      std::array<Scalar,9> weights =
+	{ 2.0, 1.0, 0.7, 1.0, 0.7, 1.0, 0.7, 1.0, 0.7 };
+      for ( auto p : _draw_domain ) {
+	if ( _arcimage_disc( p ) == invalid_arc ) continue;
+	Value acc = Value::zero;
+	Scalar  w = 0;
+	for ( Dimension i = 0; i < deltas.size(); i++ ) {
+	  const Point q = p + deltas[ i ];
+	  if ( _draw_domain.isInside( q ) ) {
+	    acc += weights[ i ] * _output( q );
+	    w   += weights[ i ];
 	  }
 	}
 	_output.setValue( p, acc / w );
