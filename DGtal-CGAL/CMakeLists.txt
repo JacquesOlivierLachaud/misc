@@ -120,9 +120,9 @@ endif( Boost_FOUND )
 #   message(STATUS "NOTICE: This demo requires CGAL  and will not be compiled.")
 # endif ( WITH_CGAL )
 
-#find_package(CGAL COMPONENTS Core )
-#include( ${CGAL_USE_FILE} )
-#include_directories(${CGAL_INCLUDE_DIR})
+find_package(CGAL COMPONENTS Core )
+include( ${CGAL_USE_FILE} )
+include_directories(${CGAL_INCLUDE_DIR})
 
 # DGtal
 FIND_PACKAGE(DGtal REQUIRED)

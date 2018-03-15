@@ -19,6 +19,7 @@
 #include <DGtal/io/colormaps/GrayscaleColorMap.h>
 #include <DGtal/io/readers/GenericReader.h>
 #include <DGtal/io/writers/PPMWriter.h>
+#include <DGtal/io/writers/PGMWriter.h>
 #include <DGtal/math/linalg/SimpleMatrix.h>
 #include <DGtal/geometry/helpers/ContourHelper.h>
 // #include <DGtal/geometry/volumes/distance/ExactPredicateLpSeparableMetric.h>
@@ -31,6 +32,7 @@
 #include "LeastSquares.h"
 #include "BezierCurve.h"
 #include "BreadthFirstVisitorWithParent.h"
+#include "ImageTriangulation.h"
 
 // #include <CGAL/Delaunay_triangulation_2.h>
 // #include <CGAL/Constrained_Delaunay_triangulation_2.h>
@@ -591,6 +593,68 @@ namespace DGtal {
     }
 
     // -------------- Construction services -------------------------
+
+    // Constructor from domain, triangulation, and value form.
+    TVTriangulation( const Domain& aDomain,
+		     const ValueForm& anI,
+		     const Triangulation& aT,
+		     bool color,
+		     Scalar p = 0.5, Scalar sim = 0.0 )
+    {
+      _color = color;
+      _power = p;
+      _lo    = aDomain.lowerBound();
+      _up    = aDomain.upperBound();
+      _width = _up[ 0 ] - _lo[ 0 ] + 1;
+      _I     = anI;
+      T      = aT;
+      // Defining norms.
+      if ( color ) {
+	_normX = [p] ( const Value& v ) -> Scalar
+	  {
+	    return pow( square( v[ 0 ] ) + square( v[ 1 ] ) + square( v[ 2 ] ), p);
+	  };
+	// _normY = [p] ( const VectorValue& v ) -> Scalar
+	//   {
+	//     return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] ), p )
+	//     + pow( square( v.x[ 1 ] ) + square( v.y[ 1 ] ), p )
+	//     + pow( square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
+	//   };
+	// Standard ColorTV is
+	_normY = [p] ( const VectorValue& v ) -> Scalar
+	{
+	  return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] )
+			+ square( v.x[ 1 ] ) + square( v.y[ 1 ] )
+			+ square( v.x[ 2 ] ) + square( v.y[ 2 ] ), p );
+	};
+      } else {
+	_normX = [p] ( const Value& v ) -> Scalar
+	  {
+	    return pow( square( v[ 0 ] ), p );
+	  };
+	_normY = [p] ( const VectorValue& v ) -> Scalar
+	  {
+	    return pow( square( v.x[ 0 ] ) + square( v.y[ 0 ] ), p );
+	  };
+      }
+      _nbV = T.nbVertices();
+      // Building forms.
+      _u = _I;                  // u = image at initialization
+      _p.resize( T.nbFaces() ); // p = 0     at initialization
+      // TV-energy is computed and stored per face to speed-up computations.
+      _tv_per_triangle.resize( T.nbFaces() );
+      computeEnergyTV();
+
+      // Fix some arcs;
+      _flippable.resize( T.nbArcs() );
+      int nbFlippable = 0;
+      for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+	_flippable[ a ] = true;
+	nbFlippable += _flippable[ a ] ? 1 : 0;
+      }
+      trace.info() << "Nb arcs flippable = " << nbFlippable
+		   << "/" << T.nbArcs() << std::endl;
+    }
     
     // Constructor from color image.
     template <typename Image>
@@ -721,6 +785,20 @@ namespace DGtal {
 		   << "/" << T.nbArcs() << std::endl;
     }
 
+    // -------------------------- Laplacian services --------------------
+  public:
+
+    /// Computes and outputs the norm of the image Laplacian.
+    template <typename Image>
+    void outputLaplacian( Image& L, const Scalar factor ) const {
+      auto lap_bel = div( grad( _u ) );
+      Vertex vtx = 0;
+      for ( unsigned int & val : L ) {
+	val = (unsigned int) std::min( 255, std::max( 0, (int) round( factor * _normX( lap_bel[ vtx ] ) ) ) );
+	vtx++;
+      }
+    }
+      
     template <typename Image>
     bool outputU( Image& J ) const
     {
@@ -836,10 +914,26 @@ namespace DGtal {
     {
       trace.info() << "TV( u ) = " << getEnergyTV() << std::endl;
       //trace.info() << "lambda.f" << std::endl;
-      VectorValueForm p( _p.size() ); // this is p^{n+1}
+      ScalarForm   diam( T.nbFaces() );
+      ScalarForm   diam_v( T.nbVertices() );
+      for ( Vertex vtx = 0; vtx < T.nbVertices(); vtx++ ) {
+	auto   F = T.facesAroundVertex( vtx );
+	Scalar d = 0.0;
+	for ( auto f : F ) d = std::max( d, diameter( f ) );
+	diam_v[ vtx ] = d;
+      }
+      for ( Face f = 0; f < T.nbFaces(); f++ ) {
+	auto V = T.verticesAroundFace( f );
+	diam[ f ] = std::max( diam_v[ V[ 0 ] ],
+			      std::max( diam_v[ V[ 1 ] ], diam_v[ V[ 2 ] ] ) );
+      }
+      _p = VectorValueForm( _p.size() );
+      // grad( combination( lambda, _u, -lambda, _I ) );
+      VectorValueForm p ( _p.size() ); // this is p^{n+1}
       ValueForm      lf = multiplication( lambda, _I );
       Scalar     diff_p = 0.0;
       int             n = 0; // iteration number
+      Scalar     last_E = -1.0;
       do {
 	// trace.info() << "div( p ) - lambda.f" << std::endl;
 	ValueForm        dp_lf = subtraction( div( _p ), lf );
@@ -850,25 +944,29 @@ namespace DGtal {
 	// trace.info() << "p^n+1 := ( p + dt * G ) / ( 1 + dt | G | )" << std::endl;
 	diff_p = 0.0;
 	for ( Face f = 0; f < T.nbFaces(); f++ ) {
-	  Scalar alpha = 1.0 / ( 1.0 + dt * ngdp_lf[ f ] );
+	  const Scalar   ldt = 2.0 * dt / ( diam[ f ] * diam[ f ] );
+	  const Scalar alpha = 1.0 / ( 1.0 + ldt * ngdp_lf[ f ] );
 	  if ( alpha <= 0.0 )
 	    trace.warning() << "Face " << f << " alpha=" << alpha << std::endl;
-	  p[ f ].x  = alpha * ( _p[ f ].x + dt * gdp_lf[ f ].x );
-	  p[ f ].y  = alpha * ( _p[ f ].y + dt * gdp_lf[ f ].y );
+	  p[ f ].x  = alpha * ( _p[ f ].x + ldt * gdp_lf[ f ].x );
+	  p[ f ].y  = alpha * ( _p[ f ].y + ldt * gdp_lf[ f ].y );
 	  VectorValue delta = { p[ f ].x - _p[ f ].x,
 				p[ f ].y - _p[ f ].y };
 	  diff_p = std::max( diff_p, _normY( delta ) );
 	}
+	std::swap( p, _p );
+	_u = combination( 1.0, _I, -1.0/lambda, div( _p ) );
+	if ( ! _color ) {
+	  for ( VertexIndex i = 0; i < _u.size(); ++i )
+	    _u[ i ][ 2 ] = _u[ i ][ 1 ] = _u[ i ][ 0 ];
+	}
+	Scalar new_E = computeEnergyTV();
+	trace.info() << "TV( u ) = " << new_E << " ";
 	trace.info() << "Iter n=" << (n++) << " diff_p=" << diff_p
 		     << " tol=" << tol << std::endl;
-	std::swap( p, _p );
+	if ( ( last_E >= 0.0 ) && ( new_E > last_E ) ) break;
+	else last_E = new_E;
       } while ( ( diff_p > tol ) && ( n < N ) );
-      _u = combination( 1.0, _I, -1.0/lambda, div( _p ) );
-      if ( ! _color ) {
-	for ( VertexIndex i = 0; i < _u.size(); ++i )
-	  _u[ i ][ 2 ] = _u[ i ][ 1 ] = _u[ i ][ 0 ];
-      }
-      trace.info() << "TV( u ) = " << computeEnergyTV() << std::endl;
       return diff_p;
     }
     
@@ -915,9 +1013,9 @@ namespace DGtal {
 	trace.info() << " nbflipequal=" << nbequal
 		     << "/" << _Q_equal.size();
 	_Q_equal.clear();
-      } else if ( ( ( equal_strategy == 4 ) || ( equal_strategy == 5 ) )
+      } else if ( ( ( equal_strategy >= 4 ) || ( equal_strategy <= 5 ) )
 		  && ( nbflipped == 0 ) ) {
-      nbequal = flipEqualWithProb( _Q_equal, 0.5 );
+	nbequal = flipEqualWithProb( _Q_equal, 0.5 );
 	trace.info() << " nbflipequalP=" << nbequal
 		     << "/" << _Q_equal.size();
 	_Q_equal.clear();
@@ -1722,6 +1820,87 @@ namespace DGtal {
     }
 
     /**
+       Displays the Laplacian with flat shading.
+    */
+    void viewLaplacian( TVT & tvT )
+    {
+      cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+      cairo_set_line_width( _cr, 0.0 ); 
+      cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+      cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+      auto Lp = tvT.div( tvT.grad( tvT._u ) );
+      for ( Face f = 0; f < tvT.T.nbFaces(); ++f ) {
+	VertexRange V = tvT.T.verticesAroundFace( f );
+	RealPoint       a = tvT.T.position( V[ 0 ] );
+	RealPoint       b = tvT.T.position( V[ 1 ] );
+	RealPoint       c = tvT.T.position( V[ 2 ] );
+	Scalar        val = ( tvT._normX( Lp[ V[ 0 ] ] )
+			      + tvT._normX( Lp[ V[ 1 ] ] )
+			      + tvT._normX( Lp[ V[ 2 ] ] ) ) / 3.0;
+	val = std::min( 255.0, std::max( 0.0, val ) );
+	drawFlatTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
+			  RealPoint( b[ 0 ], b[ 1 ] ),
+			  RealPoint( c[ 0 ], c[ 1 ] ),
+			  Value( val, val, val ) );
+      }
+    }
+
+    /**
+       Displays the Laplacian with flat shading.
+    */
+    void viewGradientLaplacian( TVT & tvT )
+    {
+      cairo_set_operator( _cr,  CAIRO_OPERATOR_ADD );
+      cairo_set_line_width( _cr, 0.0 ); 
+      cairo_set_line_cap( _cr, CAIRO_LINE_CAP_BUTT );
+      cairo_set_line_join( _cr, CAIRO_LINE_JOIN_BEVEL );
+      auto Lp = tvT.div( tvT.grad( tvT._u ) );
+      for ( Face f = 0; f < tvT.T.nbFaces(); ++f ) {
+	VertexRange V = tvT.T.verticesAroundFace( f );
+	RealPoint       a = tvT.T.position( V[ 0 ] );
+	RealPoint       b = tvT.T.position( V[ 1 ] );
+	RealPoint       c = tvT.T.position( V[ 2 ] );
+	Scalar         v0 = tvT._normX( Lp[ V[ 0 ] ] );
+	Scalar         v1 = tvT._normX( Lp[ V[ 1 ] ] );
+	Scalar         v2 = tvT._normX( Lp[ V[ 2 ] ] );
+	Scalar         vm = std::min( v0, std::min( v1, v2 ) );
+	// drawFlatTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
+	// 		  RealPoint( b[ 0 ], b[ 1 ] ),
+	// 		  RealPoint( c[ 0 ], c[ 1 ] ),
+	// 		  Value( vm, vm, vm ) );
+	drawLinearGradientTriangle( RealPoint( a[ 0 ], a[ 1 ] ),
+				    RealPoint( b[ 0 ], b[ 1 ] ),
+				    RealPoint( c[ 0 ], c[ 1 ] ),
+				    Value( v0, v0, v0 ),
+				    Value( v1, v1, v1 ),
+				    Value( v2, v2, v2 ) );
+      }
+      // cairo_set_operator( _cr,  CAIRO_OPERATOR_OVER );
+      // cairo_set_line_width( _cr, 1.0 ); 
+      // for ( Face f = 0; f < tvT.T.nbFaces(); ++f ) {
+      // 	VertexRange V = tvT.T.verticesAroundFace( f );
+      // 	RealPoint       a = tvT.T.position( V[ 0 ] );
+      // 	RealPoint       b = tvT.T.position( V[ 1 ] );
+      // 	RealPoint       c = tvT.T.position( V[ 2 ] );
+      // 	Scalar         v0 = tvT._normX( Lp[ V[ 0 ] ] ) / sqrt( 3.0 );
+      // 	Scalar         v1 = tvT._normX( Lp[ V[ 1 ] ] ) / sqrt( 3.0 );
+      // 	Scalar         v2 = tvT._normX( Lp[ V[ 2 ] ] ) / sqrt( 3.0 );
+      // 	Scalar        v01 = std::min( v0, v1 );
+      // 	Scalar        v02 = std::min( v0, v2 );
+      // 	Scalar        v12 = std::min( v1, v2 );
+      // 	drawFlatLine(  RealPoint( a[ 0 ], a[ 1 ] ),
+      // 		       RealPoint( b[ 0 ], b[ 1 ] ),
+      // 		       Value( v01, v01, v01 ) );
+      // 	drawFlatLine(  RealPoint( a[ 0 ], a[ 1 ] ),
+      // 		       RealPoint( c[ 0 ], c[ 1 ] ),
+      // 		       Value( v02, v02, v02 ) );
+      // 	drawFlatLine(  RealPoint( c[ 0 ], c[ 1 ] ),
+      // 		       RealPoint( b[ 0 ], b[ 1 ] ),
+      // 		       Value( v12, v12, v12 ) );
+      // }
+    }
+
+    /**
        Displays the AVT with flat or Gouraud shading, and displays a
        set of discontinuities as a percentage of the total energy.
     */
@@ -2274,9 +2453,14 @@ namespace DGtal {
     //   ( (int) round( x0 ), (int) round( y0 ), 
     // 	(int) round( (x1+1 - x0) * b ), (int) round( (y1+1 - y0) * b ), 
     // 	b, b, shading, color, stiffness, amplitude );
-    if ( shading < 4 ) cviewer.view( tvT, discontinuities );
-    else               cviewer.view2ndOrder( tvT, discontinuities,
-					     shading == 5 );
+    if ( shading < 4 )
+      cviewer.view( tvT, discontinuities );
+    else if ( shading < 6 )
+      cviewer.view2ndOrder( tvT, discontinuities,
+			    shading == 5 );
+    else
+      cviewer.viewGradientLaplacian( tvT );
+    //      cviewer.viewLaplacian( tvT );
     cviewer.save( fname.c_str() );
   }
   
@@ -2302,6 +2486,9 @@ namespace DGtal {
 			   discontinuities, stiffness, amplitude );
     if ( display & 0x20 )
       viewTVTriangulation( tvT, b, x0, y0, x1, y1, 5, color, fname + "-2nd-with-lines.png",
+			   discontinuities, stiffness, amplitude );
+    if ( display & 0x40 )
+      viewTVTriangulation( tvT, b, x0, y0, x1, y1, 6, color, fname + "-laplacian.png",
 			   discontinuities, stiffness, amplitude );
   }
 
@@ -2666,6 +2853,7 @@ int main( int argc, char** argv )
     ("epsScale", po::value<double>()->default_value( 1.0 ), "Change the default eps scale to increase display size on small images (using 10 will display easely small images while 1.0 is more adapted to bigger images) . " )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
     ("regularizeContour,R", po::value<int>()->default_value( 20 ), "regularizes the dual contours for <nb> iterations." )
+    ("zip,z", po::value<double>()->default_value( 1.0 ), "Compresses the triangulation to keep only the given proportion of vertices." )
     ;
 
   bool parseOK = true;
@@ -2714,7 +2902,8 @@ int main( int argc, char** argv )
   double     tol = vm[ "tolerance" ].as<double>();
   int          N = vm[ "tv-max-iter" ].as<int>();
   int      quant = vm[ "quantify" ].as<int>();
-  if ( lambda > 0.0 ) {
+  //  if ( lambda > 0.0 ) {
+  if ( false ) {
     trace.beginBlock("Image usual TV regularization");
     bool out_color = color;
     if ( color ) {
@@ -2751,7 +2940,6 @@ int main( int argc, char** argv )
     }
     trace.endBlock();
   }
-  
   trace.beginBlock("Construction of the triangulation");
   double    p = vm[ "tv-power" ].as<double>();
   double  sim = vm[ "similarity" ].as<double>();
@@ -2767,6 +2955,11 @@ int main( int argc, char** argv )
   bool ok = TVT.outputU( J );
   struct UnsignedInt2Color {
     Color operator()( unsigned int val ) const { return Color( val ); }
+  };
+  struct UnsignedInt2GrayLevel {
+    unsigned char operator()( unsigned int val ) const {
+      return static_cast<unsigned char>( val );
+    }
   };
   PPMWriter<Image, UnsignedInt2Color>::exportPPM( "output-tv.ppm", J );
   trace.endBlock();
@@ -2800,12 +2993,28 @@ int main( int argc, char** argv )
   for ( int n = 0; n < nbAlt; ++n ) {
     trace.info() << "******************** PASS " << n << " *******************"
 		 << endl;
-    if ( n > 0 && lambda > 0.0 ) {
+    if ( n >= 0 && lambda > 0.0 ) {
+      trace.info() << "------------- optimize u ----------------" << std::endl;
+      TVTriangulation::ValueForm save_u = TVT._u;
       TVT.tvPass( lambda, dt, tol, N );
+      if ( last_energy >= 0.0 && TVT.getEnergyTV() >= last_energy
+	   && n >= nbAlt/2 ) {
+	TVT._u = save_u;
+	TVT.computeEnergyTV();
+	trace.info() << "TV( u ) = " << TVT.getEnergyTV()
+		     << " (unable to do better)" << std::endl;
+	break;
+      }
+    }
+    if ( n == 0 ) {
+        Image L( image.domain() );
+	TVT.outputLaplacian( L, 1.0 );
+	PGMWriter<Image,UnsignedInt2GrayLevel>::exportPGM( "output-laplacian-before.pgm", L );
     }
     int       iter = 0;
     int       last = 1;
     bool subdivide = false;
+    trace.info() << "------------- optimize geometry --------------" << std::endl;
     trace.info() << "TV( u ) = " << TVT.getEnergyTV() << std::endl;
     while ( true ) {
       if ( iter++ > miter ) break;
@@ -2818,9 +3027,7 @@ int main( int argc, char** argv )
       }
       last = nbs.first;
     }
-    if ( last_energy >= 0.0 && TVT.getEnergyTV() >= last_energy )
-      break;
-    else last_energy = TVT.getEnergyTV();
+    last_energy = TVT.getEnergyTV();
   }
   trace.endBlock();
 
@@ -2846,6 +3053,50 @@ int main( int argc, char** argv )
     
     viewTVTriangulationAll( TVT, b, x0, y0, x1, y1, color, bname,
 			    display, disc, st, am );
+  }
+  trace.endBlock();
+
+  trace.beginBlock("Compressing triangulation");
+  {
+    Image L( image.domain() );
+    TVT.outputLaplacian( L, 1.0 );
+    PGMWriter<Image,UnsignedInt2GrayLevel>::exportPGM( "output-laplacian-after.pgm", L );
+    double zip = vm[ "zip" ].as<double>();
+    if ( zip < 1.0 ) {
+      ImageTriangulation< Z2i::Space, 3 > IT;
+      TVTriangulation::ScalarForm lp( TVT.T.nbVertices() );
+      TVTriangulation::VertexIndex v = 0;
+      for ( auto val : L ) lp[ v++ ] = val;
+      IT.init( image.domain(), TVT._I, lp, zip );
+      TVTriangulation TVTzip( IT._domain, IT._I, IT._T,
+			      color, p );
+      trace.info() << TVTzip.T << std::endl;
+
+      trace.info() << "------------- optimize geometry --------------" << std::endl;
+      trace.info() << "TV( u ) = " << TVTzip.getEnergyTV() << std::endl;
+      int iter = 0;
+      int last = 1;
+      while ( true ) {
+	if ( iter++ > miter ) break;
+	double energy = 0.0;
+	nbs = TVTzip.onePass( energy, strat );
+	if ( ( last == 0 ) && ( nbs.first == 0 ) ) break;
+	last = nbs.first;
+      }
+      
+      int  display = vm[ "display-flip" ].as<int>();
+      double     b = vm[ "bitmap" ].as<double>();
+      double  disc = vm[ "discontinuities" ].as<double>();
+      double    st = vm[ "stiffness" ].as<double>();
+      double    am = vm[ "amplitude" ].as<double>();
+      double    x0 = 0.0;
+      double    y0 = 0.0;
+      double    x1 = (double) image.domain().upperBound()[ 0 ];
+      double    y1 = (double) image.domain().upperBound()[ 1 ];
+      std::string bname = "zip";
+      viewTVTriangulationAll( TVTzip, b, x0, y0, x1, y1, color, bname,
+			      display, disc, st, am );
+    }
   }
   trace.endBlock();
 

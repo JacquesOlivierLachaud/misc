@@ -448,6 +448,22 @@ namespace DGtal
       cairo_fill( _cr );
     }
 
+    void drawFlatLine( RealPoint a, RealPoint b,
+		       Value val )
+    {
+      cairo_set_source_rgb( _cr,
+			    val[ 0 ] * _redf,
+			    val[ 1 ] * _greenf,
+			    val[ 2 ] * _bluef );
+      cairo_set_line_width( _cr, 1.0 ); 
+      cairo_move_to( _cr, i( a[ 0 ] ), j( a[ 1 ] ) );
+      cairo_line_to( _cr, i( b[ 0 ] ), j( b[ 1 ] ) );
+      //cairo_line_to( _cr, i( c[ 0 ] ), j( c[ 1 ] ) );
+      cairo_close_path( _cr );
+      cairo_stroke( _cr );
+      cairo_set_line_width( _cr, 0.0 ); 
+    }
+
     
     template <typename BezierTriangle>
     void drawColorBezierTriangle( const BezierTriangle& BT )
