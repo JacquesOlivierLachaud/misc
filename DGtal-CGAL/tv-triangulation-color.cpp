@@ -1103,6 +1103,141 @@ namespace DGtal {
       return nbsubdivided;
     }
 
+    std::vector<Arc> queueAndSortArcs()
+    {
+      std::vector<Arc> tv_arcs;
+      for ( Arc a = 0; a < T.nbArcs(); ++a ) {
+	const Face   f1 = T.faceAroundArc( a );
+	const Arc opp_a = T.opposite( a );
+	const Face   f2 = T.faceAroundArc( opp_a );
+	if ( ( T.head( a ) > T.head( opp_a ) )
+	     && ( f1 != T.INVALID_FACE ) && ( f2 != T.INVALID_FACE ) )
+	  if ( T.isMergeable( a ) ) tv_arcs.push_back( a );
+      }
+      trace.info() << "[queueAndSortArcs] sorting #arcs=" << tv_arcs.size()
+		   << std::endl;
+      computeEnergyTV();
+      std::sort( tv_arcs.begin(), tv_arcs.end(),
+		 [ & ] ( Arc a1, Arc a2 ) -> bool
+		 {
+		   const Face   f_a1     = T.faceAroundArc( a1 );
+		   const Face   f_a1_opp = T.faceAroundArc( T.opposite( a1 ) );
+		   const Face   f_a2     = T.faceAroundArc( a2 );
+		   const Face   f_a2_opp = T.faceAroundArc( T.opposite( a2 ) );
+		   return ( energyTV( f_a1 ) + energyTV( f_a1_opp ) )
+		     <    ( energyTV( f_a2 ) + energyTV( f_a2_opp ) );
+		 } );
+      return tv_arcs;
+    }
+
+    void markSurroundingArcs( const Arc a, std::set<Arc>& M )
+    {
+      const Vertex v1 = T.head( a );
+      const Vertex v2 = T.tail( a );
+      auto A1 = T.outArcs( v1 );
+      auto A2 = T.outArcs( v2 );
+      for ( Arc a1 : A1 ) {
+	M.insert( a1 );
+	M.insert( T.opposite( a1 ) );
+	M.insert( T.next( a1 ) );
+	M.insert( T.opposite( T.next( a1 ) ) );
+      }
+      for ( Arc a2 : A2 ) {
+	M.insert( a2 );
+	M.insert( T.opposite( a2 ) );
+	M.insert( T.next( a2 ) );
+	M.insert( T.opposite( T.next( a2 ) ) );
+      }
+    }
+
+    VertexRange localNeighborhood( Arc a ) const {
+      const Arc     a_next = T.next( a );
+      const Arc opp_a_next = T.next( T.opposite( a ) );
+      const Vertex      v3 = T.head( a_next ); 
+      const Vertex      v4 = T.head( opp_a_next ); 
+      VertexRange V;
+      Arc        current_a = a_next;
+      while ( T.head( current_a ) != v4 ) {
+	V.push_back( T.head( current_a ) );
+	current_a = T.next( T.opposite( current_a ) );
+      }
+      current_a = opp_a_next;
+      while ( T.head( current_a ) != v3 ) {
+	V.push_back( T.head( current_a ) );
+	current_a = T.next( T.opposite( current_a ) );
+      }
+      return V;
+    }
+      
+      
+    bool isLocallyMergeableAt( Arc a, RealPoint p ) const {
+      auto  V = localNeighborhood( a );
+      bool ok = true;
+      for ( int i = 0; ok && ( i < V.size() ); ++i ) {
+	bool cw = det( T.position( V[ i ] ) - p,
+		       T.position( V[ ( i+1 ) % V.size() ] ) - p ) >= 0;
+	if ( ! cw ) ok = false;
+      }
+      return ok;
+    }
+    
+    void simplify( Scalar compression )
+    {
+      // Objective.
+      VertexIndex nb_zip = (VertexIndex) ceil( T.nbVertices() * compression );
+      // We need first to sort arcs according to their energyTV, the lower, the first to merge.
+      trace.info() << "T=" << T
+		   << " valid=" << ( T.heds().isValid( false ) ? "OK" : "ERROR" )
+		   << " validT=" << ( T.heds().isValidTriangulation() ? "OK" : "ERROR" )
+		   << std::endl;
+      Scalar limit = 0.1;
+      while ( T.nbVertices() > nb_zip ) {
+	std::set<Arc>    M;
+	std::vector<Arc> tv_arcs = queueAndSortArcs();
+	int current   = 0;
+	int nb_merged = 0;
+	while ( current <= (int) ceil( limit * tv_arcs.size() ) ) {
+	  if  ( T.nbVertices() <= nb_zip ) break;
+	  if ( current >= tv_arcs.size() ) break;
+	  trace.info() << "current=" << current << " #V=" << T.nbVertices()
+		       << " / " << nb_zip << std::endl;
+	  const Arc a = tv_arcs[ current++ ];
+	  if ( M.find( a ) != M.end() ) continue;
+	  if ( a >= T.nbArcs() )               continue;
+	  // if ( T.head( a ) >= T.nbVertices() ) continue;
+	  // if ( T.tail( a ) >= T.nbVertices() ) continue;
+	  // const Face   f1 = T.faceAroundArc( a );
+	  // if ( f1 >= T.nbFaces() || f1 == T.INVALID_FACE ) continue;
+	  const Arc opp_a = T.opposite( a );
+	  if ( opp_a >= T.nbArcs() )           continue;
+	  // VertexRange P = T.verticesAroundArc( a );
+	  // if ( ! isConvex( P ) )               continue;
+	  
+	  // const Face   f2 = T.faceAroundArc( opp_a );
+	  // if ( f2 >= T.nbFaces() || f2 == T.INVALID_FACE ) continue;
+	  // if ( T.head( a ) < T.head( opp_a ) ) continue;
+	  RealPoint p = 0.5*( T.position( T.head( a ) )+T.position( T.tail( a ) ) );
+	  if ( isLocallyMergeableAt( a, p )
+	       && T.isMergeable( a ) ) {
+	    const Vertex rv = T.head( a );
+	    markSurroundingArcs( a, M );
+	    T.merge( a, p );
+	    _u[ rv ] = _u.back();
+	    _u.pop_back();
+	    _I[ rv ] = _I.back();
+	    _I.pop_back();
+	    nb_merged++;
+	    trace.info() << "T=" << T
+	    // 		 << " valid=" << ( T.heds().isValid( false ) ? "OK" : "ERROR" )
+	    // 		 << " validT=" << ( T.heds().isValidTriangulation() ? "OK" : "ERROR" )
+	     		 << std::endl;
+	  }
+	} // while ( current <= (int) ceil( 0.1 * tv_arcs.size() ) ) {
+	if ( nb_merged == 0 ) limit *= 2.0;
+	if ( current >= tv_arcs.size() ) break;
+      }	// while ( T.nbVertices() > nb_zip ) {
+    }
+    
     // -------------------------- Regularization services --------------------
   public:
 
@@ -2854,6 +2989,8 @@ int main( int argc, char** argv )
     ("numColorExportEPSDual", po::value<unsigned int>()->default_value(0), "num of the color of the map." )
     ("regularizeContour,R", po::value<int>()->default_value( 20 ), "regularizes the dual contours for <nb> iterations." )
     ("zip,z", po::value<double>()->default_value( 1.0 ), "Compresses the triangulation to keep only the given proportion of vertices." )
+    ("zip-method,Z", po::value<std::string>()->default_value( "Laplacian" ), "zip method in Laplacian | Merge." )
+    // ("nb-zip-geometry,Z", po::value<int>()->default_value( 100 ), "Maximum number of iterations to optimize the TV geometry of the zipped triangulation." )
     ;
 
   bool parseOK = true;
@@ -3017,7 +3154,7 @@ int main( int argc, char** argv )
     trace.info() << "------------- optimize geometry --------------" << std::endl;
     trace.info() << "TV( u ) = " << TVT.getEnergyTV() << std::endl;
     while ( true ) {
-      if ( iter++ > miter ) break;
+      if ( iter++ >= miter ) break;
       double energy = 0.0;
       nbs = TVT.onePass( energy, strat );
       if ( ( last == 0 ) && ( nbs.first == 0 ) ) {
@@ -3055,29 +3192,25 @@ int main( int argc, char** argv )
 			    display, disc, st, am );
   }
   trace.endBlock();
-
-  trace.beginBlock("Compressing triangulation");
-  {
-    Image L( image.domain() );
-    TVT.outputLaplacian( L, 1.0 );
-    PGMWriter<Image,UnsignedInt2GrayLevel>::exportPGM( "output-laplacian-after.pgm", L );
-    double zip = vm[ "zip" ].as<double>();
+  
+  std::string z_method = vm[ "zip-method" ].as<std::string>();
+  if ( z_method == "Merge" ) {
+    trace.beginBlock("Compressing triangulation");
+    double           zip = vm[ "zip" ].as<double>();
     if ( zip < 1.0 ) {
-      ImageTriangulation< Z2i::Space, 3 > IT;
-      TVTriangulation::ScalarForm lp( TVT.T.nbVertices() );
-      TVTriangulation::VertexIndex v = 0;
-      for ( auto val : L ) lp[ v++ ] = val;
-      IT.init( image.domain(), TVT._I, lp, zip );
-      TVTriangulation TVTzip( IT._domain, IT._I, IT._T,
+      TVTriangulation TVTzip( image.domain(), TVT._u, TVT.T,
 			      color, p );
+      TVTzip.simplify( zip );
       trace.info() << TVTzip.T << std::endl;
 
       trace.info() << "------------- optimize geometry --------------" << std::endl;
       trace.info() << "TV( u ) = " << TVTzip.getEnergyTV() << std::endl;
       int iter = 0;
       int last = 1;
+      int miter = vm[ "limit" ].as<int>();
+      // int miter = vm[ "nb-zip-geometry" ].as<int>();
       while ( true ) {
-	if ( iter++ > miter ) break;
+	if ( iter++ >= miter ) break;
 	double energy = 0.0;
 	nbs = TVTzip.onePass( energy, strat );
 	if ( ( last == 0 ) && ( nbs.first == 0 ) ) break;
@@ -3096,10 +3229,71 @@ int main( int argc, char** argv )
       std::string bname = "zip";
       viewTVTriangulationAll( TVTzip, b, x0, y0, x1, y1, color, bname,
 			      display, disc, st, am );
+      unsigned int w = image.extent()[ 0 ];
+      unsigned int h = image.extent()[ 1 ];
+      std::string pname = "zip-primal.eps";
+      // std::string dname = "zip-dual.eps";
+      double epsScale = vm["epsScale"].as<double>();
+      exportEPSMesh(TVTzip, pname, w, h , true, epsScale);
+      //      exportEPSMeshDual(TVTzip, dname, w, h , true, 0, epsScale);
     }
-  }
   trace.endBlock();
+  } else if ( z_method == "Laplacian" ) {
+    trace.beginBlock("Compressing triangulation");
+    {
+      Image L( image.domain() );
+      TVT.outputLaplacian( L, 1.0 );
+      PGMWriter<Image,UnsignedInt2GrayLevel>::exportPGM( "output-laplacian-after.pgm", L );
+      double zip = vm[ "zip" ].as<double>();
+      if ( zip < 1.0 ) {
+	ImageTriangulation< Z2i::Space, 3 > IT;
+	TVTriangulation::ScalarForm lp( TVT.T.nbVertices() );
+	TVTriangulation::VertexIndex v = 0;
+	for ( auto val : L ) lp[ v++ ] = val;
+	IT.init( image.domain(), TVT._I, lp, zip );
+	TVTriangulation TVTzip( IT._domain, IT._I, IT._T,
+				color, p );
+	trace.info() << TVTzip.T << std::endl;
+	
+	trace.info() << "------------- optimize geometry --------------" << std::endl;
+	trace.info() << "TV( u ) = " << TVTzip.getEnergyTV() << std::endl;
+	int iter = 0;
+	int last = 1;
+	int miter = vm[ "limit" ].as<int>();
+	//int miter = vm[ "nb-zip-geometry" ].as<int>();
+	while ( true ) {
+	  if ( iter++ >= miter ) break;
+	  double energy = 0.0;
+	  nbs = TVTzip.onePass( energy, strat );
+	  if ( ( last == 0 ) && ( nbs.first == 0 ) ) break;
+	  last = nbs.first;
+	}
+	
+	int  display = vm[ "display-flip" ].as<int>();
+	double     b = vm[ "bitmap" ].as<double>();
+	double  disc = vm[ "discontinuities" ].as<double>();
+	double    st = vm[ "stiffness" ].as<double>();
+	double    am = vm[ "amplitude" ].as<double>();
+	double    x0 = 0.0;
+	double    y0 = 0.0;
+	double    x1 = (double) image.domain().upperBound()[ 0 ];
+	double    y1 = (double) image.domain().upperBound()[ 1 ];
+	std::string bname = "zip";
+	viewTVTriangulationAll( TVTzip, b, x0, y0, x1, y1, color, bname,
+				display, disc, st, am );
+	unsigned int w = image.extent()[ 0 ];
+	unsigned int h = image.extent()[ 1 ];
+	std::string pname = "zip-primal.eps";
+	// std::string dname = "zip-dual.eps";
+	double epsScale = vm["epsScale"].as<double>();
+	exportEPSMesh(TVTzip, pname, w, h , true, epsScale);
+	//      exportEPSMeshDual(TVTzip, dname, w, h , true, 0, epsScale);
+      }
+    }
+    trace.endBlock();
+  }
 
+  
   trace.beginBlock("Export base triangulation");
 
   double epsScale = vm["epsScale"].as<double>();

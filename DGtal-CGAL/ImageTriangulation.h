@@ -47,6 +47,10 @@
 #include <DGtal/kernel/CSpace.h>
 #include <DGtal/helpers/StdDefs.h>
 #include <DGtal/shapes/TriangulatedSurface.h>
+#include "DGtal/kernel/BasicPointPredicates.h"
+#include "DGtal/images/SimpleThresholdForegroundPredicate.h"
+#include "DGtal/geometry/volumes/distance/ExactPredicateLpSeparableMetric.h"
+#include "DGtal/geometry/volumes/distance/DistanceTransformation.h"
 
 #include <CGAL/Delaunay_triangulation_2.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -132,10 +136,15 @@ namespace DGtal
       // Add extremal points
       Size w = ( _domain.upperBound() - _domain.lowerBound() )[ 0 ] + 1;
       Size h = ( _domain.upperBound() - _domain.lowerBound() )[ 1 ] + 1;
+      Z2i::DigitalSet aSet( _domain );
       _subset.insert( pixels[ 0 ] );
       _subset.insert( pixels[ w-1 ] );
       _subset.insert( pixels[ w*(h-1) ] );
       _subset.insert( pixels[ w*h-1 ] );
+      aSet.insert( pixels[ 0 ].xy );
+      aSet.insert( pixels[ w-1 ].xy );
+      aSet.insert( pixels[ w*(h-1) ].xy );
+      aSet.insert( pixels[ w*h-1 ].xy );
       std::sort( pixels.begin(), pixels.end() );
       // Compute cumulative density function
       ScalarForm cdf( pixels.size() );
@@ -147,14 +156,86 @@ namespace DGtal
       for ( Size i = 0; i < pixels.size(); ++i ) cdf[ i ] /= sum; 
       // Extracts a subset of points.
       Size nb_points = (Size) round( I.size() * compression );
-      while ( _subset.size() < nb_points ) {
-	Scalar x = rand() / (Scalar) RAND_MAX;
-	auto  it = lower_bound( cdf.begin(), cdf.end(), x );
-	Size   i = it - cdf.begin();
+
+      // This method picks the pixel according to a probability
+      // proportional with the laplacian norm. Takes also into account
+      // the position of the points already selected.
+      int nb_pass = 20;
+      int current_pass = 1;
+      Scalar  sup_cdf = (Scalar) current_pass / (Scalar) nb_pass;
+      int  target = ceil( current_pass * (Scalar) nb_points / (Scalar) nb_pass );
+      Size i = 0;
+      while ( cdf[ i ] < sup_cdf ) {
 	_subset.insert( pixels[ i ] );
-	// std::cout << "i=" << i << " nb=" << _subset.size()
-	// 	  << "/" << nb_points << "/" << I.size() << std::endl;
+	aSet.insert( pixels[ i ].xy );
+       	i++;
       }
+      typedef ExactPredicateLpSeparableMetric<Z2i::Space, 2> L2Metric;
+      typedef functors::NotPointPredicate<Z2i::DigitalSet> NotPredicate;
+      typedef DistanceTransformation<Z2i::Space, NotPredicate, L2Metric > Delta;
+      L2Metric l2;
+      auto  inf_cdf_it = cdf.begin();
+      auto  inf_pix_it = pixels.begin();
+      int prev_target  = target;
+      while ( _subset.size() < nb_points ) {
+	std::cout << "Pass " << current_pass << "/" << nb_pass
+		  << " #V=" << _subset.size() << "/" << nb_points << std::endl;
+	current_pass += 1;
+	NotPredicate notSetPred( aSet );      
+	Delta dt( _domain, notSetPred, l2);
+	int  target = ceil(current_pass * (Scalar) nb_points / (Scalar) nb_pass);
+	Scalar  sup_cdf = (Scalar) current_pass / (Scalar) nb_pass;
+      	auto sup_cdf_it = lower_bound( inf_cdf_it, cdf.end(), sup_cdf );
+      	auto sup_pix_it = pixels.begin() + (sup_cdf_it - cdf.begin());
+	if ( ( sup_pix_it - inf_pix_it ) <= target - _subset.size() ) {
+	  for ( auto it = inf_pix_it; it != sup_pix_it; ++it ) {
+	    _subset.insert( *it );
+	    aSet.insert( it->xy );
+	  }
+	} else {
+	  std::sort( inf_pix_it, sup_pix_it,
+		     [&] ( const Pixel& p, const Pixel& q )
+		     { return dt( p.xy ) > dt( q.xy ); } );
+	  auto it = inf_pix_it;
+	  int n = 0;
+	  while ( _subset.size() < target ) {
+	    //std::cout << _subset.size() << " target=" << target
+	    //		    << it->xy << " dt=" << dt( it->xy )
+	    //	      << std::endl;
+	    Scalar x = rand() / (Scalar) RAND_MAX;
+	    Scalar p = pow( 1.0 - exp( 0.2 + dt( it->xy ) ), 2.0 );
+	    if ( x < p ) {
+	      _subset.insert( *it );
+	      aSet.insert( it->xy );
+	    }
+	    ++it; 
+	    if ( it == sup_pix_it ) {
+	      it = inf_pix_it;
+	      ++n;
+	      if ( n >= 5 ) break;
+	    }
+	  }
+	}
+	inf_pix_it  = sup_pix_it;
+	inf_cdf_it  = sup_cdf_it;
+	prev_target = target;
+      }
+	
+      // This method picks the pixel with highest laplacian norm.
+      // Size i = 0;
+      // while ( _subset.size() < nb_points ) {
+      // 	_subset.insert( pixels[ i ] );
+      // 	i++;
+      // }
+
+      // This method picks the pixel according to a probability
+      // proportional with the laplacian norm.
+      // while ( _subset.size() < nb_points ) {
+      // 	Scalar x = rand() / (Scalar) RAND_MAX;
+      // 	auto  it = lower_bound( cdf.begin(), cdf.end(), x );
+      // 	Size   i = it - cdf.begin();
+      // 	_subset.insert( pixels[ i ] );
+      // }
       // Compute Delaunay Triangulation
       trace.info() << "[ImageTriangulation::init] Compute Delaunay Triangulation."
 		   << std::endl;
@@ -174,13 +255,13 @@ namespace DGtal
       }
       // Build triangulated surface
       _I.resize( _subset.size() );
-      VertexIndex i = 0;
+      VertexIndex vi = 0;
       std::map< Point, VertexIndex > pt2vtx;
       for ( auto pixel : _subset ) {
 	_T.addVertex( pixel.xy );
-	_I[ i ] = pixel.v;
-	pt2vtx[ pixel.xy ] = i;
-	i++;
+	_I[ vi ] = pixel.v;
+	pt2vtx[ pixel.xy ] = vi;
+	vi++;
       }
       for ( FiniteFacesIterator it = DT.finite_faces_begin(),
 	      itend = DT.finite_faces_end(); it != itend; ++it ) {
