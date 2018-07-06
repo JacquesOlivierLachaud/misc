@@ -912,7 +912,10 @@ namespace DGtal {
     /// meaning of the previous iteration).
     Scalar tvPass( Scalar lambda, Scalar dt, Scalar tol, int N = 10 )
     {
-      trace.info() << "TV( u ) = " << getEnergyTV() << std::endl;
+      const Scalar E = getEnergyTV();
+      const Scalar perimeter = E / ( 255.0 * ( _color ? sqrt(3.0) : 1.0 ) );
+      trace.info() << "TV( u ) = " << getEnergyTV()
+		   << " Perimeter = " << perimeter << std::endl;
       //trace.info() << "lambda.f" << std::endl;
       ScalarForm   diam( T.nbFaces() );
       ScalarForm   diam_v( T.nbVertices() );
@@ -995,7 +998,10 @@ namespace DGtal {
 	else if ( update == 0 ) _Q_equal.push_back( a );
       }
       total_energy = getEnergyTV();
+      const Scalar perimeter = total_energy
+	/ ( 255.0 * ( _color ? sqrt(3.0) : 1.0 ) );
       trace.info() << "TV( u ) = " << total_energy
+		   << " Perimeter = " << perimeter
 		   << " nbflipped=" << nbflipped
 		   << "/" << Q_process.size();
       if ( equal_strategy == 1 ) {

@@ -182,6 +182,7 @@ SET(SRCs
   tv-image
   tv-zoom-image
   testBezierTriangle2
+  poisson-editing
 )
 
 
