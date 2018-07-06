@@ -150,6 +150,9 @@ int main( int argc, char** argv )
 	 Point sym_px ( -1 - p[ 0 ], p[ 1 ] );
 	 Point sym_py ( p[ 0 ], -1 - p[ 1 ] );
 	 Point sym_pxy( -1 - p[ 0 ], -1 - p[ 1 ] );
+	 // Point sym_px ( -1 - p[ 0 ], p[ 1 ] );
+	 // Point sym_py ( p[ 0 ], -1 - p[ 1 ] );
+	 // Point sym_pxy( -1 - p[ 0 ], -1 - p[ 1 ] );
 	 std::array<Point,4> all_p = { p, sym_px, sym_py, sym_pxy }; 
 	 for ( auto&&q : all_p ) IU.setValue( q, (double) image( p ) );
        }
@@ -157,10 +160,17 @@ int main( int argc, char** argv )
     {
       Point px( p[0]+1, p[1] ); px = px.inf( sym_domain.upperBound() );
       Point py( p[0], p[1]+1 ); py = py.inf( sym_domain.upperBound() );
-      double gx = IU( px ) - IU( p );
-      double gy = IU( py ) - IU( p );
-      IVx.setValue( p, gx );
-      IVy.setValue( p, gy );
+      Point bpx( p[0]-1, p[1] ); bpx = bpx.sup( sym_domain.lowerBound() );
+      Point bpy( p[0], p[1]-1 ); bpy = bpy.sup( sym_domain.lowerBound() );
+      double gx = ( IU( px ) - IU( bpx ) ) / 2.0;
+      double gy = ( IU( py ) - IU( bpy ) ) / 2.0;
+      if ( ( gx*gx + gy*gy ) > 1000.0 ) {
+	IVx.setValue( p, gx );
+	IVy.setValue( p, gy );
+      } else {
+	IVx.setValue( p, 0.0 );
+	IVy.setValue( p, 0.0 );
+      }
     }
   trace.info() << "Compute FFT[V]" << std::endl;
   trace.info() << "spatial   domain = " << Vx.getSpatialDomain() << std::endl;
@@ -190,6 +200,8 @@ int main( int argc, char** argv )
 	/ ( sqr( two_pi * mj ) + sqr( two_pi * nl ) );
       if ( mj == 0.0 && nl == 0.0 )
 	continue; //FU.setValue( p, 0.0 );
+      else if ( mj >= 0.5 )
+	FU.setValue( p, 0.0 );
       else
 	FU.setValue( p, -val );
       //if ( p[ 0 ] == J/2 ) std::cout << freq << " " << mj << " " << nl << std::endl;
