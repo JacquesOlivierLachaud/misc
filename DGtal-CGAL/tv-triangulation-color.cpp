@@ -33,6 +33,7 @@
 #include "BezierCurve.h"
 #include "BreadthFirstVisitorWithParent.h"
 #include "ImageTriangulation.h"
+#include "FourierPoisson.h"
 
 // #include <CGAL/Delaunay_triangulation_2.h>
 // #include <CGAL/Constrained_Delaunay_triangulation_2.h>
@@ -51,29 +52,29 @@ double randomUniform()
 }
 
 namespace DGtal {
-  struct ColorToRedFunctor {
-    int operator()( int color ) const
-    { return (color >> 16) & 0xff; }
-  };
-  struct ColorToGreenFunctor {
-    int operator()( int color ) const
-  { return (color >> 8) & 0xff; }
-  };
-  struct ColorToBlueFunctor {
-    int operator()( int color ) const
-    { return color & 0xff; }
-  };
-  struct GrayToGrayFunctor {
-    int operator()( int color ) const
-    { return color & 0xff; }
-  };
-  struct GrayToRedGreen {
-    DGtal::Color operator()( int value ) const
-    { 
-      if ( value >= 128 ) return DGtal::Color( 0, (value-128)*2+1, 0 );
-      else                return DGtal::Color( 0, 0, 255-value*2 );
-    }
-  };
+  // struct ColorToRedFunctor {
+  //   int operator()( int color ) const
+  //   { return (color >> 16) & 0xff; }
+  // };
+  // struct ColorToGreenFunctor {
+  //   int operator()( int color ) const
+  // { return (color >> 8) & 0xff; }
+  // };
+  // struct ColorToBlueFunctor {
+  //   int operator()( int color ) const
+  //   { return color & 0xff; }
+  // };
+  // struct GrayToGrayFunctor {
+  //   int operator()( int color ) const
+  //   { return color & 0xff; }
+  // };
+  // struct GrayToRedGreen {
+  //   DGtal::Color operator()( int value ) const
+  //   { 
+  //     if ( value >= 128 ) return DGtal::Color( 0, (value-128)*2+1, 0 );
+  //     else                return DGtal::Color( 0, 0, 255-value*2 );
+  //   }
+  // };
 
   /// We use a specific representation of multivariate polynomial to
   /// speed up its computation.
@@ -697,22 +698,8 @@ namespace DGtal {
 	  };
       }
       // Creates image form _I
-      typedef std::function< int( int ) > ColorConverter;
-      ColorConverter converters[ 4 ];
-      converters[ 0 ] = ColorToRedFunctor();
-      converters[ 1 ] = ColorToGreenFunctor();
-      converters[ 2 ] = ColorToBlueFunctor();
-      converters[ 3 ] = GrayToGrayFunctor();
-      int   red = color ? 0 : 3;
-      int green = color ? 1 : 3;
-      int  blue = color ? 2 : 3;
-      VertexIndex v = 0;
-      _I.resize( I.size() );
-      for ( unsigned int val : I ) {
-	_I[ v++ ] = Value( (Scalar) converters[ red ]  ( val ),
-			   (Scalar) converters[ green ]( val ),
-			   (Scalar) converters[ blue ] ( val ) );
-      }
+      image::Utils im_utils;
+      _I = im_utils.getValueForm( I, color );
       
       // Building connections.
       typedef ImageContainerBySTLVector<Domain,Value> ValueImage;

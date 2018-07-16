@@ -16,6 +16,7 @@
 #include <DGtal/io/writers/PPMWriter.h>
 #include <DGtal/io/writers/PGMWriter.h>
 #include <DGtal/math/RealFFT.h>
+#include "FourierPoisson.h"
 
 // struct UnsignedInt2Color {
 //   Color operator()( unsigned int val ) const { return Color( val ); }
@@ -26,47 +27,6 @@ struct UnsignedInt2GrayLevel {
   }
 };
 
-template <typename Image>
-void bandFilter( Image& image, double low_freq = 0.0, double high_freq = 0.5,
-		 double shift = 0.0 )
-{
-  using namespace DGtal;
-  typedef Z2i::Space      Space;
-  typedef Z2i::Domain     Domain;
-  typedef Z2i::Point      Point;
-  typedef Z2i::RealVector RealVector;
-  Domain domain( image.domain() );
-  RealFFT< Domain, double > F ( domain );
-  auto IF = F.getSpatialImage();
-  auto FF = F.getFreqImage();
-  // trace.info() << "spatial   domain = " << F.getSpatialDomain() << std::endl;
-  // trace.info() << "frequency domain = " << F.getFreqDomain() << std::endl;
-  for ( unsigned int y = 0; y < image.extent()[ 1 ]; ++y )
-    for ( unsigned int x = 0; x < image.extent()[ 0 ]; ++x )
-      {
-	Point p( x, y );
-	IF.setValue( p, (double) image( p ) );
-      }
-  F.forwardFFT();
-  low_freq  *= low_freq;
-  high_freq *= high_freq;
-  for ( auto&& fp : F.getFreqDomain() )
-    {
-      auto  freq = F.calcScaledFreqCoords( fp );
-      auto nfreq = freq.dot( freq );
-      if ( nfreq < low_freq || nfreq > high_freq )
-	FF.setValue( fp, 0.0 );
-    }
-  F.backwardFFT();
-  for ( unsigned int y = 0; y < image.extent()[ 1 ]; ++y )
-    for ( unsigned int x = 0; x < image.extent()[ 0 ]; ++x )
-      {
-	Point p( x, y );
-	image.setValue( p,
-			(unsigned char)
-			std::max( 0.0, std::min( 255.0, shift + IF( p ) ) ) );
-      }
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 namespace po = boost::program_options;
@@ -128,8 +88,8 @@ int main( int argc, char** argv )
   //trace.info() << std::fixed;
   trace.endBlock();
 
-  // bandFilter( image, 0.25, 0.5, 128.0 );
-  // PGMWriter<Image,UnsignedInt2GrayLevel>::exportPGM( out_fname.c_str(), image );
+  //DGtal::image::functions::bandFilter( image, 0.1, 1.0, 128.0 );
+  PGMWriter<Image,UnsignedInt2GrayLevel>::exportPGM( "filtered.pgm", image );
 
   const Dimension d = color ? 3 : 1;
   Domain domain( image.domain() );
@@ -150,11 +110,13 @@ int main( int argc, char** argv )
 	 Point sym_px ( -1 - p[ 0 ], p[ 1 ] );
 	 Point sym_py ( p[ 0 ], -1 - p[ 1 ] );
 	 Point sym_pxy( -1 - p[ 0 ], -1 - p[ 1 ] );
-	 // Point sym_px ( -1 - p[ 0 ], p[ 1 ] );
-	 // Point sym_py ( p[ 0 ], -1 - p[ 1 ] );
-	 // Point sym_pxy( -1 - p[ 0 ], -1 - p[ 1 ] );
+	 // Point px( p[0] > 0 ? p[0]-1 : p[ 0 ], p[1] ); 
+	 // Point py( p[0], p[1] > 0 ? p[1]-1 : p[ 1 ] );
+	 // double gx = ( (double)image( p ) - (double)image( px ) ) / 1.0;
+	 // double gy = ( (double)image( p ) - (double)image( py ) ) / 1.0;
 	 std::array<Point,4> all_p = { p, sym_px, sym_py, sym_pxy }; 
-	 for ( auto&&q : all_p ) IU.setValue( q, (double) image( p ) );
+	 for ( auto&&q : all_p )
+	   IU.setValue(  q, (double) image( p ) );
        }
   for ( auto&& p : sym_domain )
     {
@@ -162,14 +124,16 @@ int main( int argc, char** argv )
       Point py( p[0], p[1]+1 ); py = py.inf( sym_domain.upperBound() );
       Point bpx( p[0]-1, p[1] ); bpx = bpx.sup( sym_domain.lowerBound() );
       Point bpy( p[0], p[1]-1 ); bpy = bpy.sup( sym_domain.lowerBound() );
+      //double gx = ( IU( px ) - IU( p ) ) / 1.0;
+      //double gy = ( IU( py ) - IU( p ) ) / 1.0;
       double gx = ( IU( px ) - IU( bpx ) ) / 2.0;
       double gy = ( IU( py ) - IU( bpy ) ) / 2.0;
-      if ( ( gx*gx + gy*gy ) > 1000.0 ) {
-	IVx.setValue( p, gx );
-	IVy.setValue( p, gy );
+      if ( ( gx*gx + gy*gy ) >= 500.0 ) {
+  	IVx.setValue( p, gx );
+  	IVy.setValue( p, gy );
       } else {
-	IVx.setValue( p, 0.0 );
-	IVy.setValue( p, 0.0 );
+  	IVx.setValue( p, 0.0 );
+  	IVy.setValue( p, 0.0 );
       }
     }
   trace.info() << "Compute FFT[V]" << std::endl;
@@ -191,17 +155,21 @@ int main( int argc, char** argv )
     {
       auto  freq = U.calcScaledFreqCoords( p );
       const double  mj = freq[ 0 ];
-      const double smj = freq[ 0 ] >= 0.0 ? freq[ 0 ] : freq[ 0 ] + 1.0 ;
-      // ( p[ 0 ] >= (J/2) ) ? ( ( p[ 0 ] - J ) / J ) : ( p[ 0 ] / J );
+      // const double smj = freq[ 0 ] >= 0.0 ? freq[ 0 ] : freq[ 0 ] + 1.0 ;
+      // double  mj = ( p[ 0 ] >= (J/2) ) ? ( ( p[ 0 ] - J ) / J ) : ( p[ 0 ] / J );
       const double  nl = freq[ 1 ];
-      const double snl = freq[ 1 ] >= 0.0 ? freq[ 1 ] : freq[ 1 ] + 1.0 ;
-      // ( p[ 1 ] >= (L/2) ) ? ( ( p[ 1 ] - L ) / L ) : ( p[ 1 ] / L );
+      // const double snl = freq[ 1 ] >= 0.0 ? freq[ 1 ] : freq[ 1 ] + 1.0 ;
+      // double  nl = ( p[ 1 ] >= (L/2) ) ? ( ( p[ 1 ] - L ) / L ) : ( p[ 1 ] / L );
       Complex val = two_pi * i * ( mj * FVx( p ) + nl * FVy( p ) )
 	/ ( sqr( two_pi * mj ) + sqr( two_pi * nl ) );
-      if ( mj == 0.0 && nl == 0.0 )
-	continue; //FU.setValue( p, 0.0 );
+      // std::cout << "(" << mj << "," << nl << ")" << std::endl;
+      //if ( mj == 0.0 && nl == 0.0 )
+      if ( p == Point::zero ) {
+	std::cout << "[0,0] = " << FU( p )/(256.*256.) << std::endl;
+	// FU.setValue( p, 0.0 );
+      }
       else if ( mj >= 0.5 )
-	FU.setValue( p, 0.0 );
+	FU.setValue( p, -val );
       else
 	FU.setValue( p, -val );
       //if ( p[ 0 ] == J/2 ) std::cout << freq << " " << mj << " " << nl << std::endl;
