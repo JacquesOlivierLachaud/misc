@@ -20,6 +20,7 @@
 #include <DGtal/io/readers/GenericReader.h>
 #include <DGtal/io/writers/PPMWriter.h>
 #include <DGtal/io/writers/PGMWriter.h>
+#include <DGtal/io/writers/GenericWriter.h>
 #include <DGtal/math/linalg/SimpleMatrix.h>
 #include <DGtal/geometry/helpers/ContourHelper.h>
 // #include <DGtal/geometry/volumes/distance/ExactPredicateLpSeparableMetric.h>
@@ -52,29 +53,6 @@ double randomUniform()
 }
 
 namespace DGtal {
-  // struct ColorToRedFunctor {
-  //   int operator()( int color ) const
-  //   { return (color >> 16) & 0xff; }
-  // };
-  // struct ColorToGreenFunctor {
-  //   int operator()( int color ) const
-  // { return (color >> 8) & 0xff; }
-  // };
-  // struct ColorToBlueFunctor {
-  //   int operator()( int color ) const
-  //   { return color & 0xff; }
-  // };
-  // struct GrayToGrayFunctor {
-  //   int operator()( int color ) const
-  //   { return color & 0xff; }
-  // };
-  // struct GrayToRedGreen {
-  //   DGtal::Color operator()( int value ) const
-  //   { 
-  //     if ( value >= 128 ) return DGtal::Color( 0, (value-128)*2+1, 0 );
-  //     else                return DGtal::Color( 0, 0, 255-value*2 );
-  //   }
-  // };
 
   /// We use a specific representation of multivariate polynomial to
   /// speed up its computation.
@@ -593,6 +571,116 @@ namespace DGtal {
       return std::max( dab, std::max( dbc, dca ) );
     }
 
+    Value meanValue() const
+    {
+      Value m;
+      for ( VertexIndex v = 0; v < _u.size(); ++v )
+	m += _u[ v ];
+      m /= _u.size();
+      return m;
+    }
+
+    Domain getFaceDomain( Face f ) const
+    {
+      VertexRange P  = T.verticesAroundFace( f );
+      const RealPoint& a = T.position( P[ 0 ] );
+      const RealPoint& b = T.position( P[ 1 ] );
+      const RealPoint& c = T.position( P[ 2 ] );
+      RealPoint lo = a.inf( b ).inf( c );
+      RealPoint hi = a.sup( b ).sup( c );
+      return Domain( Point( floor( lo[ 0 ] ), floor( lo[ 1 ] ) ),
+		     Point( ceil ( hi[ 0 ] ), ceil ( hi[ 1 ] ) ) );
+    }
+    
+    template <typename ScalarImage>
+    void fillZoomedImage( ScalarImage& output,
+			  const image::Zoom& Z, Dimension d ) const
+    {
+      output = ScalarImage( Z.zoomedDomain() );
+      for ( auto&& zp : Z.zoomedDomain() ) {
+	const Point       p = Z.unzoom( zp );
+	const VertexIndex v = Z.index ( p  );
+	output.setValue( zp, _u[ v ][ d ] );
+      }
+    }
+
+    template <typename ScalarImage>
+    void fillZoomedGradient( ScalarImage& output_x, ScalarImage& output_y,
+			     const image::Zoom& Z, Dimension d ) const
+    {
+      output_x = ScalarImage( Z.zoomedDomain() );
+      output_y = ScalarImage( Z.zoomedDomain() );
+      ScalarImage nb = ScalarImage( Z.zoomedDomain() );
+      for ( Face f = 0; f < T.nbFaces(); ++f ) {
+	fillTriangleZoomedGradient( nb, output_x, output_y, f, Z, d );
+      }
+      auto it_gx = output_x.begin();
+      auto it_gy = output_y.begin();
+      for ( auto it_nb = nb.cbegin(), itE_nb = nb.cend(); it_nb != itE_nb; ++it_nb )
+	{
+	  Scalar n = *it_nb;
+	  if ( n > 0.0 ) {
+	    *it_gx++ /= n;
+	    *it_gy++ /= n;
+	  }
+	}
+    }
+    template <typename ScalarImage>
+    void fillTriangleZoomedGradient( ScalarImage& nb,
+				     ScalarImage& output_x, ScalarImage& output_y,
+				     Face f, const image::Zoom& Z, Dimension d ) const
+    {
+      VectorValue G = grad( f, _u );
+      Domain      D = getFaceDomain( f );
+      Domain     ZD = Domain( Z.zoom( D.lowerBound() ), Z.zoom( D.upperBound() ) );
+      double weight = 0.25 * (double) Z._zoom; // * Z._zoom;
+      for ( auto&& p : ZD )
+	{
+	  RealPoint pp = Z.project( p );
+	  if ( isApproximatelyInTriangle( f, pp ) ) {
+	    output_x.setValue( p, -G.x[ d ] / weight ); //+ output_x( p ) );
+	    output_y.setValue( p, -G.y[ d ] / weight ); //+ output_y( p ) );
+	    nb.setValue( p, 1.0 + nb( p ) );
+	  }	    
+	}
+    }
+
+    template <typename Image>
+    void outputPoissonImage( Image& image,
+			     const image::Zoom& Z )
+    {
+      typedef ImageContainerBySTLVector< Domain, Scalar > ScalarImage;
+      const Dimension max_d = _color ? 3 : 1;
+      image = Image( Z.zoomedDomain() );
+      std::vector< ScalarImage*> Id( max_d );
+      for ( Dimension d = 0; d < max_d; ++d )
+	{
+	  Id[ d ] = new ScalarImage( Z.zoomedDomain() );
+	  ScalarImage Gxd( Z.zoomedDomain() );
+	  ScalarImage Gyd( Z.zoomedDomain() );
+	  fillZoomedImage( *( Id[ d ] ), Z, d );
+	  fillZoomedGradient( Gxd, Gyd, Z, d );
+	  if ( d == 0 ) {
+	    image::functions::exportGradPGM( "gradx.pgm", Gxd );
+	    image::functions::exportGradPGM( "grady.pgm", Gyd );
+	  }
+	  image::functions::poisson( *( Id[ d ] ), Gxd, Gyd );
+	}
+      if ( _color )
+	for ( auto&& p : image.domain() ) {
+	  Color col( (unsigned char) round( (*Id[ 0 ])( p ) ),
+		     (unsigned char) round( (*Id[ 1 ])( p ) ),
+		     (unsigned char) round( (*Id[ 2 ])( p ) ) );
+	  image.setValue( p, col );
+	}
+      else
+	for ( auto&& p : image.domain() ) {
+	  image.setValue( p, (unsigned char) round( (*Id[ 0 ])( p ) ) );
+	}
+      for ( Dimension d = 0; d < max_d; ++d )
+	delete Id[ d ];
+    }
+    
     // -------------- Construction services -------------------------
 
     // Constructor from domain, triangulation, and value form.
@@ -3183,6 +3271,20 @@ int main( int argc, char** argv )
     
     viewTVTriangulationAll( TVT, b, x0, y0, x1, y1, color, bname,
 			    display, disc, st, am );
+    if ( display == 64 ) {
+      typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
+      typedef ColorImage::Point Point;
+      typedef ColorImage::Domain Domain;
+      ColorImage poisson_image( Domain( Point::zero, Point::zero ) );
+      image::Zoom Z( image.domain(), (int) round( b ) );
+      TVT.outputPoissonImage( poisson_image, Z );
+      struct IdFunctor {
+	typedef Color Argument;
+	typedef Color Value;
+	Value operator()( Argument c ) const { return c; }
+      };
+      PPMWriter< ColorImage, IdFunctor >::exportPPM( "poisson.ppm", poisson_image );
+    }
   }
   trace.endBlock();
   
