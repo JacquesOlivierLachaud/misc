@@ -60,7 +60,9 @@ int main( int argc, char** argv )
   std::vector<double> T;
 
   BezierCurve<Space> B( P );
-  B.trace( Q, T );
+  std::vector<RealPoint> rp;
+  B.trace( [] (RealPoint p) { return Point( round( p[ 0 ] ), round( p[ 1 ] ) ); },
+	   Q, rp, T );
   for ( int i = 0; i < Q.size(); i++ )
     std::cout << i << " Q[i]=(" << Q[i][0] << "," << Q[i][1] << ")"
 	      << " t[i]=" << T[ i ] << " B(t[i])="
