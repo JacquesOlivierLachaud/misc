@@ -612,7 +612,7 @@ namespace DGtal {
       output_y = ScalarImage( Z.zoomedDomain() );
       ScalarImage nb = ScalarImage( Z.zoomedDomain() );
       for ( Face f = 0; f < T.nbFaces(); ++f ) {
-	fillTriangleZoomedGradient( nb, output_x, output_y, f, Z, d );
+	fillTriangleZoomedGradientSharp( nb, output_x, output_y, f, Z, d );
       }
       auto it_gx = output_x.begin();
       auto it_gy = output_y.begin();
@@ -640,6 +640,64 @@ namespace DGtal {
 	  if ( isApproximatelyInTriangle( f, pp ) ) {
 	    output_x.setValue( p, -G.x[ d ] / weight ); //+ output_x( p ) );
 	    output_y.setValue( p, -G.y[ d ] / weight ); //+ output_y( p ) );
+	    nb.setValue( p, 1.0 + nb( p ) );
+	  }	    
+	}
+    }
+
+    template <typename ScalarImage>
+    void
+    fillTriangleZoomedGradientSharp( ScalarImage& nb,
+				     ScalarImage& output_x, ScalarImage& output_y,
+				     Face f, const image::Zoom& Z, Dimension d ) const
+    { // JACO
+      VectorValue G = grad( f, _u );
+      RealVector  gn ( -G.x[ d ], -G.y[ d ] ); // normal = grad
+      bool flat = gn.norm() == 0.0;
+      if ( flat ) {
+	//fillTriangleZoomedGradient( nb, output_x, output_y, f, Z, d );
+	return;
+      }
+      Domain      D = getFaceDomain( f );
+      Domain     ZD = Domain( Z.zoom( D.lowerBound() ), Z.zoom( D.upperBound() ) );
+      VertexRange P  = T.verticesAroundFace( f );
+      RealPoint V[ 3 ] = { T.position( P[ 0 ] ),
+			   T.position( P[ 1 ] ),
+			   T.position( P[ 2 ] ) };
+      gn /= gn.norm();
+      double nmax = V[ 0 ].dot( gn );
+      double nmin = V[ 0 ].dot( gn );
+      for ( unsigned int i = 1; i < 3; ++i ) {
+	nmax = std::max( V[ i ].dot( gn ), nmax );
+	nmin = std::min( V[ i ].dot( gn ), nmin );
+      }
+      double distance = nmax - nmin;
+      double middle   = 0.5 * ( nmin + nmax );
+      double sigma    = distance / (double) (6.0); //distance / 6.0;
+      double c1       = - 1.0 / ( 2.0 * sigma * sigma );
+      double c2       = 1.0 / ( sigma * sqrt( 2.0 * M_PI ) );
+      // double weight = 0.25 * (double) Z._zoom; 
+      double weight = 0.5 * (double) Z._zoom; 
+      for ( auto&& p : ZD )
+	{
+	  RealPoint pp = Z.project( p );
+	  if ( isApproximatelyInTriangle( f, pp ) ) {
+	    double x[ 4 ] = { gn.dot( pp + RealVector( 0.5, 0.5 ) ) - middle,
+			      gn.dot( pp + RealVector( 0.5,-0.5 ) ) - middle,
+			      gn.dot( pp + RealVector(-0.5,-0.5 ) ) - middle,
+			      gn.dot( pp + RealVector(-0.5, 0.5 ) ) - middle };
+	    double minx = std::min( std::min( x[0], x[1] ), std::min( x[2], x[3] ) );
+	    double maxx = std::max( std::max( x[0], x[1] ), std::max( x[2], x[3] ) );
+	    const int n = 1;
+	    double    h = (maxx-minx) / (double) n;
+	    double    w = 0.0;
+	    // integration by middle point
+	    for ( double xx = minx + 0.5*h; xx < maxx; xx += h )
+	      w += c2 * exp( c1 * xx * xx );
+	    w  *= 4.0 * h * distance / (double) Z._zoom ;
+	    //std::cout << w << " " << (1.0/weight) << std::endl;
+	    output_x.setValue( p, -G.x[ d ] * w ); //+ output_x( p ) );
+	    output_y.setValue( p, -G.y[ d ] * w ); //+ output_y( p ) );
 	    nb.setValue( p, 1.0 + nb( p ) );
 	  }	    
 	}
@@ -3283,7 +3341,8 @@ int main( int argc, char** argv )
 	typedef Color Value;
 	Value operator()( Argument c ) const { return c; }
       };
-      PPMWriter< ColorImage, IdFunctor >::exportPPM( "poisson.ppm", poisson_image );
+      std::string fpoisson = bname + "-poisson.ppm";
+      PPMWriter< ColorImage, IdFunctor >::exportPPM( fpoisson, poisson_image );
     }
   }
   trace.endBlock();

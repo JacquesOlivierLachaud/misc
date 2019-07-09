@@ -42,9 +42,11 @@ int main( int argc, char** argv )
   po::options_description general_opt("Allowed options are: ");
   general_opt.add_options()
     ("help,h", "display this message")
-    ("input,i", po::value<std::string>(), "Specifies the input shape as a 2D image PPM filename.")
-    ("output,o", po::value<std::string>()->default_value("after-poisson.pgm"), "Specifies the basename of output displayed images.");
-    bool parseOK = true;
+    ("input,i", po::value<std::string>(), "Specifies the input shape as a 2D image PGM filename.")
+    ("output,o", po::value<std::string>()->default_value("after-poisson.pgm"), "Specifies the PGM name of output displayed images.")
+    ("sigma,s", po::value<double>()->default_value(0.5), "Specifies the sigma for smoothing the gradient field.");
+    
+  bool parseOK = true;
   po::variables_map vm;
   try {
     po::store( po::parse_command_line(argc, argv, general_opt), vm );  
@@ -128,7 +130,7 @@ int main( int argc, char** argv )
       //double gy = ( IU( py ) - IU( p ) ) / 1.0;
       double gx = ( IU( px ) - IU( bpx ) ) / 2.0;
       double gy = ( IU( py ) - IU( bpy ) ) / 2.0;
-      if ( ( gx*gx + gy*gy ) >= 500.0 ) {
+      if ( ( gx*gx + gy*gy ) >= 0.0 ) {
   	IVx.setValue( p, gx );
   	IVy.setValue( p, gy );
       } else {
@@ -173,6 +175,19 @@ int main( int argc, char** argv )
       else
 	FU.setValue( p, -val );
       //if ( p[ 0 ] == J/2 ) std::cout << freq << " " << mj << " " << nl << std::endl;
+    }
+  // Smooth freq image.
+  const double sigma = vm[ "sigma" ].as<double>();
+  
+  for ( auto&& p : freq_domain )
+    {
+      auto  freq = U.calcScaledFreqCoords( p );
+      const double  mj = freq[ 0 ];
+      // const double smj = freq[ 0 ] >= 0.0 ? freq[ 0 ] : freq[ 0 ] + 1.0 ;
+      // double  mj = ( p[ 0 ] >= (J/2) ) ? ( ( p[ 0 ] - J ) / J ) : ( p[ 0 ] / J );
+      const double  nl = freq[ 1 ];
+      const double  x2 = mj * mj + nl *nl;
+      FU.setValue( p, FU( p ) * exp( -x2/(sigma*sigma) ) );
     }
   U.backwardFFT();
   for ( unsigned int y = 0; y < image.extent()[ 1 ]; ++y )

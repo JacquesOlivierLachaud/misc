@@ -28,7 +28,7 @@ LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
 
 # SET( CMAKE_MODULE_PATH /opt/local/lib/cmake ${CMAKE_SOURCE_DIR})
 
-# FIND_PACKAGE(Boost 1.46.0 REQUIRED COMPONENTS program_options)
+# FIND_PACKAGE(Boost 1.46.0 REQUIRED COMPONENTS program_options thread)
 # if ( Boost_FOUND )
 #   message(STATUS "Boost and boost_program_options found.")
 #   message(STATUS "Boost_LIBRAIRIES=" ${Boost_LIBRAIRIES})
@@ -56,20 +56,37 @@ LINK_DIRECTORIES(${DGTAL_LIBRARY_DIRS})
 # Define variables and cmake parameters, and display some information
 # -----------------------------------------------------------------------------
 
-
 SET(Boost_USE_STATIC_LIBS   ON)
 SET(Boost_USE_MULTITHREADED ON)
 SET(Boost_USE_STATIC_RUNTIME OFF)
 SET(Boost_FOUND FALSE)
-FIND_PACKAGE(Boost 1.46.0 REQUIRED COMPONENTS program_options)
+FIND_PACKAGE(Boost 1.46.0 REQUIRED COMPONENTS program_options thread)
 if ( Boost_FOUND )
-  message(STATUS "Boost and boost_program_options found.")
+  message(STATUS "Boost and boost_program_options and thread found.")
+  ADD_DEFINITIONS(${BOOST_DEFINITIONS} -DBOOST_ALL_NO_LIB)
   include_directories( ${Boost_INCLUDE_DIRS} )
-  SET(DGtalToolsLibDependencies ${DGtalToolsLibDependencies} 
-     ${Boost_LIBRAIRIES}  
+  SET(DGtalToolsLibDependencies ${DGtalToolsLibDependencies}
+     ${Boost_LIBRAIRIES}
      ${Boost_PROGRAM_OPTIONS_LIBRARY})
    SET(DGtalLibInc ${Boost_INCLUDE_DIRS})
+   message(STATUS "Boost_LIBRAIRIES=" ${Boost_LIBRAIRIES})
+   message(STATUS "Boost_PROGRAM_OPTIONS_LIBRARY=" ${Boost_PROGRAM_OPTIONS_LIBRARY})
+   message(STATUS "Boost_THREAD_LIBRARY=" ${Boost_THREAD_LIBRARY})
 endif( Boost_FOUND )
+
+#SET(Boost_USE_STATIC_LIBS   ON)
+#SET(Boost_USE_MULTITHREADED ON)
+#SET(Boost_USE_STATIC_RUNTIME OFF)
+#SET(Boost_FOUND FALSE)
+#FIND_PACKAGE(Boost 1.46.0 REQUIRED COMPONENTS program_options)
+#if ( Boost_FOUND )
+#  message(STATUS "Boost and boost_program_options found.")
+#  include_directories( ${Boost_INCLUDE_DIRS} )
+#  SET(DGtalToolsLibDependencies ${DGtalToolsLibDependencies} 
+#     ${Boost_LIBRAIRIES}  
+#     ${Boost_PROGRAM_OPTIONS_LIBRARY})
+#   SET(DGtalLibInc ${Boost_INCLUDE_DIRS})
+#endif( Boost_FOUND )
 
 
 
@@ -121,7 +138,7 @@ endif( Boost_FOUND )
 # endif ( WITH_CGAL )
 
 find_package(CGAL COMPONENTS Core )
-include( ${CGAL_USE_FILE} )
+#include( ${CGAL_USE_FILE} )
 include_directories(${CGAL_INCLUDE_DIR})
 
 # DGtal
@@ -169,7 +186,7 @@ ENDIF(CAIRO_LIBRAIRIES AND CAIRO_INCLUDE_DIRS)
 #FIND_PACKAGE(Cairo REQUIRED)
 IF(CAIRO_FOUND)
     INCLUDE_DIRECTORIES(${CAIRO_INCLUDE_DIRS})
-    LINK_DIRECTORIES(${CAIRO_LIBRAIRIES})
+#    LINK_DIRECTORIES(${CAIRO_LIBRAIRIES})
     message(STATUS "Cairo found in INCLUDE=" ${CAIRO_INCLUDE_DIRS})
     message(STATUS "Cairo found in LIBRARY=" ${CAIRO_LIBRAIRIES})
 ELSE(CAIRO_FOUND)
@@ -186,9 +203,13 @@ SET(SRCs
 )
 
 
-  
+FOREACH(LIB CGAL_LIBRARIES CGAL_3RD_PARTY_LIBRARIES CAIRO_LIBRAIRIES DGTAL_LIBRARIES Boost_LIBRARIES Boost_PROGRAM_OPTIONS_LIBRARY Boost_THREAD_LIBRARY)
+    message( STATUS ${LIB} "=" ${${LIB}} ) 
+ENDFOREACH(LIB)
+
+    message( ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${CAIRO_LIBRAIRIES} ${DGTAL_LIBRARIES} ${Boost_LIBRAIRIES} ${Boost_PROGRAM_OPTIONS_LIBRARY} ${Boost_THREAD_LIBRARY})
   FOREACH(FILE ${SRCs})
     add_executable(${FILE} ${FILE} BasicVectoImageExporter)
-    target_link_libraries( ${FILE}  ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${CAIRO_LIBRAIRIES} ${DGTAL_LIBRARIES} ${Boost_LIBRAIRIES} ${Boost_PROGRAM_OPTIONS_LIBRARY})
+    target_link_libraries( ${FILE}  ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${CAIRO_LIBRAIRIES} ${DGTAL_LIBRARIES} ${Boost_PROGRAM_OPTIONS_LIBRARY} ${Boost_LIBRARIES})
   ENDFOREACH(FILE)
   
