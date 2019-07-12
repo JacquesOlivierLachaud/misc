@@ -614,16 +614,17 @@ namespace DGtal {
       for ( Face f = 0; f < T.nbFaces(); ++f ) {
 	fillTriangleZoomedGradientSharp( nb, output_x, output_y, f, Z, d );
       }
-      auto it_gx = output_x.begin();
-      auto it_gy = output_y.begin();
-      for ( auto it_nb = nb.cbegin(), itE_nb = nb.cend(); it_nb != itE_nb; ++it_nb )
-	{
-	  Scalar n = *it_nb;
-	  if ( n > 0.0 ) {
-	    *it_gx++ /= n;
-	    *it_gy++ /= n;
-	  }
-	}
+      // Diminue la dynamique de l'image.
+      // auto it_gx = output_x.begin();
+      // auto it_gy = output_y.begin();
+      // for ( auto it_nb = nb.cbegin(), itE_nb = nb.cend(); it_nb != itE_nb; ++it_nb )
+      // 	{
+      // 	  Scalar n = *it_nb;
+      // 	  if ( n > 0.0 ) {
+      // 	    *it_gx++ /= n;
+      // 	    *it_gy++ /= n;
+      // 	  }
+      // 	}
     }
     template <typename ScalarImage>
     void fillTriangleZoomedGradient( ScalarImage& nb,
@@ -638,8 +639,8 @@ namespace DGtal {
 	{
 	  RealPoint pp = Z.project( p );
 	  if ( isApproximatelyInTriangle( f, pp ) ) {
-	    output_x.setValue( p, -G.x[ d ] / weight ); //+ output_x( p ) );
-	    output_y.setValue( p, -G.y[ d ] / weight ); //+ output_y( p ) );
+	    output_x.setValue( p, - G.x[ d ] / weight ); //+ output_x( p ) );
+	    output_y.setValue( p, - G.y[ d ] / weight ); //+ output_y( p ) );
 	    nb.setValue( p, 1.0 + nb( p ) );
 	  }	    
 	}
@@ -664,7 +665,8 @@ namespace DGtal {
       RealPoint V[ 3 ] = { T.position( P[ 0 ] ),
 			   T.position( P[ 1 ] ),
 			   T.position( P[ 2 ] ) };
-      gn /= gn.norm();
+      const double Gnorm = gn.norm();
+      gn /= Gnorm;
       double nmax = V[ 0 ].dot( gn );
       double nmin = V[ 0 ].dot( gn );
       for ( unsigned int i = 1; i < 3; ++i ) {
@@ -673,34 +675,47 @@ namespace DGtal {
       }
       double distance = nmax - nmin;
       double middle   = 0.5 * ( nmin + nmax );
-      double sigma    = distance / (double) (6.0); //distance / 6.0;
+      double lambda   = Gnorm > 20.0 ? 1.0 : Gnorm / 20.0;
+      double sigma    = 1.0 * ( 1.0 - lambda ) + lambda / (2.0 * (double) Z._zoom);
       double c1       = - 1.0 / ( 2.0 * sigma * sigma );
       double c2       = 1.0 / ( sigma * sqrt( 2.0 * M_PI ) );
-      // double weight = 0.25 * (double) Z._zoom; 
-      double weight = 0.5 * (double) Z._zoom; 
+      const double ph = 0.5 / (double) Z._zoom;
+      std::vector<Point>  points;
+      std::vector<double> weights;
       for ( auto&& p : ZD )
 	{
 	  RealPoint pp = Z.project( p );
 	  if ( isApproximatelyInTriangle( f, pp ) ) {
-	    double x[ 4 ] = { gn.dot( pp + RealVector( 0.5, 0.5 ) ) - middle,
-			      gn.dot( pp + RealVector( 0.5,-0.5 ) ) - middle,
-			      gn.dot( pp + RealVector(-0.5,-0.5 ) ) - middle,
-			      gn.dot( pp + RealVector(-0.5, 0.5 ) ) - middle };
-	    double minx = std::min( std::min( x[0], x[1] ), std::min( x[2], x[3] ) );
-	    double maxx = std::max( std::max( x[0], x[1] ), std::max( x[2], x[3] ) );
-	    const int n = 1;
-	    double    h = (maxx-minx) / (double) n;
-	    double    w = 0.0;
-	    // integration by middle point
-	    for ( double xx = minx + 0.5*h; xx < maxx; xx += h )
-	      w += c2 * exp( c1 * xx * xx );
-	    w  *= 4.0 * h * distance / (double) Z._zoom ;
-	    //std::cout << w << " " << (1.0/weight) << std::endl;
-	    output_x.setValue( p, -G.x[ d ] * w ); //+ output_x( p ) );
-	    output_y.setValue( p, -G.y[ d ] * w ); //+ output_y( p ) );
-	    nb.setValue( p, 1.0 + nb( p ) );
+	    double xx = gn.dot( pp ) - middle;
+	    double  w = c2 * exp( c1 * xx * xx );
+	    // Une vraie intégration ne change quasi rien.
+	    // double x[ 4 ] = { gn.dot( pp + RealVector( ph, ph ) ) - middle,
+	    // 		      gn.dot( pp + RealVector( ph,-ph ) ) - middle,
+	    // 		      gn.dot( pp + RealVector(-ph,-ph ) ) - middle,
+	    // 		      gn.dot( pp + RealVector(-ph, ph ) ) - middle };
+	    // double minx = std::min( std::min( x[0], x[1] ), std::min( x[2], x[3] ) );
+	    // double maxx = std::max( std::max( x[0], x[1] ), std::max( x[2], x[3] ) );
+	    // const int n = 8; // change pas grand chose 
+	    // double    h = (maxx-minx) / (double) n;
+	    // double    w = 0.0;
+	    // // integration by middle point
+	    // for ( double xx = minx + 0.5*h; xx < maxx; xx += h )
+	    //   w += c2 * exp( c1 * xx * xx );
+	    points.push_back( p );
+	    weights.push_back( w );
 	  }	    
 	}
+      double total_weight = 0;
+      for ( auto&& w : weights ) total_weight += w;
+      const double target = 1.0 * (double) Z._zoom; // area of a triangle
+      total_weight /= target;
+      for ( unsigned int i = 0; i < points.size(); ++i ) {
+	const Point&  p = points [ i ];
+	const double  w = weights[ i ] / total_weight;
+	output_x.setValue( p, output_x( p ) - G.x[ d ] * w );
+	output_y.setValue( p, output_y( p ) - G.y[ d ] * w );
+	nb.setValue( p, 1.0 + nb( p ) );
+      }
     }
 
     template <typename Image>
@@ -3113,7 +3128,7 @@ int main( int argc, char** argv )
     ("tv-max-iter,N", po::value<int>()->default_value( 20 ), "The maximum number of iteration in TV's algorithm." )
     ("nb-alt-iter,A", po::value<int>()->default_value( 1 ), "The number of iteration for alternating TV and TV-flip." )
     ("display-tv,d", po::value<int>()->default_value( 0 ), "Tells the display mode after standard TV regularization per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles." )
-    ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode aftergeometric TV flips per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles (quite nice and flat), 0x8: output partition of unity Bezier triangles (slow and not good), 0x16: output 2nd order reconstruction with Bezier curve (nicest but slower than 0x4), 0x32: same as 0x16 but displays also the similarity/discontinuity graph (for debug/illustrations)" )
+    ("display-flip,D", po::value<int>()->default_value( 4 ), "Tells the display mode aftergeometric TV flips per bit: 0x1 : output Flat colored triangles, 0x2 : output Gouraud colored triangles, 0x4: output Linear Gradient triangles (quite nice and flat), 0x8: output partition of unity Bezier triangles (slow and not good), 0x10: output 2nd order reconstruction with Bezier curve (nicest but slower than 0x4), 0x20: same as 0x8 but displays also the similarity/discontinuity graph (for debug/illustrations), 0x40: use Poisson reconstruction to reconstruct linear gradient with discontinuities." )
     ("discontinuities,S", po::value<double>()->default_value( 0.1 ), "Tells to display a % of the TV discontinuities (the triangles with greatest energy)." ) 
     ("stiffness", po::value<double>()->default_value( 0.9 ), "Tells how to stiff the gradient around discontinuities (amplitude value is changed at stiffness * middle)." ) 
     ("amplitude", po::value<double>()->default_value( 1.0 ), "Tells the amplitude of the stiffness for the gradient around discontinuities." )
@@ -3329,7 +3344,7 @@ int main( int argc, char** argv )
     
     viewTVTriangulationAll( TVT, b, x0, y0, x1, y1, color, bname,
 			    display, disc, st, am );
-    if ( display == 64 ) {
+    if ( ( display & 64 ) == 64 ) {
       typedef ImageContainerBySTLVector< Domain, Color > ColorImage;
       typedef ColorImage::Point Point;
       typedef ColorImage::Domain Domain;
