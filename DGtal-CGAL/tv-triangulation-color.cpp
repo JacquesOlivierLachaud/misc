@@ -920,7 +920,7 @@ namespace DGtal {
 	RealPoint q = T.position( T.tail( a ) );
 	RealPoint l = p.inf( q );
 	RealPoint u = p.sup( q );
-	auto  how = connecter.howConnected( l );
+	auto  how = connecter.howConnected( Point( (int) round( l[ 0 ] ), (int) round( l[ 1 ] ) ) );
 	if ( ( l - u ).dot( l - u ) == 2 )
 	  _flippable[ a ] = ( how.diagonal == Connecter::Default );
 	else if ( u[ 0 ] != l[ 0 ] )
@@ -2859,7 +2859,7 @@ namespace DGtal {
     do 
     {
       TVTriangulation::VertexRange V = tvT.T.verticesAroundFace( currentFace );
-      TVTriangulation::Point center = tvT.barycenter(currentFace);//(tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
+      TVTriangulation::RealPoint center = tvT.barycenter(currentFace);//(tvT.T.position(V[0])+tvT.T.position(V[1])+tvT.T.position(V[2]))/3.0;
       res.push_back(center);
       currentArc = pivotNext(tvT, currentArc, valInside);          
       currentFace = tvT.T.faceAroundArc(currentArc);
