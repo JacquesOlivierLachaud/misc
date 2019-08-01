@@ -1005,7 +1005,7 @@ namespace DGtal {
     int updateArc( const Arc a ) {
       // Checks that edge can be flipped.
       if ( ! _flippable[ a ] ) return -4;
-      VertexRange P = T.verticesAroundArc( a );
+      VertexRange P = T.verticesOfFacesAroundArc( a );
       if ( P.size() != 4 )   return -1;
       if ( P[ 0 ] < P[ 2 ] ) return -2;
       if ( ! isConvex( P ) ) return -3;
@@ -1223,7 +1223,7 @@ namespace DGtal {
       for ( Arc a : range ) {
 	int update = updateArc( a );
 	if ( update == 0 ) {
-	  VertexRange P = T.verticesAroundArc( a );
+	  VertexRange P = T.verticesOfFacesAroundArc( a );
 	  // Allow one level of subdivision.
 	  if ( std::max( std::max( P[ 0 ], P[ 1 ] ),
 			 std::max( P[ 2 ], P[ 3 ] ) ) >= _nbV ) continue;
