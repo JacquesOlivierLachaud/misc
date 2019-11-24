@@ -200,6 +200,7 @@ SET(SRCs
   tv-zoom-image
   testBezierTriangle2
   poisson-editing
+  vol-distance-on-surface
 )
 
 

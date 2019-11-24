@@ -3307,14 +3307,16 @@ int main( int argc, char** argv )
     bool subdivide = false;
     trace.info() << "------------- optimize geometry --------------" << std::endl;
     trace.info() << "TV( u ) = " << TVT.getEnergyTV() << std::endl;
+    int     Nequal = 5; 
     while ( true ) {
       if ( iter++ >= miter ) break;
       double energy = 0.0;
       nbs = TVT.onePass( energy, strat );
       if ( ( last == 0 ) && ( nbs.first == 0 ) ) {
-	if ( subdivide || strat != 5 ) break;
-	subdivide = true;
-	nbs = TVT.onePass( energy, 1 );
+	if ( Nequal-- == 0 ) break;
+	// if ( subdivide || strat != 5 ) break;
+	// subdivide = true;
+	// nbs = TVT.onePass( energy, 1 );
       }
       last = nbs.first;
     }
