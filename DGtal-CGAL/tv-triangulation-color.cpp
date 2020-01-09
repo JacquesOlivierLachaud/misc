@@ -261,6 +261,8 @@ namespace DGtal {
     bool                 _color;
     /// Power for gradient computation
     Scalar               _power;
+    /// Tells the coefficient for gradient consistency.
+    Scalar               _consistency;
     /// List of arcs whose energy may have been changed by a surrounding flip.
     std::vector<Arc>     _Queue;
     /// List of arcs that may be flipped with the same energy.
@@ -487,7 +489,48 @@ namespace DGtal {
 	S[ i ] = a * u[ i ] + b * v[ i ];
       return S;
     }
-      
+
+
+    /// Evaluates the gradient consistency on the diagonal v0,v2 of a
+    /// quadrilateron given by its vertices v0, v1, v2, v3.
+    ///
+    /// @param v0 any vertex
+    /// @param v1 any vertex
+    /// @param v2 any vertex
+    /// @param v3 any vertex
+    ///
+    /// @return the consistency between the gradients of faces f012 and f023.
+    Scalar computeGradientConsistency( Vertex v0, Vertex v1, Vertex v2, Vertex v3 )
+    {
+      auto g012 = grad( v0, v1, v2, _u );
+      auto g023 = grad( v0, v2, v3, _u );
+      return computeGradientConsistency( v0, v2, g012, g023 );
+    }
+    
+    /// Evaluates the gradient consistency on the diagonal v0,v2 of
+    /// two faces, whose gradients are given by g012 and g023.
+    ///
+    /// @return the consistency between the gradients of faces f012 and f023.
+    Scalar computeGradientConsistency( Vertex v0, Vertex v2,
+				       const VectorValue& g012,
+				       const VectorValue& g023 )
+    {
+      // const int d = _color ? 3 : 1;
+      // VectorValue V;
+      // for ( int m = 0; m < d; ++m ) {
+      // 	V.x[ m ] = g012.x[ m ] - g023.x[ m ];
+      // 	V.y[ m ] = g012.y[ m ] - g023.y[ m ];
+      // }
+      // return _normY( V ) * ( T.position( v0 ) - T.position( v2 ) ).norm();
+      // (I) works well with photo pictures, but must be set low (0.1)
+      // with quantized images or pixel art.
+      const int d = _color ? 3 : 1;
+      Value C;
+      for ( int m = 0; m < d; ++m )
+      	C[ m ] = g012.x[ m ] * g023.y[ m ] - g012.y[ m ] * g023.x[ m ];
+      return sqrt( _normX( C ) );// * ( T.position( v0 ) - T.position( v2 ) ).norm();
+    }
+    
     /// The function that evaluates the energy at each triangle.
     /// It is now just the norm of the gradient.
     Scalar computeEnergyTV( VertexIndex v1, VertexIndex v2, VertexIndex v3 ) const
@@ -761,10 +804,13 @@ namespace DGtal {
 		     const ValueForm& anI,
 		     const Triangulation& aT,
 		     bool color,
-		     Scalar p = 0.5, Scalar sim = 0.0 )
+		     Scalar p = 0.5,
+		     Scalar consistency = 0.0,
+		     Scalar sim = 0.0 )
     {
       _color = color;
       _power = p;
+      _consistency = consistency;
       _lo    = aDomain.lowerBound();
       _up    = aDomain.upperBound();
       _width = _up[ 0 ] - _lo[ 0 ] + 1;
@@ -821,11 +867,14 @@ namespace DGtal {
     // Constructor from color image.
     template <typename Image>
     TVTriangulation( const Image&  I, bool color,
-		     Scalar p = 0.5, Scalar sim = 0.0,
+		     Scalar p = 0.5,
+		     Scalar consistency = 0.0,
+		     Scalar sim = 0.0,
 		     int connectivity_strategy = 1, bool debug = false )
     {
       _color = color;
       _power = p;
+      _consistency = consistency;
       _lo    = I.domain().lowerBound();
       _up    = I.domain().upperBound();
       _width = _up[ 0 ] - _lo[ 0 ] + 1; 
@@ -1018,7 +1067,52 @@ namespace DGtal {
       const Scalar  E123 = computeEnergyTV( P[ 1 ], P[ 2 ], P[ 3 ] );
       const Scalar Ecurr = E012 + E023;
       const Scalar Eflip = E013 + E123;
-      if ( Eflip < Ecurr ) {
+      Scalar       Ccurr = 0.0;
+      Scalar       Cflip = 0.0;
+      if ( _consistency != 0.0 ) {
+	// Compute consistencies
+	const auto g012 = grad( P[0], P[1], P[2], _u );
+	const auto g023 = grad( P[0], P[2], P[3], _u );
+	const auto g013 = grad( P[0], P[1], P[3], _u );
+	const auto g123 = grad( P[1], P[2], P[3], _u );
+	Ccurr += computeGradientConsistency( P[0], P[2], g012, g023 );
+	Cflip += computeGradientConsistency( P[1], P[3], g013, g123 );
+	// const auto a1 = T.next( a );
+	// const auto b1 = T.opposite( a1 );
+	// if ( ! T.isArcBoundary( b1 ) ) {
+	//   const auto B = T.head( T.next( b1 ) );
+	//   const auto g10B = grad( P[1], P[0], B, _u );
+	//   Ccurr += computeGradientConsistency( P[0], P[1], g012, g10B );
+	//   Cflip += computeGradientConsistency( P[0], P[1], g013, g10B );
+	// }
+	// const auto a2 = T.next( a1 );
+	// const auto b2 = T.opposite( a2 );
+	// if ( ! T.isArcBoundary( b2 ) ) {
+	//   const auto C = T.head( T.next( b2 ) );
+	//   const auto g21C = grad( P[2], P[1], C, _u );
+	//   Ccurr += computeGradientConsistency( P[1], P[2], g012, g21C );
+	//   Cflip += computeGradientConsistency( P[1], P[2], g123, g21C );
+	// }
+	// const auto a3 = T.next( T.opposite( a ) );
+	// const auto b3 = T.opposite( a3 );
+	// if ( ! T.isArcBoundary( b3 ) ) {
+	//   const auto D = T.head( T.next( b3 ) );
+	//   const auto g32D = grad( P[3], P[2], D, _u );
+	//   Ccurr += computeGradientConsistency( P[2], P[3], g023, g32D );
+	//   Cflip += computeGradientConsistency( P[2], P[3], g123, g32D );
+	// }
+	// const auto a4 = T.next( a3 );
+	// const auto b4 = T.opposite( a4 );
+	// if ( ! T.isArcBoundary( b4 ) ) {
+	//   const auto E = T.head( T.next( b4 ) );
+	//   const auto g03E = grad( P[0], P[3], E, _u );
+	//   Ccurr += computeGradientConsistency( P[3], P[0], g023, g03E );
+	//   Cflip += computeGradientConsistency( P[3], P[0], g013, g03E );
+	// }
+	Ccurr *= _consistency;
+	Cflip *= _consistency;
+      }
+      if ( (Eflip+Cflip) < (Ecurr+Ccurr) ) {
 	// Save arcs that may be affected.
 	queueSurroundingArcs( a );
 	T.flip( a );
@@ -1026,7 +1120,7 @@ namespace DGtal {
 	_tv_per_triangle[ f023 ] = E013; // f023 -> f013
 	_tv_energy += Eflip - Ecurr;
 	return 1;
-      } else if ( Eflip == Ecurr ) {
+      } else if ( (Eflip+Cflip) == (Ecurr+Ccurr) ) {
 	return ( Eflip > 0.0 ) ? 0 : -6;
       } else return -7;
     }
@@ -3121,6 +3215,7 @@ int main( int argc, char** argv )
     ("bitmap,b", po::value<double>()->default_value( 2.0 ), "Rasterization magnification factor [arg] for PNG export." )
     ("strategy,s", po::value<int>()->default_value(4), "Strategy for quadrilatera with equal energy: 0: do nothing, 1: subdivide, 2: flip all, 3: flip all when #flipped normal = 0, 4: flip approximately half when #flipped normal = 0, 5: flip approximately half when #flipped normal = 0, subdivide if everything fails." )
     ("tv-power,p", po::value<double>()->default_value( 0.5 ), "The power coefficient used to compute the gradient ie |Grad I|^{2p}. " )
+    ("grad-consistency,g", po::value<double>()->default_value( 0.0 ), "The gradient consistency that enforces gradient to be as aligned as possible between adjacent triangles" )
     ("lambda,l", po::value<double>()->default_value( 0.0 ), "The data fidelity term in TV denoising (if lambda <= 0, then the data fidelity is exact" ) 
     ("dt", po::value<double>()->default_value( 0.248 ), "The time step in TV denoising (should be lower than 0.25)" ) 
     ("tolerance,t", po::value<double>()->default_value( 0.01 ), "The tolerance to stop the TV denoising." ) 
@@ -3235,9 +3330,10 @@ int main( int argc, char** argv )
   double    p = vm[ "tv-power" ].as<double>();
   double  sim = vm[ "similarity" ].as<double>();
   string conn = vm[ "connectivity" ].as<string>();
+  double gradc= vm[ "grad-consistency" ].as<double>();
   bool  debug = vm.count( "debug" );
   int  conn_s = conn == "Size" ? 0 : 1;
-  TVTriangulation TVT( image, color, p, sim, conn_s, debug );
+  TVTriangulation TVT( image, color, p, gradc, sim, conn_s, debug );
   trace.info() << TVT.T << std::endl;
   trace.endBlock();
   
