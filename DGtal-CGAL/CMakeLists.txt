@@ -201,6 +201,7 @@ SET(SRCs
   testBezierTriangle2
   poisson-editing
   vol-distance-on-surface
+  color-transfer
 )
 
 
