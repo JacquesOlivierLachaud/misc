@@ -129,11 +129,13 @@ int irandk( int k )
 
 void interpolateColors( std::vector<RColor>&       output,
                         std::vector<int>&          in2out,
+                        std::vector<int>&          out2in,
                         const std::vector<RColor>& input )
 {
   const auto  n_in  = input.size();
   const auto  n_out = output.size();
   in2out.resize( n_in );
+  out2in.resize( n_out, -1 );
   // trace.info() << "IC #in=" << n_in << " #out=" << n_out << std::endl;
   const double coef = (double) n_in / (double) n_out;
   for ( int i = 0; i < n_out; ++i )
@@ -143,8 +145,44 @@ void interpolateColors( std::vector<RColor>&       output,
       double t = x - k;
       output[ i ] = ( 1.0 - t ) * input[ k ] + t * ( (k+1) < n_in ? input[ k+1 ] : input[ k ] );
       in2out[ k ] = i;
+      out2in[ i ] = k;
       // trace.info() << " " << output[ i ];
     }
+}
+
+// Greedy assignment input1 toward input2
+void greedyAssignment( std::vector<int>& indices1,
+		       std::vector<int>& indices2,
+		       const std::vector<RColor>& input1,
+		       const std::vector<RColor>& input2 )
+{
+  typedef std::tuple<int,int,float> Assignment;
+  struct AssignmentComparator {
+    bool operator()( Assignment a, Assignment b ) const
+    { return std::get<2>( a ) < std::get<2>( b ); }
+  };
+  
+  const int n = input1.size();
+  std::priority_queue< Assignment,
+		       std::vector< Assignment >,
+		       AssignmentComparator > Q;
+  for ( int i = 0; i < n; ++i )
+    for ( int j = 0; j < n; ++j )
+      Q.emplace( std::make_tuple( i, j,
+				  -(input1[ i ] - input2[ j ]).squaredNorm()) );
+  indices1 = std::vector<int>( n, -1 );
+  indices2 = std::vector<int>( n, -1 );
+  while ( ! Q.empty() ) {
+    auto t = Q.top();
+    int i = std::get<0>( t );
+    int j = std::get<1>( t );
+    Q.pop();
+    if ( indices1[ i ] == -1 && indices2[ j ] == -1 )
+      {
+	indices1[ i ] = j;
+	indices2[ j ] = i;
+      }
+  }
 }
 
 // Sliced transport along direction \a dir of input1 toward input2
@@ -171,26 +209,11 @@ double slicedTransport( std::vector<int>& indices1,
 	     [&p1](int i, int j) { return p1[ i ] < p1[ j ]; } );
   std::sort( indices2.begin(), indices2.end(),
 	     [&p2](int i, int j) { return p2[ i ] < p2[ j ]; } );
-  // debug
-  // std::vector<double> sorted_p1( n );
-  // std::vector<double> sorted_p2( n );
-  // for ( int i = 0; i < n; ++i ) sorted_p1[ i ] = p1[ indices1[ i ] ];
-  // for ( int i = 0; i < n; ++i ) sorted_p2[ i ] = p2[ indices2[ i ] ];
-  // for ( int i = 0; i < n - 1; ++i ) {
-  //   trace.info() << sorted_p1[ i ] << std::endl;
-  //   if ( sorted_p1[ i ] > sorted_p1[ i+1 ] ) trace.error() << "bad sort p1" << std::endl;
-  // }
-  // for ( int i = 0; i < n - 1; ++i ) {
-  //   trace.info() << sorted_p1[ i ] << std::endl;
-  //   if ( sorted_p2[ i ] > sorted_p2[ i+1 ] ) trace.error() << "bad sort p2" << std::endl;
-  // }
   std::vector<RColor> sorted1( n );
   std::vector<RColor> sorted2( n );
   double cost = 0.0;
   for ( int i = 0; i < n; ++i )
     {
-      //sorted1[ indices1[ i ] ] = input1[ i ];
-      //sorted2[ indices2[ i ] ] = input2[ i ];
       sorted1[ i ] = input1[ indices1[ i ] ];
       sorted2[ i ] = input2[ indices2[ i ] ];
     }
@@ -204,6 +227,8 @@ double slicedTransport( std::vector<int>& indices1,
 // @return the total cost
 double unbalancedSlicedTransport( std::vector<int>& indices1,
                                   std::vector<int>& indices2,
+				  std::vector<int>& rev_indices1,
+                                  std::vector<int>& rev_indices2,
                                   std::vector<RColor>& output1,
                                   std::vector<RColor>& output2,
                                   const RColor dir,
@@ -224,21 +249,26 @@ double unbalancedSlicedTransport( std::vector<int>& indices1,
 	     [&p1](int i, int j) { return p1[ i ] < p1[ j ]; } );
   std::sort( indices2.begin(), indices2.end(),
 	     [&p2](int i, int j) { return p2[ i ] < p2[ j ]; } );
-  const int FACTOR = 3;
+  const int FACTOR = 1;
   const int n      = FACTOR * std::max( n1, n2 );
   std::vector<RColor> sorted1( n1 );
   std::vector<RColor> sorted2( n2 );
-  for ( int i = 0; i < n1; ++i ) sorted1[ indices1[ i ] ] = input1[ i ];
-  for ( int i = 0; i < n2; ++i ) sorted2[ indices2[ i ] ] = input2[ i ];
+  for ( int i = 0; i < n1; ++i ) sorted1[ i ] = input1[ indices1[ i ] ];
+  for ( int i = 0; i < n2; ++i ) sorted2[ i ] = input2[ indices2[ i ] ];
   output1.resize( n );
   output2.resize( n );
-  std::vector<int> in2out1;
-  std::vector<int> in2out2;
-  interpolateColors( output1, in2out1, sorted1 );
-  interpolateColors( output2, in2out2, sorted2 );
+  std::vector<int> in2out1, out2in1;
+  std::vector<int> in2out2, out2in2;
+  interpolateColors( output1, in2out1, out2in1, sorted1 );
+  interpolateColors( output2, in2out2, out2in2, sorted2 );
   double cost = 0.0;
   for ( int i = 0; i < n; ++i )
     cost += ( output1[ i ] - output2[ i ] ).squaredNorm();
+
+  rev_indices1.resize( n1 );
+  rev_indices2.resize( n2 );
+  for ( int i = 0; i < n1; ++i ) rev_indices1[ indices1[ i ] ] = in2out1[ i ];
+  for ( int i = 0; i < n2; ++i ) rev_indices2[ indices2[ i ] ] = in2out2[ i ];
   for ( int i = 0; i < n1; ++i ) indices1[ i ] = in2out1[ indices1[ i ] ];
   for ( int i = 0; i < n2; ++i ) indices2[ i ] = in2out2[ indices2[ i ] ];
   return cost;
@@ -274,6 +304,8 @@ double bestSlicedTransport( std::vector<int>& indices1,
 
 double bestUnbalancedSlicedTransport( std::vector<int>& indices1,
                                       std::vector<int>& indices2,
+				      std::vector<int>& rev_indices1,
+				      std::vector<int>& rev_indices2,
                                       std::vector<RColor>& output1,
                                       std::vector<RColor>& output2,
                                       const std::vector<RColor>& input1,
@@ -287,19 +319,21 @@ double bestUnbalancedSlicedTransport( std::vector<int>& indices1,
       RColor dir( rand01()*2.0 - 1.0, rand01()*2.0 - 1.0, rand01()*2.0 - 1.0 );
       dir = dir / dir.norm();
       double cost = unbalancedSlicedTransport( indices1, indices2,
+					       rev_indices1, rev_indices2,
                                                output1, output2,
                                                dir, input1, input2 );
       if ( cost < best_cost )
 	{
 	  best_dir  = dir;
 	  best_cost = cost;
-          trace.info() << "[" << i << "]"
-                       << " dir=" << dir
-                       << " cost=" << cost
-                       << " best_cost=" << best_cost << std::endl;
+          // trace.info() << "[" << i << "]"
+          //              << " dir=" << dir
+          //              << " cost=" << cost
+          //              << " best_cost=" << best_cost << std::endl;
 	}
     }
   double cost = unbalancedSlicedTransport( indices1, indices2,
+					   rev_indices1, rev_indices2,
                                            output1, output2,
                                            best_dir, input1, input2 );
   return best_cost;
@@ -359,7 +393,8 @@ struct ImagePartition
 
   double getWeight( Point p, int i ) const
   {
-    return -( getColor( p ) - getRepColor( i ) ).squaredNorm() * RepColorNb[ i ];
+    return -( getColor( p ) - getRepColor( i ) ).squaredNorm()
+      * sqrt( RepColorNb[ i ] );
   }
   void partition( int k )
   {
@@ -479,12 +514,20 @@ struct ImagePartition
 		   << " col=" << getRepColor( i ) << std::endl;
   }
 
-  void applyColors( int idx, const std::vector<int>& local_indices,
-                    const std::vector<RColor>&       new_colors )
+  void applyColors( int idx,
+		    const std::vector<int>& rev_local_indices1,
+		    const std::vector<int>& local_indices2,
+                    const std::vector<RColor>& new_colors2 )
   {
-    int j = 0;
+    // std::vector<RColor> sorted_colors2( local_indices2.size() );
+    // for ( int i = 0; i < sorted_colors2.size(); ++i )
+    //   sorted_colors2[ i ] = new_colors2[ local_indices2[ i ] ];
+    // int i = 0;
+    // for ( auto p : all_points[ idx ] )
+    //   setColor( p, sorted_colors2[ rev_local_indices1[ i++ ] ] );
+    int i = 0;
     for ( auto p : all_points[ idx ] )
-        setColor( p, new_colors[ local_indices[ j++ ] ] );
+      setColor( p, new_colors2[ rev_local_indices1[ i++ ] ] );
   }
   
 };
@@ -506,21 +549,30 @@ transport( const GenericImage& image1,
   auto input2 = IP2.makeRepColorVector();
   std::vector<int> indices1;
   std::vector<int> indices2;
-  bestSlicedTransport( indices1, indices2, input1, input2 );
+  //bestSlicedTransport( indices1, indices2, input1, input2 );
+  greedyAssignment( indices1, indices2, input1, input2 );
   // Computes best unbalanced sliced transport within super-pixels
   for ( int k = 0; k < indices1.size(); ++k )
     {
-      const int i1 = indices1[ k ] + 1;
-      const int i2 = indices2[ k ] + 1;
+      // for bestSlicedTransport
+      // const int i1 = indices1[ k ] + 1;
+      // const int i2 = indices2[ k ] + 1;
+      // for greedyAssignment
+      const int i1 = k + 1;
+      const int i2 = indices1[ k ] + 1;
       std::vector<int> local_indices1;
       std::vector<int> local_indices2;
+      std::vector<int> rev_local_indices1;
+      std::vector<int> rev_local_indices2;
       std::vector<RColor> output1;
       std::vector<RColor> output2;
-      double cost = bestUnbalancedSlicedTransport( local_indices1, local_indices2, 
-                                                   output1, output2,
-                                                   IP1.all_colors[ i1 ], IP2.all_colors[ i2 ] );
-      IP1.applyColors( i1, local_indices1, output2 );
-      IP2.applyColors( i2, local_indices2, output1 );
+      double cost = bestUnbalancedSlicedTransport
+	( local_indices1, local_indices2,
+	  rev_local_indices1, rev_local_indices2, 
+	  output1, output2,
+	  IP1.all_colors[ i1 ], IP2.all_colors[ i2 ] );
+      IP1.applyColors( i1, rev_local_indices1, local_indices2, output2 );
+      IP2.applyColors( i2, rev_local_indices2, local_indices1, output1 );
       trace.info() << "[" << k << "] " << i1 << " <-> " << i2 << " cost=" << cost << std::endl;
     }
   GenericImage Out1( image1.domain() );
