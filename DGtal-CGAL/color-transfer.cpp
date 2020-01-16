@@ -47,18 +47,22 @@ struct RColor {
   double r, g, b;
   RColor( double _r = 0.0f, double _g = 0.0f, double _b = 0.0f )
     : r( _r ), g( _g ), b( _b ) {}
+
   double dot( const RColor& other ) const
   {
     return r * other.r + g * other.g + b * other.b;
   }
+
   double squaredNorm() const
   {
     return this->dot( *this );
   }
+
   double norm() const
   {
     return sqrt( squaredNorm() );
   }
+
   RColor& operator+=( const RColor& other )
   {
     r += other.r;
@@ -66,10 +70,12 @@ struct RColor {
     b += other.b;
     return *this;
   }
+
   RColor operator-( const RColor& other ) const
   {
     return RColor( r - other.r, g - other.g, b - other.b );
   }
+
   RColor operator/( double v ) const
   {
     return RColor( r / v, g / v, b / v );
@@ -108,16 +114,16 @@ double slicedTransport( std::vector<int>& indices1,
   std::vector<double> p2( n );
   for ( int i = 0; i < n; ++i )
     {
-      p1[ n ] = input1[ i ].dot( dir );
-      p2[ n ] = input2[ i ].dot( dir );
+      p1[ i ] = input1[ i ].dot( dir );
+      p2[ i ] = input2[ i ].dot( dir );
     }
   std::sort( indices1.begin(), indices1.end(),
 	     [&p1](int i, int j) { return p1[ i ] < p1[ j ]; } );
   std::sort( indices2.begin(), indices2.end(),
 	     [&p2](int i, int j) { return p2[ i ] < p2[ j ]; } );
-  double cost = 0.0;
   std::vector<RColor> sorted1( n );
   std::vector<RColor> sorted2( n );
+  double cost = 0.0;
   for ( int i = 0; i < n; ++i )
     {
       sorted1[ indices1[ i ] ] = input1[ i ];
@@ -140,13 +146,15 @@ double bestSlicedTransport( std::vector<int>& indices1,
     {
       RColor dir( rand01()*2.0 - 1.0, rand01()*2.0 - 1.0, rand01()*2.0 - 1.0 );
       dir = dir / dir.norm();
-      trace.info() << "dir=" << dir << std::endl;
       double cost = slicedTransport( indices1, indices2, dir, input1, input2 );
       if ( cost < best_cost )
 	{
 	  best_dir  = dir;
 	  best_cost = cost;
-	  trace.info() << "[" << i << "] best_cost=" << cost << std::endl;
+          trace.info() << "[" << i << "]"
+                       << " dir=" << dir
+                       << " cost=" << cost
+                       << " best_cost=" << best_cost << std::endl;
 	}
     }
   double cost = slicedTransport( indices1, indices2, best_dir, input1, input2 );
